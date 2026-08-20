@@ -2,13 +2,15 @@ import sys
 import uuid
 
 from pypdf import PdfReader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient, models
 from fastembed import TextEmbedding, SparseTextEmbedding
 
 import config
+from chunking import build_structural_chunks
 from index_manifest import read_manifest, write_manifest
 from metadata import extract_metadata
+
+PAGE_BREAK = "\f"  # separador de página que não aparece em texto normal
 
 
 def load_pdfs():
@@ -24,26 +26,53 @@ def extract_pages(pdf_path):
     return [page.extract_text() or "" for page in reader.pages]
 
 
-def build_chunks(pdf_path, pages):
-    full_text = "\n".join(pages)
-    doc_metadata = extract_metadata(full_text, pdf_path)
+def _page_starts(pages):
+    """Offset (no texto concatenado com PAGE_BREAK) em que cada página começa."""
+    starts = []
+    offset = 0
+    for page_text in pages:
+        starts.append(offset)
+        offset += len(page_text) + len(PAGE_BREAK)
+    return starts
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=config.CHUNK_SIZE,
-        chunk_overlap=config.CHUNK_OVERLAP,
+
+def _page_for_offset(offset, starts):
+    page_num = 1
+    for i, start in enumerate(starts, start=1):
+        if start <= offset:
+            page_num = i
+        else:
+            break
+    return page_num
+
+
+def build_chunks(pdf_path, pages):
+    # Junta o documento inteiro (não por página) para que um artigo ou uma
+    # súmula que atravesse a quebra de página seja visto como texto
+    # contínuo, e não cortado ao meio antes mesmo de chegar no splitter.
+    full_text = PAGE_BREAK.join(pages)
+    doc_metadata = extract_metadata(full_text, pdf_path)
+    starts = _page_starts(pages)
+
+    structural_chunks = build_structural_chunks(
+        full_text,
+        max_size=config.CHUNK_SIZE,
+        overlap=config.CHUNK_OVERLAP,
     )
 
     chunks = []
-    for page_num, page_text in enumerate(pages, start=1):
-        if not page_text.strip():
+    for piece in structural_chunks:
+        if not piece["text"].strip():
             continue
-        for piece in splitter.split_text(page_text):
-            chunks.append({
-                "text": piece,
-                "source": pdf_path.name,
-                "page": page_num,
-                **doc_metadata,
-            })
+        chunks.append({
+            "text": piece["text"],
+            "full_unit_text": piece["full_unit_text"],
+            "unit_kind": piece["unit_kind"],
+            "unit_ref": piece["unit_ref"],
+            "source": pdf_path.name,
+            "page": _page_for_offset(piece["start"], starts),
+            **doc_metadata,
+        })
     return chunks, doc_metadata
 
 

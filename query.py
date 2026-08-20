@@ -88,10 +88,28 @@ def rerank(reranker, question, points):
 
 
 def format_context(points):
+    """Monta o contexto enviado ao LLM.
+
+    Usa `full_unit_text` (o artigo/súmula inteiro) em vez de `text` (que pode
+    ser só um fragmento, quando a unidade era grande demais para um único
+    chunk de embedding). Isso garante que o modelo sempre veja a unidade
+    jurídica completa, nunca picada -- e faz dedup por unidade, já que dois
+    fragmentos diferentes do mesmo artigo podem ambos aparecer no top-k.
+    """
     parts = []
+    seen_units = set()
     for p in points:
         payload = p.payload
-        parts.append(f"[{payload['source']}, página {payload['page']}]\n{payload['text']}")
+        full_text = payload.get("full_unit_text") or payload["text"]
+        unit_ref = payload.get("unit_ref")
+
+        dedup_key = (payload["source"], unit_ref or full_text)
+        if dedup_key in seen_units:
+            continue
+        seen_units.add(dedup_key)
+
+        label = f"{payload['source']}, {unit_ref}" if unit_ref else f"{payload['source']}, página {payload['page']}"
+        parts.append(f"[{label}]\n{full_text}")
     return "\n\n---\n\n".join(parts)
 
 
