@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Instalar dependências
-        run: pip install --disable-pip-version-check requests beautifulsoup4 reportlab
+        run: pip install --disable-pip-version-check requests beautifulsoup4 reportlab pypdf
       - name: Gerar PDFs
         run: python scripts/build_legal_pdfs.py
       - name: Validar PDFs gerados
@@ -32,9 +32,9 @@ jobs:
           pdfs = sorted(Path('pdfs').glob('*.pdf'))
           assert pdfs, 'nenhum PDF gerado'
           for p in pdfs:
-              assert p.name.rsplit('.', 2)[-2].isdigit() and len(p.name.rsplit('.', 2)[-2]) == 8, f'sem data no nome: {p.name}'
-              pages = len(PdfReader(str(p)).pages)
-              assert pages > 0, f'PDF vazio: {p}'
+              stamp = p.name.rsplit('.', 2)[-2]
+              assert stamp.isdigit() and len(stamp) == 8, f'sem data no nome: {p.name}'
+              assert len(PdfReader(str(p)).pages) > 0, f'PDF vazio: {p}'
           print(f'{len(pdfs)} PDFs válidos')
           PY
       - name: Commitar PDFs gerados
