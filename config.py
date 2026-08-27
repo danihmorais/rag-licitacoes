@@ -1,5 +1,10 @@
 from pathlib import Path
 import os
+try:
+ from dotenv import load_dotenv
+ load_dotenv(Path(__file__).parent/'.env')
+except ImportError:
+ pass
 BASE_DIR=Path(__file__).parent
 PDFS_DIR=BASE_DIR/'pdfs'; DB_DIR=BASE_DIR/'db'; QDRANT_PATH=DB_DIR/'qdrant'; INDEX_MANIFEST_PATH=DB_DIR/'index_manifest.json'; COLLECTION_NAME='licitacoes'
 INDEX_VERSION=os.getenv('RAG_INDEX_VERSION','3')

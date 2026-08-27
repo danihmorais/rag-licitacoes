@@ -4,5 +4,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 db/qdrant/
 db/index_manifest.json
+db/ingest_cache.json

@@ -3,3 +3,4 @@ fastembed==0.8.0
 pypdf==6.16.2
 langchain-text-splitters==1.1.2
 requests==2.32.3
+python-dotenv==1.1.1

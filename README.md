@@ -125,12 +125,20 @@ No Windows PowerShell, use `venv\\Scripts\\activate`.
 
 PDFs escaneados podem produzir pouco texto com `pypdf`; o ingest avisa quando isso acontece. OCR deve ser tratado como etapa própria antes da indexação.
 
+## Configuração via .env
+
+Copie `.env.example` para `.env` e ajuste `RAG_LLM_PROVIDER`/`RAG_LLM_MODEL` (e credenciais, se usar `openai_compatible` ou `gemini`) sem precisar exportar variáveis de ambiente manualmente a cada sessão. `config.py` carrega o `.env` automaticamente se `python-dotenv` estiver instalado; sem ele, o comportamento por variáveis de ambiente do sistema continua funcionando normalmente. O `.env` nunca deve ser commitado (já está no `.gitignore`).
+
+## Ingestão incremental
+
+`ingest.py` guarda um hash SHA-256 de cada PDF em `db/ingest_cache.json` (não versionado). PDFs inalterados desde a última execução são pulados automaticamente, evitando reprocessar embeddings a cada `python ingest.py` — importante para hardware local (ex.: RTX 5060 Ti 16 GB), onde recalcular embeddings do acervo inteiro a cada execução é caro. Um PDF corrompido ou ilegível gera um aviso e é ignorado nessa execução, sem interromper a indexação dos demais arquivos.
+
 ## Reindexação
 
-Ao alterar qualquer componente do índice:
+Ao alterar qualquer componente do índice (embedding, chunking, reranker etc.):
 
 ```bash
-rm -rf db/qdrant db/index_manifest.json
+rm -rf db/qdrant db/index_manifest.json db/ingest_cache.json
 python ingest.py
 ```
 
@@ -142,5 +150,6 @@ Trocar somente o LLM não exige reindexação.
 - `Contratacoes_Sustentaveis_GNCS_26082026.pdf`
 - `Obras_Servicos_Engenharia_Contratacoes_26082026.pdf`
 - `Doutrina_Jurisprudencia_Fontes_Publicas_26082026.pdf`
+- `Direito_Administrativo_LINDB_Improbidade.26082026.pdf`
 
-Os quatro são dossiês de apoio produzidos a partir de fontes públicas consultadas. Para uso forense/administrativo, o acervo principal deve continuar priorizando a versão oficial integral e vigente de cada norma ou documento.
+Os cinco são dossiês de apoio produzidos a partir de fontes públicas oficiais consultadas (planalto.gov.br, gov.br/agu, compras.sp.gov.br). O quinto cobre normas transversais de Direito Público/Administrativo relevantes para a interpretação de licitações — LINDB (arts. 20 a 30, Lei 13.655/2018), processo administrativo federal (Lei 9.784/1999) e improbidade administrativa (Lei 8.429/1992, com a redação da Lei 14.230/2021, que exige dolo para configuração do ato ímprobo). Para uso forense/administrativo, o acervo principal deve continuar priorizando a versão oficial integral e vigente de cada norma ou documento — estes dossiês são mapas de referência, não substituem a leitura da norma primária.
