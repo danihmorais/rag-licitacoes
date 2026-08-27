@@ -1,110 +1,103 @@
 # RAG de Licitações
 
-RAG híbrido para leis, regulamentos, editais, minutas e jurisprudência de licitações, com busca semântica + lexical, RRF, reranking e LLM intercambiável.
+RAG híbrido para licitações, contratos administrativos, Direito Público e regulamentação de São Paulo, com busca densa + lexical, RRF, reranking e LLM intercambiável.
 
-O LLM é desacoplado do índice: trocar Qwen, Gemma, Llama, Gemini ou qualquer endpoint OpenAI-compatible não exige reindexação. Mudanças em embedding, BM25, reranker, chunking, prefixos de embedding ou esquema do payload exigem reindexação e são detectadas por `db/index_manifest.json`.
+O LLM é desacoplado do índice: Qwen, Gemma, Llama, Gemini, llama.cpp, LM Studio, vLLM, Ollama ou outro endpoint OpenAI-compatible podem ser trocados sem reindexação quando somente o gerador muda.
 
 ## Pipeline
 
 ```text
-PDF -> extração por página -> metadados -> chunking estrutural -> dense + BM25 -> Qdrant
-                                                           -> RRF -> reranker -> diversidade
-                                                           -> orçamento de contexto -> LLM
+fontes oficiais HTML/PDF -> sincronização -> cache local -> extração -> metadados
+                                                -> chunking jurídico -> dense + BM25
+                                                -> Qdrant -> RRF -> reranker -> contexto -> LLM
 ```
 
-### Estrutura jurídica do chunk
+## Corpus jurídico sem PDFs versionados
 
-Legislação, súmulas e documentos estruturados são divididos preferencialmente por unidade jurídica (`artigo`, `sumula`, etc.) antes do split por tamanho. Cada fragmento mantém `unit_id`, `unit_ref`, `chunk_index`, `page` e `page_end`.
+O repositório não precisa armazenar cópias congeladas de legislação. `scripts/sync_sources.py` mantém um catálogo de fontes oficiais, com URLs alternativas, jurisdição, órgão, tipo documental, papel e nível de autoridade.
 
-Unidades longas não repetem o texto integral em todos os vetores. Isso reduz o payload e evita que a mesma unidade consuma várias vezes o orçamento de contexto.
+A sincronização baixa HTML/PDF, normaliza o texto e grava o resultado em `db/source_cache/`, que não é versionado. Há retries/backoff e fallback entre fontes oficiais. Uma indisponibilidade temporária não apaga o cache anterior.
 
-## Fontes e hierarquia
-
-1. **Norma vigente**: Constituição, lei, decreto, resolução, portaria e atos normativos aplicáveis.
-2. **Jurisprudência/controle**: STF, STJ, TCESP, TCU etc., sempre identificados como decisões/entendimentos.
-3. **Orientação oficial**: AGU, Compras.gov, Compras SP, manuais e guias.
-4. **Doutrina**: fonte secundária.
-
-O prompt exige marcadores `[F#]` para afirmações jurídicas e o contexto preserva fonte, página, unidade, jurisdição, papel, autoridade e vigência.
-
-## Metadados
-
-Além de `municipio`, `modalidade`, `ano`, `processo` e `tipo`, o índice suporta:
-
-- `jurisdicao`, `esfera`, `orgao`, `tribunal`
-- `tipo_documento`, `source_role`, `authority_level`, `status`
-- `data_versao`, `data_publicacao`, `data_vigencia`
-- `effective_from`, `effective_to`, `revogado`, `norma_alteradora`
-- `fonte_oficial`, `fonte_host`, `retrieved_at`
-
-Documentos importantes devem ter sidecar JSON com o mesmo nome do PDF. O sidecar prevalece sobre a heurística automática.
-
-Filtros continuam no formato:
-
-```text
-@municipio=Urânia @ano=2026 qual o prazo de entrega?
-@jurisdicao=estadual_sp @tipo_documento=decreto quais regras se aplicam ao ETP?
-@status=vigente @source_role=norma qual é a regra aplicável?
+```bash
+python scripts/sync_sources.py
+python ingest.py
 ```
 
-## Conteúdo prioritário para São Paulo
+Para testar somente fontes obrigatórias:
 
-O corpus prioriza a Lei nº 14.133/2021 e a regulamentação estadual paulista, incluindo os Decretos nº 67.608/2023, 67.689/2023, 67.885/2023, 67.888/2023, 67.985/2023, 68.017/2023, 68.021/2023, 68.185/2023, 68.220/2023, 68.304/2024 e 68.422/2024, além das normas estaduais transversais e atos recentes de integridade/anticorrupção.
+```bash
+python scripts/sync_sources.py --check --required-only
+```
 
-Itens em elaboração não devem entrar no acervo como norma vigente.
+Documentos fornecidos manualmente, como edital, TR, DFD, ETP e jurisprudência específica, continuam em `pdfs/`.
 
-## Conteúdo federal complementar
+## Conteúdo prioritário
 
-O corpus também contempla legislação integral/compilada relevante para Direito Administrativo e Direito Público, incluindo LINDB, processo administrativo, improbidade, anticorrupção, LAI, LGPD, Governo Digital, estatais, concessões, PPPs, responsabilidade fiscal e direito financeiro.
+### Federal
 
-A regra é: **legislação primária completa primeiro; materiais explicativos depois**.
+Constituição Federal; Lei nº 14.133/2021; Decreto nº 12.807/2025; LINDB; Lei nº 9.784/1999; Lei nº 8.429/1992; Lei Anticorrupção e seu regulamento; LAI; LGPD; Lei das Estatais; concessões; PPPs; LRF; Lei nº 4.320/1964; normas federais de PCA, ETP, TR e pesquisa de preços; além de legislação ambiental, resíduos e acessibilidade pertinente a contratações.
 
-## Hardware e modelos locais
+### São Paulo
 
-Em uma RTX 5060 Ti 16 GB, mantenha o índice e os modelos de recuperação separados do gerador. O LLM pode rodar via Ollama, llama.cpp/vLLM através de endpoint OpenAI-compatible ou outro adapter.
+Constituição Estadual; Lei nº 10.177/1998; LC nº 709/1993; Lei nº 6.544/1989; regulamentação paulista da Lei nº 14.133/2021; Compras SP; TCESP; normas recentes de integridade, responsabilização e Marketplace.SP.
 
-Para usar CUDA no FastEmbed, configure:
+### Controle e orientação
+
+TCU, TCESP, AGU, PNCP, Compras.gov.br e Compras SP são classificados como jurisprudência/controle ou orientação oficial conforme o caso. Não são tratados como texto legal pelo prompt.
+
+Doutrina comercial protegida por direitos autorais não deve ser copiada integralmente para o repositório sem licença. Prefira materiais públicos, licenciados e referências temáticas.
+
+## Recuperação jurídica
+
+- Dense + BM25 + RRF.
+- Chunking estrutural por artigo/súmula antes do split por tamanho.
+- Identidade por `source_id`, `unit_id` e `chunk_index`.
+- Reranker independente do LLM.
+- Relevância é o critério primário; autoridade não pode transformar documento irrelevante em resposta.
+- Filtros por jurisdição, ano, status e demais metadados.
+- Se não houver evidência recuperada, o LLM não é chamado.
+- Citações `[F#]` são exigidas para afirmações jurídicas relevantes.
+
+O índice usa `intfloat/multilingual-e5-large`, com `passage:` em documentos e `query:` em consultas. Mudanças no embedding, chunking, reranker, prefixos ou schema exigem reindexação e são detectadas por `index_manifest.json`.
+
+## Temporalidade
+
+O objetivo é suportar tanto “qual é a regra vigente?” quanto “qual era a regra em determinada data?”. O modelo de metadados contempla `data_publicacao`, `data_vigencia`, `effective_from`, `effective_to`, `status`, `revogado`, `norma_alteradora` e `retrieved_at`. A extração dessas relações será ampliada progressivamente por fonte.
+
+## RTX 5060 Ti 16 GB
+
+Mantenha o gerador local separado do mecanismo de recuperação. FastEmbed pode usar `CUDAExecutionProvider`; Qdrant e parte da recuperação podem permanecer fora da GPU. O LLM pode ser qualquer adapter compatível.
 
 ```text
 RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
 ```
 
-O embedding atual é `intfloat/multilingual-e5-large`; consultas usam `query:` e documentos `passage:`. O manifest registra esses prefixos para impedir incompatibilidade silenciosa.
-
 ## Instalação
 
 ```bash
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
 python ingest.py
+python query.py
 ```
 
-No Windows PowerShell, use `venv\\Scripts\\activate`.
+## GitHub Actions
 
-PDFs escaneados podem produzir pouco texto com `pypdf`; o ingest avisa quando isso acontece. OCR deve ser tratado como etapa própria e marcado como tal.
+O antigo workflow de geração de PDFs falhava porque várias fontes externas, especialmente páginas do Planalto, retornavam `RemoteDisconnected` no runner. Como o workflow abortava quando qualquer uma das 34 fontes falhava, o CI ficava vermelho mesmo com 17 fontes de São Paulo sendo processadas corretamente.
 
-## Configuração via .env
+Agora existem dois workflows independentes:
 
-Copie `.env.example` para `.env` e ajuste `RAG_LLM_PROVIDER`/`RAG_LLM_MODEL`. O `.env` não deve ser commitado.
+- `ci.yml`: testes e compilação, sem depender de sites jurídicos externos.
+- `sync-sources.yml`: verificação semanal/manual das fontes oficiais obrigatórias, com retry e sem commits automáticos.
 
-## Ingestão incremental
+Isso elimina o loop de commits automáticos de PDFs e impede que uma falha de rede em uma fonte jurídica quebre o CI normal.
 
-`ingest.py` guarda hash SHA-256 de cada PDF em `db/ingest_cache.json`. PDFs inalterados são pulados. Um PDF corrompido ou ilegível gera aviso sem interromper os demais.
+## Próximos passos recomendados
 
-## Reindexação
-
-Ao alterar embedding, chunking, reranker, prefixos ou esquema do índice:
-
-```bash
-rm -rf db/qdrant db/index_manifest.json db/ingest_cache.json
-python ingest.py
-```
-
-Trocar somente o LLM não exige reindexação.
-
-## Corpus jurídico — 27/08/2026
-
-A revisão atual ampliou e fortaleceu o gerador de PDFs oficiais. Os nomes recebem o sufixo `.27082026` nesta execução. O workflow valida o tamanho e a aparência normativa das fontes antes de gerar o PDF, evitando incorporar páginas de navegação como legislação.
-
-Consulte `docs/CORPUS_REVIEW_27082026.md` para a auditoria e o roadmap de jurisprudência, OCR, avaliação e temporalidade.
+1. Coletor estruturado de acórdãos TCESP/TCU/STJ/STF com processo, órgão julgador, relator, data e assunto.
+2. OCR explícito para PDFs escaneados, com `text_origin=native|ocr` e confiança por página.
+3. Dataset de avaliação com perguntas reais e métricas recall@k, MRR/nDCG, cobertura de citação, jurisdição e temporalidade.
+4. Relações entre norma alteradora e dispositivos alterados.
+5. Catálogos separados para jurisprudência, orientação oficial e doutrina.
