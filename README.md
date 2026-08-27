@@ -2,7 +2,7 @@
 
 RAG híbrido para leis, regulamentos, editais, minutas e jurisprudência de licitações, com busca semântica + lexical, RRF, reranking e LLM intercambiável.
 
-O LLM é desacoplado do índice: trocar Qwen, Gemma, Llama, Gemini ou qualquer endpoint OpenAI-compatible não exige reindexação. Já mudanças em embedding, BM25, reranker, chunking ou esquema do payload exigem reindexação e são detectadas por `db/index_manifest.json`.
+O LLM é desacoplado do índice: trocar Qwen, Gemma, Llama, Gemini ou qualquer endpoint OpenAI-compatible não exige reindexação. Mudanças em embedding, BM25, reranker, chunking, prefixos de embedding ou esquema do payload exigem reindexação e são detectadas por `db/index_manifest.json`.
 
 ## Pipeline
 
@@ -14,36 +14,30 @@ PDF -> extração por página -> metadados -> chunking estrutural -> dense + BM2
 
 ### Estrutura jurídica do chunk
 
-Legislação, súmulas e outros documentos estruturados são divididos por unidade jurídica (`artigo`, `sumula`, etc.) antes do split por tamanho. Cada fragmento mantém `unit_id`, `unit_ref`, `chunk_index`, `page` e `page_end`.
+Legislação, súmulas e documentos estruturados são divididos preferencialmente por unidade jurídica (`artigo`, `sumula`, etc.) antes do split por tamanho. Cada fragmento mantém `unit_id`, `unit_ref`, `chunk_index`, `page` e `page_end`.
 
-Unidades longas **não** repetem o texto integral em todos os vetores. Isso reduz drasticamente o tamanho do payload e impede que a mesma unidade consuma o orçamento de contexto várias vezes.
+Unidades longas não repetem o texto integral em todos os vetores. Isso reduz o payload e evita que a mesma unidade consuma várias vezes o orçamento de contexto.
 
-## Metadados e hierarquia de fontes
+## Fontes e hierarquia
+
+1. **Norma vigente**: Constituição, lei, decreto, resolução, portaria e atos normativos aplicáveis.
+2. **Jurisprudência/controle**: STF, STJ, TCESP, TCU etc., sempre identificados como decisões/entendimentos.
+3. **Orientação oficial**: AGU, Compras.gov, Compras SP, manuais e guias.
+4. **Doutrina**: fonte secundária.
+
+O prompt exige marcadores `[F#]` para afirmações jurídicas e o contexto preserva fonte, página, unidade, jurisdição, papel, autoridade e vigência.
+
+## Metadados
 
 Além de `municipio`, `modalidade`, `ano`, `processo` e `tipo`, o índice suporta:
 
 - `jurisdicao`, `esfera`, `orgao`, `tribunal`
-- `tipo_documento`, `source_role`, `status`
+- `tipo_documento`, `source_role`, `authority_level`, `status`
 - `data_versao`, `data_publicacao`, `data_vigencia`
-- `revogado`, `norma_alteradora`, `fonte_oficial`, `fonte_host`
+- `effective_from`, `effective_to`, `revogado`, `norma_alteradora`
+- `fonte_oficial`, `fonte_host`, `retrieved_at`
 
-Documentos importantes devem ter um sidecar JSON com o mesmo nome do PDF. O sidecar prevalece sobre a heurística automática.
-
-Exemplo:
-
-```json
-{
-  "jurisdicao": "estadual_sp",
-  "esfera": "estadual",
-  "orgao": "Estado de São Paulo",
-  "tipo_documento": "decreto",
-  "source_role": "norma",
-  "status": "vigente",
-  "data_publicacao": "2023-06-30",
-  "data_vigencia": "2023-07-01",
-  "fonte_oficial": "https://www.al.sp.gov.br/"
-}
-```
+Documentos importantes devem ter sidecar JSON com o mesmo nome do PDF. O sidecar prevalece sobre a heurística automática.
 
 Filtros continuam no formato:
 
@@ -53,64 +47,29 @@ Filtros continuam no formato:
 @status=vigente @source_role=norma qual é a regra aplicável?
 ```
 
-## Camada de autoridade recomendada
-
-1. **Norma vigente**: Constituição, lei, decreto, resolução, portaria e atos normativos aplicáveis.
-2. **Jurisprudência/controle**: STF, STJ, TCESP, TCU etc., sempre identificados como decisões/entendimentos.
-3. **Orientação oficial**: AGU, Compras.gov, Compras SP, manuais e guias.
-4. **Doutrina**: autores e obras especializadas, sempre como fonte secundária.
-
-O prompt exige marcadores `[F#]` para que a resposta possa apontar para os trechos efetivamente recuperados.
-
 ## Conteúdo prioritário para São Paulo
 
-O Portal de Compras SP informa, com estágio atualizado em 08/07/2026, os principais regulamentos estaduais da Lei 14.133/2021, entre eles:
+O corpus prioriza a Lei nº 14.133/2021 e a regulamentação estadual paulista, incluindo os Decretos nº 67.608/2023, 67.689/2023, 67.885/2023, 67.888/2023, 67.985/2023, 68.017/2023, 68.021/2023, 68.185/2023, 68.220/2023, 68.304/2024 e 68.422/2024, além das normas estaduais transversais e atos recentes de integridade/anticorrupção.
 
-- Decreto 67.608/2023 - transição e implantação;
-- Decreto 67.689/2023 - plano de contratações anual;
-- Decreto 67.888/2023 - pesquisa/estimativa de valor;
-- Decreto 68.017/2023 - estudo técnico preliminar;
-- Decreto 68.021/2023 - catálogo eletrônico e padronização;
-- Decreto 68.185/2023 - termo de referência;
-- Decreto 68.220/2023 - agentes públicos, gestão e fiscalização;
-- Decreto 68.304/2024 - contratação direta eletrônica;
-- Decreto 68.422/2024 - leilão eletrônico.
-
-Itens ainda em elaboração não devem entrar no acervo como norma vigente.
-
-O acervo também deve cobrir atos recentes da Secretaria de Gestão e Governo Digital, deliberações do TCESP e os modelos padronizados do Compras SP.
+Itens em elaboração não devem entrar no acervo como norma vigente.
 
 ## Conteúdo federal complementar
 
-Priorize fontes oficiais para:
+O corpus também contempla legislação integral/compilada relevante para Direito Administrativo e Direito Público, incluindo LINDB, processo administrativo, improbidade, anticorrupção, LAI, LGPD, Governo Digital, estatais, concessões, PPPs, responsabilidade fiscal e direito financeiro.
 
-- Lei 14.133/2021 e legislação correlata;
-- Constituição Federal;
-- Guia Nacional de Contratações Sustentáveis - 8ª edição;
-- critérios ambientais, acessibilidade, resíduos e logística reversa;
-- obras e serviços de engenharia, orçamento, fiscalização, medição e riscos;
-- contratação de TIC;
-- contratação direta, pregão, concorrência, credenciamento e leilão;
-- modelos e instrumentos de padronização da AGU;
-- jurisprudência do TCU/STJ e material do TCESP.
-
-## Doutrina
-
-A doutrina de Marçal Justen Filho é relevante para interpretação sistemática da Lei 14.133/2021, mas as obras comerciais protegidas por direitos autorais **não devem ser copiadas integralmente para o repositório** sem licença. Neste acervo foi incluído um mapa temático de uso doutrinário e fontes públicas, não a reprodução do livro.
+A regra é: **legislação primária completa primeiro; materiais explicativos depois**.
 
 ## Hardware e modelos locais
 
-O pipeline de recuperação é independente do LLM. Em uma RTX 5060 Ti 16 GB, a estratégia recomendada é manter o índice e os modelos de recuperação separados do gerador. O LLM pode rodar via Ollama, llama.cpp/vLLM através de endpoint OpenAI-compatible ou outro adapter.
+Em uma RTX 5060 Ti 16 GB, mantenha o índice e os modelos de recuperação separados do gerador. O LLM pode rodar via Ollama, llama.cpp/vLLM através de endpoint OpenAI-compatible ou outro adapter.
 
-Para usar CUDA no FastEmbed, instale o backend GPU apropriado e configure:
+Para usar CUDA no FastEmbed, configure:
 
 ```text
 RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
 ```
 
-Sem essa variável, o backend de recuperação permanece no comportamento padrão.
-
-O embedding atual é `intfloat/multilingual-e5-large`. As consultas usam o prefixo `query:` e os documentos `passage:`, como exigido pelo modelo.
+O embedding atual é `intfloat/multilingual-e5-large`; consultas usam `query:` e documentos `passage:`. O manifest registra esses prefixos para impedir incompatibilidade silenciosa.
 
 ## Instalação
 
@@ -123,19 +82,19 @@ python ingest.py
 
 No Windows PowerShell, use `venv\\Scripts\\activate`.
 
-PDFs escaneados podem produzir pouco texto com `pypdf`; o ingest avisa quando isso acontece. OCR deve ser tratado como etapa própria antes da indexação.
+PDFs escaneados podem produzir pouco texto com `pypdf`; o ingest avisa quando isso acontece. OCR deve ser tratado como etapa própria e marcado como tal.
 
 ## Configuração via .env
 
-Copie `.env.example` para `.env` e ajuste `RAG_LLM_PROVIDER`/`RAG_LLM_MODEL` (e credenciais, se usar `openai_compatible` ou `gemini`) sem precisar exportar variáveis de ambiente manualmente a cada sessão. `config.py` carrega o `.env` automaticamente se `python-dotenv` estiver instalado; sem ele, o comportamento por variáveis de ambiente do sistema continua funcionando normalmente. O `.env` nunca deve ser commitado (já está no `.gitignore`).
+Copie `.env.example` para `.env` e ajuste `RAG_LLM_PROVIDER`/`RAG_LLM_MODEL`. O `.env` não deve ser commitado.
 
 ## Ingestão incremental
 
-`ingest.py` guarda um hash SHA-256 de cada PDF em `db/ingest_cache.json` (não versionado). PDFs inalterados desde a última execução são pulados automaticamente, evitando reprocessar embeddings a cada `python ingest.py` — importante para hardware local (ex.: RTX 5060 Ti 16 GB), onde recalcular embeddings do acervo inteiro a cada execução é caro. Um PDF corrompido ou ilegível gera um aviso e é ignorado nessa execução, sem interromper a indexação dos demais arquivos.
+`ingest.py` guarda hash SHA-256 de cada PDF em `db/ingest_cache.json`. PDFs inalterados são pulados. Um PDF corrompido ou ilegível gera aviso sem interromper os demais.
 
 ## Reindexação
 
-Ao alterar qualquer componente do índice (embedding, chunking, reranker etc.):
+Ao alterar embedding, chunking, reranker, prefixos ou esquema do índice:
 
 ```bash
 rm -rf db/qdrant db/index_manifest.json db/ingest_cache.json
@@ -144,12 +103,8 @@ python ingest.py
 
 Trocar somente o LLM não exige reindexação.
 
-## PDFs de apoio adicionados em 26/08/2026
+## Corpus jurídico — 27/08/2026
 
-- `SP_Regulamentacao_Lei_14133_26082026.pdf`
-- `Contratacoes_Sustentaveis_GNCS_26082026.pdf`
-- `Obras_Servicos_Engenharia_Contratacoes_26082026.pdf`
-- `Doutrina_Jurisprudencia_Fontes_Publicas_26082026.pdf`
-- `Direito_Administrativo_LINDB_Improbidade.26082026.pdf`
+A revisão atual ampliou e fortaleceu o gerador de PDFs oficiais. Os nomes recebem o sufixo `.27082026` nesta execução. O workflow valida o tamanho e a aparência normativa das fontes antes de gerar o PDF, evitando incorporar páginas de navegação como legislação.
 
-Os cinco são dossiês de apoio produzidos a partir de fontes públicas oficiais consultadas (planalto.gov.br, gov.br/agu, compras.sp.gov.br). O quinto cobre normas transversais de Direito Público/Administrativo relevantes para a interpretação de licitações — LINDB (arts. 20 a 30, Lei 13.655/2018), processo administrativo federal (Lei 9.784/1999) e improbidade administrativa (Lei 8.429/1992, com a redação da Lei 14.230/2021, que exige dolo para configuração do ato ímprobo). Para uso forense/administrativo, o acervo principal deve continuar priorizando a versão oficial integral e vigente de cada norma ou documento — estes dossiês são mapas de referência, não substituem a leitura da norma primária.
+Consulte `docs/CORPUS_REVIEW_27082026.md` para a auditoria e o roadmap de jurisprudência, OCR, avaliação e temporalidade.
