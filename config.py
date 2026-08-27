@@ -7,7 +7,7 @@ except ImportError:
  pass
 BASE_DIR=Path(__file__).parent
 PDFS_DIR=BASE_DIR/'pdfs'; DB_DIR=BASE_DIR/'db'; QDRANT_PATH=DB_DIR/'qdrant'; INDEX_MANIFEST_PATH=DB_DIR/'index_manifest.json'; COLLECTION_NAME='licitacoes'
-INDEX_VERSION=os.getenv('RAG_INDEX_VERSION','3')
+INDEX_VERSION=os.getenv('RAG_INDEX_VERSION','4')
 DENSE_MODEL=os.getenv('RAG_DENSE_MODEL','intfloat/multilingual-e5-large'); DENSE_DIM=int(os.getenv('RAG_DENSE_DIM','1024'))
 SPARSE_MODEL=os.getenv('RAG_SPARSE_MODEL','Qdrant/bm25'); RERANK_MODEL=os.getenv('RAG_RERANK_MODEL','BAAI/bge-reranker-base')
 CHUNK_SIZE=int(os.getenv('RAG_CHUNK_SIZE','1000')); CHUNK_OVERLAP=int(os.getenv('RAG_CHUNK_OVERLAP','150')); CANDIDATES_K=int(os.getenv('RAG_CANDIDATES_K','60')); FINAL_K=int(os.getenv('RAG_FINAL_K','8')); MAX_CONTEXT_CHARS=int(os.getenv('RAG_MAX_CONTEXT_CHARS','26000'))
