@@ -27,8 +27,17 @@ def sync_sources():
         print('Aviso: sincronização de fontes terminou com falhas; cache anterior será preservado.')
 
 
+def sync_jurisprudencia():
+    if not config.RAG_SYNC_JURISPRUDENCIA:
+        return
+    command = [sys.executable, '-m', 'jurisprudencia.collector', '--query', config.JURISPRUDENCIA_QUERY, '--limit', str(config.JURISPRUDENCIA_LIMIT)]
+    result = subprocess.run(command, check=False)
+    if result.returncode != 0:
+        print('Aviso: coleta de jurisprudência terminou sem novos registros; cache anterior será preservado.')
+
+
 def load_documents():
-    files = sorted(config.PDFS_DIR.glob('*.pdf')) + sorted(config.SOURCE_CACHE_DIR.glob('*.txt'))
+    files = sorted(config.PDFS_DIR.glob('*.pdf')) + sorted(config.SOURCE_CACHE_DIR.rglob('*.txt'))
     if not files:
         print(f'Nenhum documento em {config.PDFS_DIR} nem em {config.SOURCE_CACHE_DIR}.')
         sys.exit(1)
@@ -80,8 +89,7 @@ def build_chunks(document, pages):
     for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP):
         if not chunk['text'].strip(): continue
         start = chunk['start']; end = start + len(chunk['text'])
-        output.append({**chunk, 'source': document.name, 'source_id': meta.get('source_id') or document.stem,
-                       'page': _page(start, starts), 'page_end': _page(max(start, end - 1), starts), **meta})
+        output.append({**chunk, 'source': document.name, 'source_id': meta.get('source_id') or document.stem, 'page': _page(start, starts), 'page_end': _page(max(start, end - 1), starts), **meta})
     return output
 
 
@@ -91,19 +99,17 @@ def embedding_kwargs():
 
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
-        client.create_collection(collection_name=config.COLLECTION_NAME,
-                                 vectors_config={'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)},
-                                 sparse_vectors_config={'sparse': models.SparseVectorParams()})
+        client.create_collection(collection_name=config.COLLECTION_NAME, vectors_config={'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)}, sparse_vectors_config={'sparse': models.SparseVectorParams()})
 
 
 def delete_doc(client, name):
-    client.delete(collection_name=config.COLLECTION_NAME,
-                  points_selector=models.FilterSelector(filter=models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])))
+    client.delete(collection_name=config.COLLECTION_NAME, points_selector=models.FilterSelector(filter=models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])))
 
 
 def main():
     config.ensure_directories()
     sync_sources()
+    sync_jurisprudencia()
     files = load_documents()
     client = QdrantClient(path=str(config.QDRANT_PATH))
     manifest = read_manifest()
@@ -134,9 +140,7 @@ def main():
             points = []
             for index, item in enumerate(chunks):
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}"))
-                points.append(models.PointStruct(id=point_id,
-                    vector={'dense': dense_vectors[index].tolist(), 'sparse': models.SparseVector(indices=sparse_vectors[index].indices.tolist(), values=sparse_vectors[index].values.tolist())},
-                    payload=item))
+                points.append(models.PointStruct(id=point_id, vector={'dense': dense_vectors[index].tolist(), 'sparse': models.SparseVector(indices=sparse_vectors[index].indices.tolist(), values=sparse_vectors[index].values.tolist())}, payload=item))
             client.upsert(collection_name=config.COLLECTION_NAME, points=points)
             cache[document.name] = digest
             print(f'Indexado: {document.name} ({len(points)} chunks)')

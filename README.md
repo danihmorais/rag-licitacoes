@@ -1,11 +1,12 @@
 # RAG de Licitações
 
-RAG híbrido para licitações, contratos administrativos, Direito Público e regulamentação de São Paulo, com busca densa + BM25, RRF, reranking e LLM intercambiável.
+RAG híbrido para licitações, contratos administrativos, Direito Público e regulamentação de São Paulo, com busca densa + BM25, RRF, reranking, jurisprudência estruturada e LLM intercambiável.
 
 ## Arquitetura
 
 ```text
 fontes oficiais HTML/PDF -> sincronização -> cache local -> metadados
+                                      -> jurisprudência estruturada
                                       -> chunking jurídico -> dense + BM25
                                       -> Qdrant -> RRF -> reranker -> contexto -> LLM
 ```
@@ -47,6 +48,27 @@ TCU, TCESP, AGU, PNCP, Compras.gov.br, Compras SP, STJ e STF têm `source_role` 
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
+## Coletor estruturado de jurisprudência
+
+A jurisprudência possui um esquema independente do LLM em `jurisprudencia/schema.py` e adaptadores em `jurisprudencia/collector.py`. O objetivo é transformar resultados de pesquisa em registros com processo, órgão/tribunal, relator, data, ementa, tese/decisão, assunto, URL oficial, situação e hash de versão.
+
+O TCU é coletado pela interface oficial de dados abertos de acórdãos, o TCESP pela pesquisa oficial, o STJ pelo SCON e o STF pelo portal oficial de jurisprudência. Quando a fonte oferece PDF de inteiro teor, o coletor pode preservá-lo como texto com `--with-content`.
+
+```bash
+python -m jurisprudencia.collector --query "licitação" --limit 25
+python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf --query "contrato administrativo" --limit 50 --detail
+```
+
+Na execução normal de `ingest.py`, a coleta pode ocorrer automaticamente. Configure:
+
+```text
+RAG_SYNC_JURISPRUDENCIA=1
+RAG_JURISPRUDENCIA_QUERY=licitação
+RAG_JURISPRUDENCIA_LIMIT=25
+```
+
+O cache de jurisprudência não é versionado no Git. Cada registro recebe `version_sha256`, de modo que uma alteração do conteúdo não apaga silenciosamente a versão anterior. O RAG pode então responder melhor a perguntas como “qual é o entendimento do TCESP sobre X?” ou “há precedente do TCU?”, sempre identificando que a conclusão deriva de jurisprudência/controle.
+
 ## Recuperação jurídica
 
 - Dense + BM25 + RRF.
@@ -62,23 +84,11 @@ Doutrina comercial protegida não deve ser copiada integralmente sem licença. P
 
 O corpus carrega `status`, `effective_from`, `effective_to`, `revogado`, `data_vigencia` e `retrieved_at`. A resposta deve distinguir regra vigente, regra histórica e `vacatio_legis`.
 
-A IN SEGES/MGI 512/2025 está marcada com início de vigência em 30/11/2026, em conjunto com a IN 129/2026 que posterga a entrada em vigor. O histórico de alterações entre versões ainda é uma evolução futura do coletor.
+A IN SEGES/MGI 512/2025 está marcada com início de vigência em 30/11/2026, em conjunto com a IN 129/2026 que posterga a entrada em vigor. O histórico de alterações é controlado por hash dos documentos.
 
 ## RTX 5060 Ti 16 GB
 
-Recuperação e LLM permanecem desacoplados. FastEmbed pode usar:
-
-```text
-RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
-```
-
-Isso permite reservar VRAM para o modelo de geração. Trocar o gerador local não exige reindexação.
-
-## Jurisprudência estruturada — próxima etapa
-
-A próxima evolução recomendada é o coletor estruturado TCESP + TCU + STJ + STF, com esquema comum em `jurisprudencia/schema.py` contendo processo, órgão julgador, relator, data, ementa, assunto, tese, inteiro teor, URL oficial, tipo de decisão e hash/metadata de coleta.
-
-O roadmap está em `docs/JURISPRUDENCIA_ROADMAP_28082026.md`. A ordem sugerida é TCU (dados abertos), TCESP, STJ e STF, sempre preservando o inteiro teor e a fonte oficial.
+Recuperação e LLM permanecem desacoplados. FastEmbed pode usar `RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider`, reservando VRAM para o modelo de geração. Trocar o gerador local não exige reindexação, salvo quando mudar o modelo de embedding ou sua dimensão.
 
 ## Instalação
 
@@ -94,9 +104,11 @@ python query.py
 
 ## GitHub Actions
 
-`ci.yml` testa e compila sem depender de sites jurídicos externos. `sync-sources.yml` verifica fontes oficiais obrigatórias semanalmente/manual e não faz commits automáticos.
+`ci.yml` compila e testa apenas lógica determinística; não depende de sites jurídicos externos.
 
-O CI que estava vermelho por falha em `test_structural_chunking_keeps_article_unit` já foi corrigido; o último workflow na `main` terminou com sucesso. O parser agora também cobre `Artigo 1º`, `Art. 10-A` e documentos que contenham apenas um artigo.
+`sync-sources.yml` é um health-check separado e não bloqueante: indisponibilidade temporária de Planalto, TCESP, TCU ou outro site não deixa o branch vermelho. A lógica de parsing das fontes continua coberta pelo CI offline.
+
+Foi corrigido o caso de regex de PDF com escape duplicado que fazia `discover_links()` ignorar PDFs oficiais. O normalizador aceita regex normal e duplamente escapado.
 
 ## Verificações
 

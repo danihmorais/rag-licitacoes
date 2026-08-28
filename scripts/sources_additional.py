@@ -5,7 +5,6 @@ try:
 except ModuleNotFoundError:
     from sources import _federal
 
-
 EXTRA_SOURCES = [
     _federal("lei13655", "Lei nº 13.655/2018 — alterações na LINDB sobre decisão e controle público", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13655.htm", tipo_documento="lei"),
     _federal("decreto9830", "Decreto nº 9.830/2019 — regulamenta a LINDB para decisão pública", "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2019/decreto/d9830.htm", tipo_documento="decreto"),

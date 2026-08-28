@@ -62,8 +62,7 @@ def pdf_text(data):
 
 
 def fetch(session,url):
-    response=session.get(url, timeout=(20,90), allow_redirects=True); response.raise_for_status()
-    raw=response.content; final=response.url; ctype=(response.headers.get("content-type") or "").lower()
+    response=session.get(url, timeout=(20,90), allow_redirects=True); response.raise_for_status(); raw=response.content; final=response.url; ctype=(response.headers.get("content-type") or "").lower()
     is_pdf="application/pdf" in ctype or final.lower().split("?",1)[0].endswith(".pdf") or raw.startswith(b"%PDF")
     if is_pdf: return "pdf", final, raw, pdf_text(raw)
     response.encoding=response.apparent_encoding or response.encoding
@@ -82,7 +81,10 @@ def slug(value):
 
 
 def normalized_pattern(value):
-    return r"\.pdf(?:$|\?)" if value == r"\\.pdf(?:$|\\?)" else value
+    previous=None
+    while value != previous and "\\\\" in value:
+        previous=value; value=value.replace("\\\\","\\")
+    return value
 
 
 def discover_links(raw_html,base_url,source):
@@ -90,8 +92,8 @@ def discover_links(raw_html,base_url,source):
     for a in soup.find_all("a",href=True):
         absolute=urljoin(base_url,str(a["href"]).strip()).split("#",1)[0]; parsed=urlparse(absolute)
         if parsed.scheme not in {"http","https"} or (not source.get("allow_cross_host") and parsed.netloc.lower()!=host): continue
-        label=a.get_text(" ",strip=True); hay=f"{absolute} {label}"
-        if patterns and not any(p.search(hay) for p in patterns): continue
+        label=a.get_text(" ",strip=True)
+        if patterns and not any(p.search(absolute) or p.search(label) for p in patterns): continue
         if absolute in seen: continue
         seen.add(absolute); out.append((absolute,label or absolute.rsplit("/",1)[-1]))
         if len(out)>=int(source.get("max_follow",12)): break
@@ -99,13 +101,12 @@ def discover_links(raw_html,base_url,source):
 
 
 def write_cache(source,final,kind,raw,text,document_id,title):
-    CACHE.mkdir(parents=True,exist_ok=True); base=slug(document_id)
-    (CACHE/f"{base}.txt").write_text(text.strip()+"\n",encoding="utf-8")
+    CACHE.mkdir(parents=True,exist_ok=True); base=slug(document_id); (CACHE/f"{base}.txt").write_text(text.strip()+"\n",encoding="utf-8")
     meta={"source_id":source["id"],"document_id":base,"parent_source_id":source["id"],"title":title,"jurisdicao":source.get("jurisdicao"),"esfera":source.get("esfera"),"orgao":source.get("orgao"),"tribunal":source.get("tribunal"),"tipo_documento":source.get("tipo_documento"),"source_role":source.get("source_role","desconhecido"),"authority_level":source.get("authority_level"),"status":source.get("status") or "orientativo","revogado":source.get("revogado",False),"data_publicacao":source.get("data_publicacao"),"data_vigencia":source.get("data_vigencia"),"effective_from":source.get("effective_from"),"effective_to":source.get("effective_to"),"norma_alteradora":source.get("norma_alteradora"),"fonte_oficial":final,"fonte_host":urlparse(final).netloc,"retrieved_at":datetime.now(timezone.utc).isoformat(),"data_versao":source.get("data_versao"),"source_kind":kind,"sha256":hashlib.sha256(raw).hexdigest()}
     (CACHE/f"{base}.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
 
 
-def cleanup_source_cache(source_id, keep_document_ids):
+def cleanup_source_cache(source_id,keep_document_ids):
     removed=0; keep={str(x) for x in keep_document_ids}
     if not CACHE.exists(): return removed
     for sidecar in CACHE.glob("*.json"):
@@ -120,28 +121,24 @@ def sync_one(session,source,check=False,follow_links=True):
     last=""
     for url in source.get("urls",[]):
         try:
-            kind,final,raw,text=fetch(session,url); validate(source,text)
-            seen_ids={slug(source["id"])}
+            kind,final,raw,text=fetch(session,url); validate(source,text); seen_ids={slug(source["id"])}
             if not check: write_cache(source,final,kind,raw,text,source["id"],source["title"])
             linked_ok=linked_total=0
             if follow_links and source.get("follow_links") and kind=="html":
                 for link_url,link_title in discover_links(raw,final,source):
                     linked_total += 1
                     try:
-                        lk,lf,lr,lt=fetch(session,link_url); validate(source,lt); linked_ok += 1
-                        document_id=f"{source['id']}__{slug(link_title)}__{hashlib.sha1(lf.encode()).hexdigest()[:10]}"; seen_ids.add(slug(document_id))
+                        lk,lf,lr,lt=fetch(session,link_url); validate(source,lt); linked_ok += 1; document_id=f"{source['id']}__{slug(link_title)}__{hashlib.sha1(lf.encode()).hexdigest()[:10]}"; seen_ids.add(slug(document_id))
                         if not check: write_cache(source,lf,lk,lr,lt,document_id,link_title)
                     except Exception as exc: print(f"  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}")
-            removed=cleanup_source_cache(source["id"],seen_ids) if not check else 0
-            suffix=f", PDFs linkados {linked_ok}/{linked_total}" if linked_total else ""; suffix += f", cache obsoleto removido {removed}" if removed else ""
+            removed=cleanup_source_cache(source["id"],seen_ids) if not check else 0; suffix=f", PDFs linkados {linked_ok}/{linked_total}" if linked_total else ""; suffix += f", cache obsoleto removido {removed}" if removed else ""
             return True,f"OK {source['id']} via {final} ({kind}, {len(text)} chars{suffix})",seen_ids
         except Exception as exc: last=f"{type(exc).__name__}: {exc}"
     return False,f"FAIL {source['id']}: {last}",set()
 
 
 def main():
-    parser=argparse.ArgumentParser(); parser.add_argument("--check",action="store_true"); parser.add_argument("--required-only",action="store_true"); parser.add_argument("--no-follow-links",action="store_true"); args=parser.parse_args()
-    sources=[s for s in SOURCES if not args.required_only or s.get("required")]; session=make_session(); failures=[]; ok=0
+    parser=argparse.ArgumentParser(); parser.add_argument("--check",action="store_true"); parser.add_argument("--required-only",action="store_true"); parser.add_argument("--no-follow-links",action="store_true"); args=parser.parse_args(); sources=[s for s in SOURCES if not args.required_only or s.get("required")]; session=make_session(); failures=[]; ok=0
     for source in sources:
         good,message,_=sync_one(session,source,check=args.check,follow_links=not args.no_follow_links and not args.check); print(message); ok += int(good)
         if not good: failures.append(source["id"])
