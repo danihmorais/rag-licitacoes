@@ -1,76 +1,70 @@
 # RAG de Licitações
 
-RAG híbrido para licitações, contratos administrativos, Direito Público e regulamentação de São Paulo, com busca densa + lexical, RRF, reranking e LLM intercambiável.
+RAG híbrido para licitações, contratos administrativos, Direito Público e regulamentação de São Paulo, com dense + BM25, RRF, reranking e LLM intercambiável.
 
-O LLM é desacoplado do índice: Qwen, Gemma, Llama, Gemini, llama.cpp, LM Studio, vLLM, Ollama ou outro endpoint OpenAI-compatible podem ser trocados sem reindexação quando somente o gerador muda.
-
-## Pipeline
+## Arquitetura
 
 ```text
-fontes oficiais HTML/PDF -> sincronização -> cache local -> extração -> metadados
-                                                -> chunking jurídico -> dense + BM25
-                                                -> Qdrant -> RRF -> reranker -> contexto -> LLM
+fontes oficiais HTML/PDF -> sincronização -> cache local -> metadados
+                                      -> chunking jurídico -> dense + BM25
+                                      -> Qdrant -> RRF -> reranker -> contexto -> LLM
 ```
 
-## Corpus jurídico sem PDFs versionados
+O LLM é desacoplado do índice: Qwen, Gemma, Llama, Gemini, llama.cpp, LM Studio, vLLM, Ollama ou endpoint OpenAI-compatible podem ser trocados sem reindexação quando somente o gerador muda.
 
-O repositório não precisa armazenar cópias congeladas de legislação. `scripts/sync_sources.py` mantém um catálogo de fontes oficiais, com URLs alternativas, jurisdição, órgão, tipo documental, papel e nível de autoridade.
+## Corpus jurídico
 
-A sincronização baixa HTML/PDF, normaliza o texto e grava o resultado em `db/source_cache/`, que não é versionado. Há retries/backoff e fallback entre fontes oficiais. Uma indisponibilidade temporária não apaga o cache anterior.
+Legislação pública não é versionada como PDF congelado. `scripts/sources.py` mantém o catálogo oficial; `scripts/sync_sources.py` consulta as URLs, usa retry/backoff, valida o conteúdo e grava cache local em `db/source_cache/` (ignorado pelo Git).
+
+A sincronização local também descobre PDFs diretamente linkados por páginas oficiais selecionadas. Isso substitui o antigo workflow que gerava PDFs e fazia commits automáticos.
 
 ```bash
 python scripts/sync_sources.py
 python ingest.py
 ```
 
-Para testar somente fontes obrigatórias:
+Para somente verificar as fontes obrigatórias, sem gravar cache:
 
 ```bash
 python scripts/sync_sources.py --check --required-only
 ```
 
-Documentos fornecidos manualmente, como edital, TR, DFD, ETP e jurisprudência específica, continuam em `pdfs/`.
+Documentos recebidos manualmente (edital, TR, DFD, ETP, processo etc.) podem continuar em `pdfs/`. Para arquivos manualmente versionados, use `.DDMMAAAA.pdf`, por exemplo `.27082026.pdf`.
 
-## Conteúdo prioritário
+## Conteúdo
 
 ### Federal
 
-Constituição Federal; Lei nº 14.133/2021; Decreto nº 12.807/2025; LINDB; Lei nº 9.784/1999; Lei nº 8.429/1992; Lei Anticorrupção e seu regulamento; LAI; LGPD; Lei das Estatais; concessões; PPPs; LRF; Lei nº 4.320/1964; normas federais de PCA, ETP, TR e pesquisa de preços; além de legislação ambiental, resíduos e acessibilidade pertinente a contratações.
+Constituição; Lei 14.133/2021; Decreto 12.807/2025; LINDB; Decreto-Lei 200/1967; Lei 9.784/1999; improbidade; anticorrupção; LAI; LGPD; estatais; concessões; PPPs; LRF; Lei 4.320/1964; LC 123/2006; Lei 13.019/2014; Governo Digital; PCA; agentes/fiscais; SRP; credenciamento; ETP; TR; dispensa eletrônica; pesquisa de preços e demais atos oficiais.
+
+Lei 8.666/1993, Lei 10.520/2002 e RDC são mantidos como corpus histórico e marcados `revogado`, para análise de documentos legados sem apresentá-los como regra atual.
 
 ### São Paulo
 
-Constituição Estadual; Lei nº 10.177/1998; LC nº 709/1993; Lei nº 6.544/1989; regulamentação paulista da Lei nº 14.133/2021; Compras SP; TCESP; normas recentes de integridade, responsabilização e Marketplace.SP.
+Constituição Estadual; Lei 10.177/1998; LC 709/1993; Lei 6.544/1989; regulamentação paulista da Lei 14.133/2021; PCA; pesquisa de preços; ETP; catálogo; TR; agentes; contratação direta; leilão; AUDESP; integridade; responsabilização; Marketplace.SP; Compras SP e TCESP.
 
-### Controle e orientação
+### Controle/orientação
 
-TCU, TCESP, AGU, PNCP, Compras.gov.br e Compras SP são classificados como jurisprudência/controle ou orientação oficial conforme o caso. Não são tratados como texto legal pelo prompt.
-
-Doutrina comercial protegida por direitos autorais não deve ser copiada integralmente para o repositório sem licença. Prefira materiais públicos, licenciados e referências temáticas.
+TCU, TCESP, AGU, PNCP, Compras.gov.br e Compras SP têm `source_role` explícito. Jurisprudência, manual e orientação nunca são tratados como texto legal. Doutrina comercial protegida não deve ser copiada integralmente sem licença.
 
 ## Recuperação jurídica
 
 - Dense + BM25 + RRF.
-- Chunking estrutural por artigo/súmula antes do split por tamanho.
-- Identidade por `source_id`, `unit_id` e `chunk_index`.
+- Chunking estrutural por artigo/súmula.
+- `source_id`, `unit_id`, `chunk_index`, páginas e metadados temporais.
 - Reranker independente do LLM.
-- Relevância é o critério primário; autoridade não pode transformar documento irrelevante em resposta.
-- Filtros por jurisdição, ano, status e demais metadados.
-- Se não houver evidência recuperada, o LLM não é chamado.
-- Citações `[F#]` são exigidas para afirmações jurídicas relevantes.
-
-O índice usa `intfloat/multilingual-e5-large`, com `passage:` em documentos e `query:` em consultas. Mudanças no embedding, chunking, reranker, prefixos ou schema exigem reindexação e são detectadas por `index_manifest.json`.
+- Relevância primária; autoridade só desempata.
+- `RAG_MIN_EVIDENCE_SCORE` impede chamar o LLM quando não há evidência suficiente.
+- Citações `[F#]` para afirmações jurídicas relevantes.
+- Filtros: `@jurisdicao=estadual_sp @ano=2026 ...`.
 
 ## Temporalidade
 
-O objetivo é suportar tanto “qual é a regra vigente?” quanto “qual era a regra em determinada data?”. O modelo de metadados contempla `data_publicacao`, `data_vigencia`, `effective_from`, `effective_to`, `status`, `revogado`, `norma_alteradora` e `retrieved_at`. A extração dessas relações será ampliada progressivamente por fonte.
+O corpus carrega `status`, `effective_from`, `effective_to`, `revogado`, `data_vigencia` e `retrieved_at`. Exemplo: a IN SEGES/MGI 512/2025 está marcada como `vacatio_legis` com início em 30/11/2026, e a IN 129/2026 registra a postergação.
 
 ## RTX 5060 Ti 16 GB
 
-Mantenha o gerador local separado do mecanismo de recuperação. FastEmbed pode usar `CUDAExecutionProvider`; Qdrant e parte da recuperação podem permanecer fora da GPU. O LLM pode ser qualquer adapter compatível.
-
-```text
-RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
-```
+Recuperação e LLM permanecem desacoplados. FastEmbed pode usar `RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider`, deixando a escolha de servidor/modelo de geração independente e permitindo reservar VRAM para o LLM.
 
 ## Instalação
 
@@ -79,25 +73,21 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+python scripts/sync_sources.py
 python ingest.py
 python query.py
 ```
 
 ## GitHub Actions
 
-O antigo workflow de geração de PDFs falhava porque várias fontes externas, especialmente páginas do Planalto, retornavam `RemoteDisconnected` no runner. Como o workflow abortava quando qualquer uma das 34 fontes falhava, o CI ficava vermelho mesmo com 17 fontes de São Paulo sendo processadas corretamente.
+`ci.yml` testa e compila sem depender de sites jurídicos externos. `sync-sources.yml` apenas verifica fontes oficiais obrigatórias semanalmente/manual e não faz commits.
 
-Agora existem dois workflows independentes:
+O último CI vermelho falhava em `test_structural_chunking_keeps_article_unit`: 5 testes passavam e o parser devolvia uma unidade genérica em vez de `Art. 1º`, `Art. 2º`, `Art. 3º`. O parser e os testes foram corrigidos, incluindo `Artigo 1º` e `Art. 10-A`.
 
-- `ci.yml`: testes e compilação, sem depender de sites jurídicos externos.
-- `sync-sources.yml`: verificação semanal/manual das fontes oficiais obrigatórias, com retry e sem commits automáticos.
+## Verificações
 
-Isso elimina o loop de commits automáticos de PDFs e impede que uma falha de rede em uma fonte jurídica quebre o CI normal.
-
-## Próximos passos recomendados
-
-1. Coletor estruturado de acórdãos TCESP/TCU/STJ/STF com processo, órgão julgador, relator, data e assunto.
-2. OCR explícito para PDFs escaneados, com `text_origin=native|ocr` e confiança por página.
-3. Dataset de avaliação com perguntas reais e métricas recall@k, MRR/nDCG, cobertura de citação, jurisdição e temporalidade.
-4. Relações entre norma alteradora e dispositivos alterados.
-5. Catálogos separados para jurisprudência, orientação oficial e doutrina.
+```bash
+python -m compileall -q .
+python -m pytest -q
+python scripts/sync_sources.py --check --required-only
+```

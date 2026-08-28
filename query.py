@@ -1,3 +1,4 @@
+import math
 import re
 import sys
 
@@ -17,6 +18,7 @@ REGRAS DE AUTORIDADE E TEMPO:
 - Nunca trate jurisprudência, manual, guia ou doutrina como se fosse texto legal.
 - Respeite jurisdição, esfera, status e vigência. Se houver conflito temporal, prefira a norma vigente para a data perguntada; se a data não estiver clara, informe a limitação.
 - Não misture regime federal com estadual paulista sem explicar a aplicação.
+- Normas com status "revogado" ou "vacatio_legis" não podem ser apresentadas como regra atualmente vigente sem explicar a condição temporal.
 
 CITAÇÕES:
 - Toda afirmação jurídica relevante deve conter [F#].
@@ -59,29 +61,42 @@ def hybrid(client, dense, sparse, query, query_filter):
         query=models.FusionQuery(fusion=models.Fusion.RRF), limit=config.CANDIDATES_K).points
 
 
+def evidence_score(raw_score):
+    value = float(raw_score)
+    if 0.0 <= value <= 1.0: return value
+    value = max(-30.0, min(30.0, value))
+    return 1.0 / (1.0 + math.exp(-value))
+
+
 def rerank(reranker, query, points):
     if not points: return []
-    scored = list(zip(points, list(reranker.rerank(query, [p.payload['text'] for p in points])))); scored.sort(key=lambda pair: pair[1], reverse=True)
+    raw_scores = list(reranker.rerank(query, [p.payload['text'] for p in points]))
+    scored = []
+    for point, raw_score in zip(points, raw_scores):
+        point.payload['_rerank_score'] = float(raw_score)
+        point.payload['_evidence_score'] = evidence_score(raw_score)
+        scored.append(point)
+    scored.sort(key=lambda p: p.payload['_evidence_score'], reverse=True)
     output, counts = [], {}
-    for point, score in scored:
+    for point in scored:
         key = (point.payload.get('source'), point.payload.get('unit_id'))
         if counts.get(key, 0) >= 2: continue
-        counts[key] = counts.get(key, 0) + 1
-        point.payload['_rerank_score'] = float(score); output.append(point)
+        counts[key] = counts.get(key, 0) + 1; output.append(point)
         if len(output) >= config.FINAL_K: break
-    # Relevância é primária; autoridade apenas desempata, nunca substitui pertinência.
-    return sorted(output, key=lambda p: (-p.payload.get('_rerank_score', 0.0), p.payload.get('authority_level') or 9))
+    if not output or output[0].payload.get('_evidence_score', 0.0) < config.MIN_EVIDENCE_SCORE: return []
+    return sorted(output, key=lambda p: (-p.payload.get('_evidence_score', 0.0), p.payload.get('authority_level') or 9))
 
 
 def context(points):
     parts, total = [], 0
     for index, point in enumerate(points, 1):
         payload = point.payload; text = payload.get('full_unit_text') or payload['text']; page = payload.get('page'); page_end = payload.get('page_end') or page
-        page_label = f'p. {page}' if page == page_end else f'pp. {page}-{page_end}'
+        page_label = 'p. desconhecida' if page is None else (f'p. {page}' if page == page_end else f'pp. {page}-{page_end}')
         unit_ref = f", {payload['unit_ref']}" if payload.get('unit_ref') else ''
         part = (f"[F{index}] {payload['source']}, {page_label}{unit_ref} | papel={payload.get('source_role','desconhecido')} | "
                 f"autoridade={payload.get('authority_level','desconhecida')} | status={payload.get('status','desconhecido')} | "
-                f"jurisdicao={payload.get('jurisdicao','desconhecida')} | vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'}\n{text}")
+                f"jurisdicao={payload.get('jurisdicao','desconhecida')} | vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} até {payload.get('effective_to') or 'indeterminada'} | "
+                f"fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}")
         if total + len(part) > config.MAX_CONTEXT_CHARS: break
         parts.append(part); total += len(part)
     return '\n\n---\n\n'.join(parts)
@@ -91,7 +106,7 @@ def answer_query(client, dense, sparse, reranker, llm, raw):
     query, filters = parse_filters(raw)
     if not query: return 'Informe uma pergunta.', []
     points = rerank(reranker, query, hybrid(client, dense, sparse, query, qfilter(filters)))
-    if not points: return 'Não encontrei suporte suficiente nos documentos indexados para responder com segurança.', []
+    if not points: return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
     return llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context(points)), user_prompt=query), points
 
 
@@ -108,6 +123,6 @@ def main():
         try: answer, points=answer_query(client,dense,sparse,reranker,llm,raw)
         except Exception as error: print('Erro:', error); continue
         print('\n'+answer+'\n')
-        for index, point in enumerate(points,1): print(f"[F{index}] {point.payload['source']} (p. {point.payload.get('page')})")
+        for index, point in enumerate(points,1): print(f"[F{index}] {point.payload['source']} (p. {point.payload.get('page')}, score={point.payload.get('_evidence_score',0):.3f})")
 
 if __name__=='__main__': main()
