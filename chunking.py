@@ -1,4 +1,5 @@
 import re
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 ARTIGO_RE = re.compile(r"^[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?(?=\s|$))", re.IGNORECASE | re.MULTILINE)
@@ -7,7 +8,7 @@ SUMULA_RE = re.compile(r"^[ \t]*(S[uú]mula\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[�
 
 def _find(text, rx, kind):
     matches = list(rx.finditer(text))
-    if len(matches) < 2:
+    if not matches:
         return None
     out = []
     if matches[0].start() > 0 and text[:matches[0].start()].strip():
@@ -22,10 +23,10 @@ def _find(text, rx, kind):
 
 def _units(text):
     article_units = _find(text, ARTIGO_RE, 'artigo')
-    if article_units and sum(item['kind'] == 'artigo' for item in article_units) >= 2:
+    if article_units:
         return article_units
     sumula_units = _find(text, SUMULA_RE, 'sumula')
-    if sumula_units and sum(item['kind'] == 'sumula' for item in sumula_units) >= 2:
+    if sumula_units:
         return sumula_units
     return [{'kind': 'generic', 'ref': None, 'start': 0, 'text': text}]
 
@@ -39,8 +40,6 @@ def build_structural_chunks(full_text, max_size, overlap):
         for index, piece in enumerate(pieces):
             if not piece.strip(): continue
             found = full.find(piece, max(0, position - overlap)); found = position if found < 0 else found
-            output.append({'text': piece, 'full_unit_text': piece if len(full) <= max_size else None,
-                           'unit_kind': unit['kind'], 'unit_ref': unit['ref'], 'unit_id': unit_id,
-                           'chunk_index': index, 'unit_length': len(full), 'start': unit['start'] + found})
+            output.append({'text': piece, 'full_unit_text': piece if len(full) <= max_size else None, 'unit_kind': unit['kind'], 'unit_ref': unit['ref'], 'unit_id': unit_id, 'chunk_index': index, 'unit_length': len(full), 'start': unit['start'] + found})
             position = found + max(1, len(piece) - overlap)
     return output

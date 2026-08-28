@@ -18,7 +18,7 @@ REGRAS DE AUTORIDADE E TEMPO:
 - Nunca trate jurisprudência, manual, guia ou doutrina como se fosse texto legal.
 - Respeite jurisdição, esfera, status e vigência. Se houver conflito temporal, prefira a norma vigente para a data perguntada; se a data não estiver clara, informe a limitação.
 - Não misture regime federal com estadual paulista sem explicar a aplicação.
-- Normas com status "revogado" ou "vacatio_legis" não podem ser apresentadas como regra atualmente vigente sem explicar a condição temporal.
+- Normas com status "revogado", "historico" ou "vacatio_legis" não podem ser apresentadas como regra atualmente vigente sem explicar a condição temporal.
 
 CITAÇÕES:
 - Toda afirmação jurídica relevante deve conter [F#].
@@ -120,7 +120,7 @@ def main():
         raw=input('> ').strip()
         if raw.lower() in ('sair','exit','quit'): break
         if not raw: continue
-        try: answer, points=answer_query(client,dense,sparse,reranker,llm,raw)
+        try: answer,points=answer_query(client,dense,sparse,reranker,llm,raw)
         except Exception as error: print('Erro:', error); continue
         print('\n'+answer+'\n')
         for index, point in enumerate(points,1): print(f"[F{index}] {point.payload['source']} (p. {point.payload.get('page')}, score={point.payload.get('_evidence_score',0):.3f})")
