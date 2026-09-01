@@ -17,8 +17,9 @@ def current_manifest():
         'rerank_model': config.RERANK_MODEL,
         'chunk_size': config.CHUNK_SIZE,
         'chunk_overlap': config.CHUNK_OVERLAP,
+        'context_neighbors': config.CONTEXT_NEIGHBORS,
         'max_context_chars': config.MAX_CONTEXT_CHARS,
-        'schema': 'unit_id/chunk_index/page_span/source_role/status/authority_level/source_id',
+        'schema': 'unit_id/chunk_index/page_span/source_role/status/authority_level/source_id/document_hash',
     }
 
 
