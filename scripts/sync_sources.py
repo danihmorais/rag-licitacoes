@@ -228,6 +228,7 @@ def sync_one(session, source, check=False, follow_links=True):
             if not check:
                 write_cache(source, final, kind, raw, text, source['id'], source['title'])
             linked_ok = linked_total = 0
+            link_failures = False
             if follow_links and source.get('follow_links') and kind == 'html':
                 for link_url, link_title in discover_links(raw, final, source):
                     linked_total += 1
@@ -242,10 +243,14 @@ def sync_one(session, source, check=False, follow_links=True):
                         if not check:
                             write_cache(source, linked_final, linked_kind, linked_raw, linked_text, document_id, link_title)
                     except Exception as exc:
-                        print(f'  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}')
-            removed = cleanup_source_cache(source['id'], seen_ids) if not check else 0
+                        link_failures = True
+                        print(f'  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}; cache anterior preservado')
+            removed = cleanup_source_cache(source['id'], seen_ids) if not check and not link_failures else 0
             suffix = f', PDFs linkados {linked_ok}/{linked_total}' if linked_total else ''
-            suffix += f', cache obsoleto removido {removed}' if removed else ''
+            if link_failures:
+                suffix += ', cache obsoleto preservado por falha de link'
+            elif removed:
+                suffix += f', cache obsoleto removido {removed}'
             return True, f'OK {source["id"]} via {final} ({kind}, {len(text)} chars{suffix})', seen_ids
         except Exception as exc:
             last = f'{type(exc).__name__}: {exc}'
@@ -263,12 +268,7 @@ def main():
     failures = []
     ok = 0
     for source in sources:
-        good, message, _ = sync_one(
-            session,
-            source,
-            check=args.check,
-            follow_links=not args.no_follow_links and not args.check,
-        )
+        good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
         print(message)
         ok += int(good)
         if not good:
