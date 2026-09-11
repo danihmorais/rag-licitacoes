@@ -19,6 +19,7 @@ def test_link_failure_does_not_delete_previous_cache(monkeypatch, tmp_path: Path
     source = {
         'id': 'fonte-teste',
         'title': 'Fonte de teste',
+        'urls': ['https://example.test/pagina'],
         'source_role': 'orientacao_oficial',
         'follow_links': True,
         'follow_patterns': [r'\\.pdf(?:$|\\?)'],
