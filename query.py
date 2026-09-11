@@ -217,12 +217,13 @@ def main():
     parser.add_argument('-q', '--query', help='Executa uma única consulta e encerra.')
     parser.add_argument('--json', action='store_true', help='Retorna a consulta única em JSON.')
     args = parser.parse_args()
+    if args.json and not args.query:
+        parser.error('--json exige --query.')
     try:
         client, dense, sparse, reranker, llm = build_runtime()
     except Exception as error:
         print(str(error))
         return 1
-    print(f'RAG pronto. LLM: {config.LLM_PROVIDER}/{config.LLM_MODEL}')
     if args.query:
         try:
             answer, points = answer_query(client, dense, sparse, reranker, llm, args.query)
@@ -246,10 +247,12 @@ def main():
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
+            print(f'RAG pronto. LLM: {config.LLM_PROVIDER}/{config.LLM_MODEL}')
             print('\n' + answer + '\n')
             for source in payload['sources']:
                 print(f"{source['citation']} {source['title'] or source['source']} (p. {source['page']}, score={source['score']:.3f})")
         return 0
+    print(f'RAG pronto. LLM: {config.LLM_PROVIDER}/{config.LLM_MODEL}')
     while True:
         try:
             raw = input('> ').strip()
