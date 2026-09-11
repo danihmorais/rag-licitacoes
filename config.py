@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
 
+from jurisprudencia.queries import parse_queries
+
 BASE_DIR = Path(__file__).parent
 PDFS_DIR = BASE_DIR / 'pdfs'
 DB_DIR = BASE_DIR / 'db'
@@ -8,7 +10,7 @@ SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 QDRANT_PATH = DB_DIR / 'qdrant'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
-INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '9')
+INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '10')
 DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
 SPARSE_MODEL = os.getenv('RAG_SPARSE_MODEL', 'Qdrant/bm25')
@@ -25,8 +27,11 @@ FASTEMBED_PROVIDERS = [x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', '
 RAG_SYNC_SOURCES = os.getenv('RAG_SYNC_SOURCES', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_SYNC_JURISPRUDENCIA = os.getenv('RAG_SYNC_JURISPRUDENCIA', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_PRUNE_STALE = os.getenv('RAG_PRUNE_STALE', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
-JURISPRUDENCIA_QUERY = os.getenv('RAG_JURISPRUDENCIA_QUERY', 'licitação')
-JURISPRUDENCIA_LIMIT = int(os.getenv('RAG_JURISPRUDENCIA_LIMIT', '25'))
+JURISPRUDENCIA_QUERY = os.getenv('RAG_JURISPRUDENCIA_QUERY', '').strip()
+JURISPRUDENCIA_QUERIES = parse_queries(os.getenv('RAG_JURISPRUDENCIA_QUERIES'))
+JURISPRUDENCIA_LIMIT = int(os.getenv('RAG_JURISPRUDENCIA_LIMIT', '12'))
+JURISPRUDENCIA_DETAIL = os.getenv('RAG_JURISPRUDENCIA_DETAIL', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
+JURISPRUDENCIA_WITH_CONTENT = os.getenv('RAG_JURISPRUDENCIA_WITH_CONTENT', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
 LLM_PROVIDER = os.getenv('RAG_LLM_PROVIDER', 'openai_compatible')
 LLM_MODEL = os.getenv('RAG_LLM_MODEL', 'local')
 LLM_TEMPERATURE = float(os.getenv('RAG_LLM_TEMPERATURE', '0.1'))
@@ -54,6 +59,7 @@ def validate_config() -> None:
         (RERANK_SCORE_MODE in {'sigmoid', 'identity'}, "RAG_RERANK_SCORE_MODE deve ser 'sigmoid' ou 'identity'."),
         (LLM_TIMEOUT > 0, 'RAG_LLM_TIMEOUT deve ser maior que zero.'),
         (LLM_MAX_TOKENS >= 0, 'RAG_LLM_MAX_TOKENS não pode ser negativo.'),
+        (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
     )
     errors = [message for ok, message in checks if not ok]
     if errors:

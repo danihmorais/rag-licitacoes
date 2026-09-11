@@ -7,7 +7,15 @@ ARTIGO_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 SUMULA_RE = re.compile(
-    r"^[ \t]*(S[uú]mula\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b",
+    r"^[ \t]*(S[uú]mula(?:\s+Vinculante)?\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+JURISPRUDENCIA_RE = re.compile(
+    r"^\s*TRIBUNAL:\s*.+\nPROCESSO:\s*.+$",
+    re.IGNORECASE | re.MULTILINE,
+)
+TEMA_RE = re.compile(
+    r"^[ \t]*(Tema\s+n?[ºo°.]*\s*\d+)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -29,12 +37,23 @@ def _find(text, rx, kind):
 
 
 def _units(text):
+    if JURISPRUDENCIA_RE.search(text):
+        process_match = re.search(r"^PROCESSO:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
+        return [{
+            'kind': 'jurisprudencia',
+            'ref': process_match.group(1).strip() if process_match else None,
+            'start': 0,
+            'text': text,
+        }]
     article_units = _find(text, ARTIGO_RE, 'artigo')
     if article_units:
         return article_units
     sumula_units = _find(text, SUMULA_RE, 'sumula')
     if sumula_units:
         return sumula_units
+    tema_units = _find(text, TEMA_RE, 'tema')
+    if tema_units:
+        return tema_units
     return [{'kind': 'generic', 'ref': None, 'start': 0, 'text': text}]
 
 
