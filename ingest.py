@@ -115,7 +115,7 @@ def _page(offset, starts):
     return number
 
 
-def build_chunks(document, pages, digest):
+def build_chunks(document, pages):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     starts = _starts(pages)
@@ -159,6 +159,36 @@ def delete_doc(client, name):
                 must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))]
             )
         ),
+        wait=True,
+    )
+
+
+def source_point_ids(client, name):
+    ids = set()
+    offset = None
+    source_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])
+    while True:
+        points, offset = client.scroll(
+            collection_name=config.COLLECTION_NAME,
+            scroll_filter=source_filter,
+            limit=256,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        ids.update(point.id for point in points)
+        if offset is None:
+            break
+    return ids
+
+
+def delete_point_ids(client, point_ids):
+    point_ids = list(point_ids)
+    if not point_ids:
+        return
+    client.delete(
+        collection_name=config.COLLECTION_NAME,
+        points_selector=models.PointIdsList(points=point_ids),
         wait=True,
     )
 
@@ -242,11 +272,12 @@ def main():
             continue
         try:
             pages = extract_pages(document)
-            chunks = build_chunks(document, pages, digest)
+            chunks = build_chunks(document, pages)
             if not chunks:
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
                 continue
+            old_ids = source_point_ids(client, document.name)
             dense_vectors = list(dense.embed(['passage: ' + item['text'] for item in chunks]))
             validate_dense_vectors(dense_vectors, len(chunks))
             sparse_vectors = list(sparse.embed([item['text'] for item in chunks]))
@@ -275,12 +306,13 @@ def main():
                         payload=item,
                     )
                 )
-            delete_doc(client, document.name)
+            new_ids = {point.id for point in points}
             client.upsert(collection_name=config.COLLECTION_NAME, points=points, wait=True)
+            delete_point_ids(client, old_ids - new_ids)
             cache[document.name] = {'sha256': digest, 'chunks': len(points)}
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
-            print(f'ERRO ao indexar {document.name}: {exc}. Versão anterior, se existente, foi preservada.')
+            print(f'ERRO ao indexar {document.name}: {exc}. A versão anterior permanece disponível quando o upsert falhar.')
             errors.append(document.name)
 
     write_cache(cache)
