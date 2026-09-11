@@ -29,9 +29,9 @@ def test_context_with_sources_returns_exact_points_sent_to_model(monkeypatch):
 
 
 def test_context_with_sources_drops_sources_that_do_not_fit(monkeypatch):
-    first = point('1', 'a.txt', 'artigo:1', 'x' * 100)
-    second = point('2', 'b.txt', 'artigo:2', 'y' * 100)
-    monkeypatch.setattr(query.config, 'MAX_CONTEXT_CHARS', 180)
+    first = point('1', 'a.txt', 'artigo:1', 'x' * 30)
+    second = point('2', 'b.txt', 'artigo:2', 'y' * 30)
+    monkeypatch.setattr(query.config, 'MAX_CONTEXT_CHARS', 600)
     context_text, sources = query.context_with_sources([first, second])
     assert '[F1]' in context_text
     assert '[F2]' not in context_text
