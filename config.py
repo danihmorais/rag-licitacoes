@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 
-from jurisprudencia.queries import DEFAULT_QUERIES, parse_queries
+from jurisprudencia.queries import parse_queries
 
 BASE_DIR = Path(__file__).parent
 PDFS_DIR = BASE_DIR / 'pdfs'
