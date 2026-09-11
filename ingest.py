@@ -316,12 +316,15 @@ def main():
             errors.append(document.name)
 
     write_cache(cache)
-    write_manifest()
     total = client.count(config.COLLECTION_NAME, exact=True).count
     print('Total:', total, '| pulados (sem alteração):', skipped, '| fontes obsoletas removidas:', stale_removed)
     if errors:
         print('Arquivos com erro (não indexados):', ', '.join(errors))
+        print('Manifesto não atualizado porque a indexação terminou parcialmente; execute novamente após corrigir as fontes.')
+        return 1
+    write_manifest()
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
