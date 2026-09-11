@@ -79,6 +79,27 @@ O cache de jurisprudência não é versionado no Git. Cada registro recebe `vers
 - `RAG_MIN_EVIDENCE_SCORE` impede chamar o LLM quando não há evidência suficientemente relevante.
 - Citações `[F#]` para afirmações jurídicas relevantes.
 - Filtros: `@jurisdicao=estadual_sp @ano=2026 ...`.
+- `RAG_RERANK_SCORE_MODE=sigmoid` interpreta o score padrão do cross-encoder como logit; `identity` fica disponível para rerankers que já devolvem score normalizado entre 0 e 1.
+- Documentos recuperados são tratados como dados, não como instruções; ordens inseridas no texto do documento não devem alterar o comportamento do modelo.
+
+## Integridade do índice
+
+O manifesto registra modelo, dimensão, parâmetros de chunking, reranker e esquema. Alterações incompatíveis interrompem a consulta e exigem reindexação. Manifesto e cache de ingestão são gravados atomicamente.
+
+O cache de ingestão usa versão própria e guarda `sha256` e quantidade de chunks. Um documento é reindexado quando mudou ou quando sua quantidade indexada não confere com o cache. Por padrão, `RAG_PRUNE_STALE=1` remove do Qdrant fontes que já não pertencem ao corpus atual, evitando documentos órfãos.
+
+O ingest também valida a dimensão dos embeddings densos antes de substituir os pontos existentes. Assim, falhas de modelo/embedding não destroem o índice válido anterior.
+
+## Consulta não interativa
+
+Para integração com scripts e serviços, a consulta pode ser executada sem modo interativo:
+
+```bash
+python query.py --query "Quais são os requisitos do ETP?"
+python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP" --json
+```
+
+`--json` retorna apenas o objeto da consulta, com resposta e fontes recuperadas. O uso normal continua disponível com `python query.py`.
 
 ## Temporalidade
 
@@ -102,11 +123,15 @@ python ingest.py
 python query.py
 ```
 
+O projeto é validado em Python 3.12 no CI. Essa escolha é intencional para o `fastembed 0.8.0`; há relatos de falha no `SparseTextEmbedding` com Python 3.14.2 em Linux.
+
 ## GitHub Actions
 
 `ci.yml` compila e testa apenas lógica determinística; não depende de sites jurídicos externos.
 
 `sync-sources.yml` é um health-check separado e não bloqueante: indisponibilidade temporária de Planalto, TCESP, TCU ou outro site não deixa o branch vermelho. A lógica de parsing das fontes continua coberta pelo CI offline.
+
+O CI cobre chunking estrutural, filtros, catálogo de fontes, parsing dos adaptadores de jurisprudência, compatibilidade de configuração, cache de ingestão, limpeza de fontes obsoletas e respostas OpenAI-compatible.
 
 Foi corrigido o caso de regex de PDF com escape duplicado que fazia `discover_links()` ignorar PDFs oficiais. O normalizador aceita regex normal e duplamente escapado.
 
