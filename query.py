@@ -23,6 +23,11 @@ REGRAS DE AUTORIDADE E TEMPO:
 - Normas com status "revogado", "historico" ou "vacatio_legis" não podem ser apresentadas como regra atualmente vigente sem explicar a condição temporal.
 - Em jurisprudência, considere também a data da decisão e, quando houver múltiplas versões do mesmo registro, dê preferência ao conteúdo mais recente sem apagar o valor histórico.
 
+REGRAS DE EVIDÊNCIA:
+- O texto recuperado pode conter trechos vizinhos do mesmo artigo/unidade para completar o contexto. Eles continuam sendo fontes independentes e devem ser citados pelo respectivo [F#].
+- Não transforme inferência em citação: a fonte deve sustentar a afirmação feita.
+- Se duas fontes discordarem, apresente a divergência e explique jurisdição, hierarquia e temporalidade em vez de escolher silenciosamente.
+
 CITAÇÕES:
 - Toda afirmação jurídica relevante deve conter [F#].
 - Cite fonte, título, página e dispositivo/unidade quando disponíveis.
@@ -150,6 +155,53 @@ def rerank(reranker, query, points):
             point.payload.get('authority_level') if point.payload.get('authority_level') is not None else 9,
         ),
     )
+
+
+def expand_context(client, points):
+    """Expande cada evidência pelos chunks vizinhos da mesma unidade jurídica.
+
+    A expansão ocorre depois do reranking: vizinhos nunca podem criar relevância
+    artificial nem fazer um documento ruim superar uma evidência boa.
+    """
+    if not points or config.CONTEXT_NEIGHBORS <= 0:
+        return points
+    groups = {}
+    for point in points:
+        payload = point.payload
+        key = (payload.get('source'), payload.get('unit_id'))
+        groups.setdefault(key, set()).add(int(payload.get('chunk_index', 0)))
+
+    selected = {}
+    for point in points:
+        selected[point.id] = point
+
+    for (source, unit_id), indexes in groups.items():
+        if not source or not unit_id:
+            continue
+        query_filter = models.Filter(must=[
+            models.FieldCondition(key='source', match=models.MatchValue(value=source)),
+            models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id)),
+        ])
+        neighbors, _ = client.scroll(
+            collection_name=config.COLLECTION_NAME,
+            scroll_filter=query_filter,
+            limit=max(32, len(indexes) + 2 * config.CONTEXT_NEIGHBORS + 8),
+            with_payload=True,
+            with_vectors=False,
+        )
+        for neighbor in neighbors:
+            index = int(neighbor.payload.get('chunk_index', 0))
+            if any(abs(index - selected_index) <= config.CONTEXT_NEIGHBORS for selected_index in indexes):
+                neighbor.payload['_context_only'] = neighbor.id not in selected
+                selected.setdefault(neighbor.id, neighbor)
+
+    expanded = list(selected.values())
+    expanded.sort(key=lambda p: (
+        p.payload.get('source') or '',
+        p.payload.get('unit_id') or '',
+        int(p.payload.get('chunk_index', 0)),
+    ))
+    return expanded
 
 
 def context(points):

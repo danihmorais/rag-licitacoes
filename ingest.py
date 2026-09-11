@@ -115,7 +115,7 @@ def _page(offset, starts):
     return number
 
 
-def build_chunks(document, pages):
+def build_chunks(document, pages, digest):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     starts = _starts(pages)
@@ -242,7 +242,7 @@ def main():
             continue
         try:
             pages = extract_pages(document)
-            chunks = build_chunks(document, pages)
+            chunks = build_chunks(document, pages, digest)
             if not chunks:
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
@@ -280,7 +280,7 @@ def main():
             cache[document.name] = {'sha256': digest, 'chunks': len(points)}
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
-            print(f'ERRO ao indexar {document.name}: {exc}. Arquivo ignorado nesta execução.')
+            print(f'ERRO ao indexar {document.name}: {exc}. Versão anterior, se existente, foi preservada.')
             errors.append(document.name)
 
     write_cache(cache)

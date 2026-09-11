@@ -5,7 +5,7 @@ import pytest
 
 import config
 from chunking import build_structural_chunks
-from query import evidence_score, parse_filters
+from query import evidence_score, parse_filters, qfilter
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,6 +58,16 @@ def test_filter_parser_converts_boolean_filters():
 def test_filter_parser_rejects_unknown_filters():
     with pytest.raises(ValueError, match='Filtro'):
         parse_filters('@nao_existe=abc pergunta')
+
+
+def test_filter_parser_rejects_invalid_numeric_filter():
+    with pytest.raises(ValueError, match='numérico'):
+        parse_filters('@ano=abc qual a regra?')
+
+
+def test_qfilter_rejects_unknown_filter():
+    with pytest.raises(ValueError, match='não suportados'):
+        qfilter({'autor': 'x'})
 
 
 def test_structural_chunking_keeps_article_unit():
