@@ -2,8 +2,14 @@ import re
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-ARTIGO_RE = re.compile(r"^[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?(?=\s|$))", re.IGNORECASE | re.MULTILINE)
-SUMULA_RE = re.compile(r"^[ \t]*(S[uú]mula\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b", re.IGNORECASE | re.MULTILINE)
+ARTIGO_RE = re.compile(
+    r"^[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?(?=\s|$))",
+    re.IGNORECASE | re.MULTILINE,
+)
+SUMULA_RE = re.compile(
+    r"^[ \t]*(S[uú]mula\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _find(text, rx, kind):
@@ -13,8 +19,9 @@ def _find(text, rx, kind):
     out = []
     if matches[0].start() > 0 and text[:matches[0].start()].strip():
         out.append({'kind': 'generic', 'ref': None, 'start': 0, 'text': text[:matches[0].start()].strip()})
-    for i, match in enumerate(matches):
-        start = match.start(); end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         value = text[start:end].strip()
         if value:
             out.append({'kind': kind, 'ref': match.group(1).strip(), 'start': start, 'text': value})
@@ -32,14 +39,41 @@ def _units(text):
 
 
 def build_structural_chunks(full_text, max_size, overlap):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=max_size, chunk_overlap=overlap, separators=['\n\n', '\n', '. ', '; ', ' ', ''])
+    if max_size <= 0:
+        raise ValueError('max_size deve ser maior que zero')
+    if overlap < 0 or overlap >= max_size:
+        raise ValueError('overlap deve ser maior ou igual a zero e menor que max_size')
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=max_size,
+        chunk_overlap=overlap,
+        separators=['\n\n', '\n', '. ', '; ', ' ', ''],
+    )
     output = []
     for unit in _units(full_text):
-        full = unit['text']; pieces = [full] if len(full) <= max_size else splitter.split_text(full)
-        position = 0; unit_id = f"{unit['kind']}:{unit.get('ref') or unit['start']}"
+        full = unit['text']
+        pieces = [full] if len(full) <= max_size else splitter.split_text(full)
+        position = 0
+        unit_id = f"{unit['kind']}:{unit.get('ref') or unit['start']}"
         for index, piece in enumerate(pieces):
-            if not piece.strip(): continue
-            found = full.find(piece, max(0, position - overlap)); found = position if found < 0 else found
-            output.append({'text': piece, 'full_unit_text': piece if len(full) <= max_size else None, 'unit_kind': unit['kind'], 'unit_ref': unit['ref'], 'unit_id': unit_id, 'chunk_index': index, 'unit_length': len(full), 'start': unit['start'] + found})
+            if not piece.strip():
+                continue
+            found = full.find(piece, position)
+            if found < 0 and overlap:
+                found = full.find(piece, max(0, position - overlap))
+            if found < 0:
+                found = position
+            output.append(
+                {
+                    'text': piece,
+                    'full_unit_text': piece if len(full) <= max_size else None,
+                    'unit_kind': unit['kind'],
+                    'unit_ref': unit['ref'],
+                    'unit_id': unit_id,
+                    'chunk_index': index,
+                    'unit_length': len(full),
+                    'start': unit['start'] + found,
+                }
+            )
             position = found + max(1, len(piece) - overlap)
     return output

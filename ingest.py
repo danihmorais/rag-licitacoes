@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -10,12 +12,13 @@ from pypdf import PdfReader
 from qdrant_client import QdrantClient, models
 
 import config
-from chunking import build_structural_chunks
 from index_manifest import read_manifest, write_manifest
 from metadata import extract_metadata
+from chunking import build_structural_chunks
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
+CACHE_VERSION = 2
 
 
 def sync_sources():
@@ -30,7 +33,15 @@ def sync_sources():
 def sync_jurisprudencia():
     if not config.RAG_SYNC_JURISPRUDENCIA:
         return
-    command = [sys.executable, '-m', 'jurisprudencia.collector', '--query', config.JURISPRUDENCIA_QUERY, '--limit', str(config.JURISPRUDENCIA_LIMIT)]
+    command = [
+        sys.executable,
+        '-m',
+        'jurisprudencia.collector',
+        '--query',
+        config.JURISPRUDENCIA_QUERY,
+        '--limit',
+        str(config.JURISPRUDENCIA_LIMIT),
+    ]
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
         print('Aviso: coleta de jurisprudência terminou sem novos registros; cache anterior será preservado.')
@@ -45,19 +56,39 @@ def load_documents():
 
 
 def file_hash(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1 << 20), b''):
-            h.update(chunk)
-    return h.hexdigest()
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_cache():
-    return json.loads(CACHE_PATH.read_text(encoding='utf-8')) if CACHE_PATH.exists() else {}
+    if not CACHE_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(CACHE_PATH.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f'Aviso: cache de ingestão inválido; reindexação será feita: {exc}')
+        return {}
+    if payload.get('version') != CACHE_VERSION or not isinstance(payload.get('documents'), dict):
+        return {}
+    return payload['documents']
 
 
 def write_cache(cache):
-    CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f'.{CACHE_PATH.name}.', suffix='.tmp', dir=CACHE_PATH.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump({'version': CACHE_VERSION, 'documents': cache}, handle, ensure_ascii=False, indent=2)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, CACHE_PATH)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 def extract_pages(path):
@@ -76,15 +107,15 @@ def _starts(pages):
 
 def _page(offset, starts):
     number = 1
-    for i, start in enumerate(starts, 1):
+    for index, start in enumerate(starts, 1):
         if start <= offset:
-            number = i
+            number = index
         else:
             break
     return number
 
 
-def build_chunks(document, pages, digest):
+def build_chunks(document, pages):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     starts = _starts(pages)
@@ -98,7 +129,6 @@ def build_chunks(document, pages, digest):
             **chunk,
             'source': document.name,
             'source_id': meta.get('source_id') or document.stem,
-            'document_hash': digest,
             'page': _page(start, starts),
             'page_end': _page(max(start, end - 1), starts),
             **meta,
@@ -114,22 +144,91 @@ def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
         client.create_collection(
             collection_name=config.COLLECTION_NAME,
-            vectors_config={'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)},
+            vectors_config={
+                'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)
+            },
             sparse_vectors_config={'sparse': models.SparseVectorParams()},
         )
 
 
-def delete_old_versions(client, name, digest):
-    """Remove versões antigas somente depois que a nova versão foi indexada."""
+def delete_doc(client, name):
     client.delete(
         collection_name=config.COLLECTION_NAME,
         points_selector=models.FilterSelector(
             filter=models.Filter(
-                must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))],
-                must_not=[models.FieldCondition(key='document_hash', match=models.MatchValue(value=digest))],
+                must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))]
             )
         ),
+        wait=True,
     )
+
+
+def source_point_ids(client, name):
+    ids = set()
+    offset = None
+    source_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])
+    while True:
+        points, offset = client.scroll(
+            collection_name=config.COLLECTION_NAME,
+            scroll_filter=source_filter,
+            limit=256,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        ids.update(point.id for point in points)
+        if offset is None:
+            break
+    return ids
+
+
+def delete_point_ids(client, point_ids):
+    point_ids = list(point_ids)
+    if not point_ids:
+        return
+    client.delete(
+        collection_name=config.COLLECTION_NAME,
+        points_selector=models.PointIdsList(points=point_ids),
+        wait=True,
+    )
+
+
+def prune_stale_documents(client, active_names):
+    if not config.RAG_PRUNE_STALE:
+        return 0
+    if not client.collection_exists(config.COLLECTION_NAME):
+        return 0
+    indexed_names = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=config.COLLECTION_NAME,
+            limit=256,
+            offset=offset,
+            with_payload=['source'],
+            with_vectors=False,
+        )
+        for point in points:
+            source = point.payload.get('source') if point.payload else None
+            if source:
+                indexed_names.add(str(source))
+        if offset is None:
+            break
+    stale = sorted(indexed_names - active_names)
+    for name in stale:
+        delete_doc(client, name)
+    return len(stale)
+
+
+def validate_dense_vectors(vectors, expected):
+    for index, vector in enumerate(vectors):
+        if len(vector) != config.DENSE_DIM:
+            raise RuntimeError(
+                f'embedding denso com dimensão inválida no chunk {index}: '
+                f'{len(vector)} != {config.DENSE_DIM}'
+            )
+    if len(vectors) != expected:
+        raise RuntimeError(f'quantidade de embeddings densa inválida: {len(vectors)} != {expected}')
 
 
 def main():
@@ -142,58 +241,90 @@ def main():
     if manifest is not None:
         from index_manifest import validate_manifest
         validate_manifest()
-    elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME).count:
+    elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME, exact=True).count:
         raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
 
     dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
+    active_names = {document.name for document in files}
+    stale_removed = prune_stale_documents(client, active_names)
     cache, errors, skipped = read_cache(), [], 0
 
     for document in files:
         digest = file_hash(document)
-        count_filter = models.Filter(must=[
-            models.FieldCondition(key='source', match=models.MatchValue(value=document.name)),
-            models.FieldCondition(key='document_hash', match=models.MatchValue(value=digest)),
-        ])
-        if cache.get(document.name) == digest and client.count(config.COLLECTION_NAME, count_filter=count_filter).count:
+        count_filter = models.Filter(
+            must=[models.FieldCondition(key='source', match=models.MatchValue(value=document.name))]
+        )
+        entry = cache.get(document.name)
+        indexed_count = client.count(
+            config.COLLECTION_NAME,
+            count_filter=count_filter,
+            exact=True,
+        ).count
+        if (
+            isinstance(entry, dict)
+            and entry.get('sha256') == digest
+            and int(entry.get('chunks') or 0) == indexed_count
+            and indexed_count > 0
+        ):
             skipped += 1
             continue
         try:
             pages = extract_pages(document)
-            chunks = build_chunks(document, pages, digest)
+            chunks = build_chunks(document, pages)
             if not chunks:
                 print('Aviso: sem texto em', document.name)
+                errors.append(document.name)
                 continue
+            old_ids = source_point_ids(client, document.name)
             dense_vectors = list(dense.embed(['passage: ' + item['text'] for item in chunks]))
+            validate_dense_vectors(dense_vectors, len(chunks))
             sparse_vectors = list(sparse.embed([item['text'] for item in chunks]))
+            if len(sparse_vectors) != len(chunks):
+                raise RuntimeError(
+                    f'quantidade de embeddings esparsas inválida: {len(sparse_vectors)} != {len(chunks)}'
+                )
             points = []
             for index, item in enumerate(chunks):
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document.name}|{digest}|{item['unit_id']}|{item['chunk_index']}|{item['text']}"))
-                points.append(models.PointStruct(
-                    id=point_id,
-                    vector={
-                        'dense': dense_vectors[index].tolist(),
-                        'sparse': models.SparseVector(indices=sparse_vectors[index].indices.tolist(), values=sparse_vectors[index].values.tolist()),
-                    },
-                    payload=item,
-                ))
-
-            # Primeiro grava a nova versão. Só depois remove a anterior.
-            client.upsert(collection_name=config.COLLECTION_NAME, points=points)
-            delete_old_versions(client, document.name, digest)
-            cache[document.name] = digest
+                point_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}",
+                    )
+                )
+                points.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector={
+                            'dense': dense_vectors[index].tolist(),
+                            'sparse': models.SparseVector(
+                                indices=sparse_vectors[index].indices.tolist(),
+                                values=sparse_vectors[index].values.tolist(),
+                            ),
+                        },
+                        payload=item,
+                    )
+                )
+            new_ids = {point.id for point in points}
+            client.upsert(collection_name=config.COLLECTION_NAME, points=points, wait=True)
+            delete_point_ids(client, old_ids - new_ids)
+            cache[document.name] = {'sha256': digest, 'chunks': len(points)}
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
-            print(f'ERRO ao indexar {document.name}: {exc}. Versão anterior, se existente, foi preservada.')
+            print(f'ERRO ao indexar {document.name}: {exc}. A versão anterior permanece disponível quando o upsert falhar.')
             errors.append(document.name)
 
     write_cache(cache)
-    write_manifest()
-    print('Total:', client.count(config.COLLECTION_NAME).count, '| pulados (sem alteração):', skipped)
+    total = client.count(config.COLLECTION_NAME, exact=True).count
+    print('Total:', total, '| pulados (sem alteração):', skipped, '| fontes obsoletas removidas:', stale_removed)
     if errors:
-        print('Arquivos com erro (versão anterior preservada):', ', '.join(errors))
+        print('Arquivos com erro (não indexados):', ', '.join(errors))
+        print('Manifesto não atualizado porque a indexação terminou parcialmente; execute novamente após corrigir as fontes.')
+        return 1
+    write_manifest()
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

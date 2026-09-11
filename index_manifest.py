@@ -1,5 +1,9 @@
 import json
+import os
+import tempfile
+
 import config
+
 
 class IndexCompatibilityError(RuntimeError):
     pass
@@ -24,11 +28,33 @@ def current_manifest():
 
 
 def read_manifest():
-    return json.loads(config.INDEX_MANIFEST_PATH.read_text(encoding='utf-8')) if config.INDEX_MANIFEST_PATH.exists() else None
+    if not config.INDEX_MANIFEST_PATH.exists():
+        return None
+    try:
+        return json.loads(config.INDEX_MANIFEST_PATH.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise IndexCompatibilityError(
+            f'Manifesto do índice inválido ou corrompido: {config.INDEX_MANIFEST_PATH}. Reindexe o banco.'
+        ) from exc
+
+
+def _atomic_write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f'.{path.name}.', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 def write_manifest():
-    config.INDEX_MANIFEST_PATH.write_text(json.dumps(current_manifest(), ensure_ascii=False, indent=2), encoding='utf-8')
+    _atomic_write_json(config.INDEX_MANIFEST_PATH, current_manifest())
 
 
 def validate_manifest():
