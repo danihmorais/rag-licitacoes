@@ -33,15 +33,30 @@ def sync_sources():
 def sync_jurisprudencia():
     if not config.RAG_SYNC_JURISPRUDENCIA:
         return
-    command = [
-        sys.executable,
-        '-m',
-        'jurisprudencia.collector',
-        '--query',
-        config.JURISPRUDENCIA_QUERY,
-        '--limit',
-        str(config.JURISPRUDENCIA_LIMIT),
-    ]
+    if config.JURISPRUDENCIA_QUERY:
+        command = [
+            sys.executable,
+            '-m',
+            'jurisprudencia.collector',
+            '--query',
+            config.JURISPRUDENCIA_QUERY,
+            '--limit',
+            str(config.JURISPRUDENCIA_LIMIT),
+        ]
+    else:
+        command = [
+            sys.executable,
+            '-m',
+            'jurisprudencia.batch',
+            '--limit',
+            str(config.JURISPRUDENCIA_LIMIT),
+        ]
+        for query in config.JURISPRUDENCIA_QUERIES:
+            command.extend(['--query', query])
+    if config.JURISPRUDENCIA_DETAIL:
+        command.append('--detail')
+    if config.JURISPRUDENCIA_WITH_CONTENT:
+        command.append('--with-content')
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
         print('Aviso: coleta de jurisprudência terminou sem novos registros; cache anterior será preservado.')
