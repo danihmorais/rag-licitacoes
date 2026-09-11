@@ -69,27 +69,40 @@ def extract_pages(path):
 def _starts(pages):
     out, offset = [], 0
     for text in pages:
-        out.append(offset); offset += len(text) + 1
+        out.append(offset)
+        offset += len(text) + 1
     return out
 
 
 def _page(offset, starts):
     number = 1
     for i, start in enumerate(starts, 1):
-        if start <= offset: number = i
-        else: break
+        if start <= offset:
+            number = i
+        else:
+            break
     return number
 
 
-def build_chunks(document, pages):
+def build_chunks(document, pages, digest):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     starts = _starts(pages)
     output = []
     for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP):
-        if not chunk['text'].strip(): continue
-        start = chunk['start']; end = start + len(chunk['text'])
-        output.append({**chunk, 'source': document.name, 'source_id': meta.get('source_id') or document.stem, 'page': _page(start, starts), 'page_end': _page(max(start, end - 1), starts), **meta})
+        if not chunk['text'].strip():
+            continue
+        start = chunk['start']
+        end = start + len(chunk['text'])
+        output.append({
+            **chunk,
+            'source': document.name,
+            'source_id': meta.get('source_id') or document.stem,
+            'document_hash': digest,
+            'page': _page(start, starts),
+            'page_end': _page(max(start, end - 1), starts),
+            **meta,
+        })
     return output
 
 
@@ -99,11 +112,24 @@ def embedding_kwargs():
 
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
-        client.create_collection(collection_name=config.COLLECTION_NAME, vectors_config={'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)}, sparse_vectors_config={'sparse': models.SparseVectorParams()})
+        client.create_collection(
+            collection_name=config.COLLECTION_NAME,
+            vectors_config={'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)},
+            sparse_vectors_config={'sparse': models.SparseVectorParams()},
+        )
 
 
-def delete_doc(client, name):
-    client.delete(collection_name=config.COLLECTION_NAME, points_selector=models.FilterSelector(filter=models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])))
+def delete_old_versions(client, name, digest):
+    """Remove versões antigas somente depois que a nova versão foi indexada."""
+    client.delete(
+        collection_name=config.COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))],
+                must_not=[models.FieldCondition(key='document_hash', match=models.MatchValue(value=digest))],
+            )
+        ),
+    )
 
 
 def main():
@@ -126,31 +152,48 @@ def main():
 
     for document in files:
         digest = file_hash(document)
-        count_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=document.name))])
+        count_filter = models.Filter(must=[
+            models.FieldCondition(key='source', match=models.MatchValue(value=document.name)),
+            models.FieldCondition(key='document_hash', match=models.MatchValue(value=digest)),
+        ])
         if cache.get(document.name) == digest and client.count(config.COLLECTION_NAME, count_filter=count_filter).count:
-            skipped += 1; continue
+            skipped += 1
+            continue
         try:
             pages = extract_pages(document)
-            chunks = build_chunks(document, pages)
+            chunks = build_chunks(document, pages, digest)
             if not chunks:
-                print('Aviso: sem texto em', document.name); continue
+                print('Aviso: sem texto em', document.name)
+                continue
             dense_vectors = list(dense.embed(['passage: ' + item['text'] for item in chunks]))
             sparse_vectors = list(sparse.embed([item['text'] for item in chunks]))
-            delete_doc(client, document.name)
             points = []
             for index, item in enumerate(chunks):
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}"))
-                points.append(models.PointStruct(id=point_id, vector={'dense': dense_vectors[index].tolist(), 'sparse': models.SparseVector(indices=sparse_vectors[index].indices.tolist(), values=sparse_vectors[index].values.tolist())}, payload=item))
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document.name}|{digest}|{item['unit_id']}|{item['chunk_index']}|{item['text']}"))
+                points.append(models.PointStruct(
+                    id=point_id,
+                    vector={
+                        'dense': dense_vectors[index].tolist(),
+                        'sparse': models.SparseVector(indices=sparse_vectors[index].indices.tolist(), values=sparse_vectors[index].values.tolist()),
+                    },
+                    payload=item,
+                ))
+
+            # Primeiro grava a nova versão. Só depois remove a anterior.
             client.upsert(collection_name=config.COLLECTION_NAME, points=points)
+            delete_old_versions(client, document.name, digest)
             cache[document.name] = digest
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
-            print(f'ERRO ao indexar {document.name}: {exc}. Arquivo ignorado nesta execução.')
+            print(f'ERRO ao indexar {document.name}: {exc}. Versão anterior, se existente, foi preservada.')
             errors.append(document.name)
 
-    write_cache(cache); write_manifest()
+    write_cache(cache)
+    write_manifest()
     print('Total:', client.count(config.COLLECTION_NAME).count, '| pulados (sem alteração):', skipped)
-    if errors: print('Arquivos com erro (não indexados):', ', '.join(errors))
+    if errors:
+        print('Arquivos com erro (versão anterior preservada):', ', '.join(errors))
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()

@@ -1,8 +1,10 @@
 from pathlib import Path
 import importlib.util
 
+import pytest
+
 from chunking import build_structural_chunks
-from query import evidence_score, parse_filters
+from query import evidence_score, parse_filters, qfilter
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +43,16 @@ def test_future_rule_keeps_effective_date():
 def test_filter_parser_converts_numeric_filters():
     query,filters=parse_filters('@jurisdicao=estadual_sp @ano=2026 qual a regra do ETP?')
     assert query=='qual a regra do ETP?' and filters=={'jurisdicao':'estadual_sp','ano':2026}
+
+
+def test_filter_parser_rejects_invalid_numeric_filter():
+    with pytest.raises(ValueError, match='numérico'):
+        parse_filters('@ano=abc qual a regra?')
+
+
+def test_qfilter_rejects_unknown_filter():
+    with pytest.raises(ValueError, match='não suportados'):
+        qfilter({'autor': 'x'})
 
 
 def test_structural_chunking_keeps_article_unit():
