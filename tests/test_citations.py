@@ -38,6 +38,15 @@ def test_context_with_sources_drops_sources_that_do_not_fit(monkeypatch):
     assert sources == [first]
 
 
+def test_context_only_source_is_marked_for_model(monkeypatch):
+    neighbor = point('2', 'a.txt', 'artigo:1', 'Regra vizinha.', 1)
+    neighbor.payload['_context_only'] = True
+    monkeypatch.setattr(query.config, 'MAX_CONTEXT_CHARS', 100000)
+    context_text, sources = query.context_with_sources([neighbor])
+    assert 'contexto_vizinho=true' in context_text
+    assert sources == [neighbor]
+
+
 def test_answer_query_returns_sources_used_in_context(monkeypatch):
     selected = point('1', 'a.txt', 'artigo:1', 'Regra selecionada.')
     neighbor = point('2', 'a.txt', 'artigo:1', 'Regra vizinha.', 1)
