@@ -189,18 +189,23 @@ def expand_context(client, points):
             models.FieldCondition(key='source', match=models.MatchValue(value=source)),
             models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id)),
         ])
-        neighbors, _ = client.scroll(
-            collection_name=config.COLLECTION_NAME,
-            scroll_filter=query_filter,
-            limit=max(32, len(indexes) + 2 * config.CONTEXT_NEIGHBORS + 8),
-            with_payload=True,
-            with_vectors=False,
-        )
-        for neighbor in neighbors:
-            index = int(neighbor.payload.get('chunk_index', 0))
-            if any(abs(index - selected_index) <= config.CONTEXT_NEIGHBORS for selected_index in indexes):
-                neighbor.payload['_context_only'] = neighbor.id not in selected
-                selected.setdefault(neighbor.id, neighbor)
+        offset = None
+        while True:
+            neighbors, offset = client.scroll(
+                collection_name=config.COLLECTION_NAME,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for neighbor in neighbors:
+                index = int(neighbor.payload.get('chunk_index', 0))
+                if any(abs(index - selected_index) <= config.CONTEXT_NEIGHBORS for selected_index in indexes):
+                    neighbor.payload['_context_only'] = neighbor.id not in selected
+                    selected.setdefault(neighbor.id, neighbor)
+            if offset is None:
+                break
 
     expanded = list(selected.values())
     expanded.sort(key=lambda p: (
@@ -211,8 +216,8 @@ def expand_context(client, points):
     return expanded
 
 
-def context(points):
-    parts, total = [], 0
+def context_with_sources(points):
+    parts, included, total = [], [], 0
     for index, point in enumerate(points, 1):
         payload = point.payload
         text = payload.get('full_unit_text') or payload.get('text', '')
@@ -224,6 +229,8 @@ def context(points):
         retrieved = payload.get('retrieved_at') or 'desconhecido'
         version = payload.get('version_sha256')
         version_label = f" | versão={str(version)[:12]}" if version else ''
+        context_only = payload.get('_context_only', False)
+        context_label = ' | contexto_vizinho=true' if context_only else ''
         part = (
             f"[F{index}] {title} ({payload.get('source') or 'arquivo desconhecido'}), {page_label}{unit_ref} | "
             f"papel={payload.get('source_role', 'desconhecido')} | "
@@ -232,14 +239,19 @@ def context(points):
             f"jurisdicao={payload.get('jurisdicao', 'desconhecida')} | "
             f"vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} "
             f"até {payload.get('effective_to') or 'indeterminada'} | "
-            f"recuperado_em={retrieved}{version_label} | "
+            f"recuperado_em={retrieved}{version_label}{context_label} | "
             f"fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}"
         )
         if total + len(part) > config.MAX_CONTEXT_CHARS:
             break
         parts.append(part)
+        included.append(point)
         total += len(part)
-    return '\n\n---\n\n'.join(parts)
+    return '\n\n---\n\n'.join(parts), included
+
+
+def context(points):
+    return context_with_sources(points)[0]
 
 
 def answer_query(client, dense, sparse, reranker, llm, raw):
@@ -250,7 +262,10 @@ def answer_query(client, dense, sparse, reranker, llm, raw):
     if not points:
         return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
     context_points = expand_context(client, points)
-    return llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context(context_points)), user_prompt=query), points
+    context_text, context_sources = context_with_sources(context_points)
+    if not context_sources:
+        return 'Não encontrei espaço suficiente no contexto para apresentar evidência de forma segura.', []
+    return llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context_text), user_prompt=query), context_sources
 
 
 def build_runtime():
@@ -300,6 +315,7 @@ def main():
                     'title': point.payload.get('title'),
                     'page': point.payload.get('page'),
                     'score': round(point.payload.get('_evidence_score', 0.0), 6),
+                    'context_only': bool(point.payload.get('_context_only', False)),
                 }
                 for index, point in enumerate(points, 1)
             ],
@@ -310,7 +326,8 @@ def main():
             print(f'RAG pronto. LLM: {config.LLM_PROVIDER}/{config.LLM_MODEL}')
             print('\n' + answer + '\n')
             for source in payload['sources']:
-                print(f"{source['citation']} {source['title'] or source['source']} (p. {source['page']}, score={source['score']:.3f})")
+                marker = ' contexto' if source['context_only'] else ''
+                print(f"{source['citation']}{marker} {source['title'] or source['source']} (p. {source['page']}, score={source['score']:.3f})")
         return 0
     print(f'RAG pronto. LLM: {config.LLM_PROVIDER}/{config.LLM_MODEL}')
     while True:
@@ -330,8 +347,9 @@ def main():
             continue
         print('\n' + answer + '\n')
         for index, point in enumerate(points, 1):
+            marker = ' contexto' if point.payload.get('_context_only', False) else ''
             print(
-                f"[F{index}] {point.payload.get('title') or point.payload['source']} "
+                f"[F{index}]{marker} {point.payload.get('title') or point.payload['source']} "
                 f"(p. {point.payload.get('page')}, score={point.payload.get('_evidence_score', 0):.3f})"
             )
     return 0
