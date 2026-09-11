@@ -33,14 +33,17 @@ class JurisprudenciaRecord:
 
     @property
     def document_key(self) -> str:
-        base = "|".join(
-            [
-                self.tribunal or "",
-                self.numero_processo or "",
-                self.numero_decisao or "",
-                self.tipo_decisao or "",
-            ]
-        )
+        parts = [
+            self.tribunal or "",
+            self.numero_processo or "",
+            self.numero_decisao or "",
+            self.tipo_decisao or "",
+        ]
+        if not self.numero_decisao:
+            parts.append(re.sub(r'\s+', ' ', self.ementa or '').strip()[:800])
+        if not self.numero_processo:
+            parts.append(self.url_oficial or '')
+        base = "|".join(parts)
         return hashlib.sha256(base.encode("utf-8")).hexdigest()[:20]
 
     def canonical_payload(self) -> dict[str, Any]:
