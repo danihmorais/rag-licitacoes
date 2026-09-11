@@ -17,6 +17,11 @@ def _first(values, text):
     return None
 
 
+def _header_value(sample, label):
+    match = re.search(rf'(?im)^\s*{re.escape(label)}\s*:\s*(.+)$', sample)
+    return match.group(1).strip() if match else None
+
+
 def _source(path):
     name = path.name.lower()
     result = {
@@ -30,6 +35,10 @@ def _source(path):
         result.update(jurisdicao='federal', esfera='federal', orgao='TCU', tribunal='TCU', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
     elif 'stj' in name:
         result.update(jurisdicao='federal', esfera='federal', orgao='STJ', tribunal='STJ', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
+    elif 'stf' in name:
+        result.update(jurisdicao='federal', esfera='federal', orgao='STF', tribunal='STF', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
+    elif 'tjsp' in name or 'tjsp' in name.replace('-', ''):
+        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TJSP', tribunal='TJSP', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
     elif 'constituicao' in name:
         result.update(jurisdicao='estadual_sp' if 'estadual' in name else 'federal', esfera='estadual' if 'estadual' in name else 'federal', orgao='Constituição', tipo_documento='constituicao', source_role='norma', authority_level=1)
     elif re.search(r'l\.?\s*14[ ._\-]?133|lei.?14[ ._\-]?133', name):
@@ -58,8 +67,25 @@ def extract_metadata(text, pdf_path):
         'effective_from': None, 'effective_to': None, 'retrieved_at': None,
         'fonte_host': None, **_source(path),
     }
+    if _header_value(sample, 'TRIBUNAL'):
+        metadata['tribunal'] = _header_value(sample, 'TRIBUNAL')
+        metadata['orgao'] = metadata['tribunal']
+        metadata['source_role'] = 'jurisprudencia_controle' if metadata['tribunal'] in {'TCU', 'TCESP'} else 'jurisprudencia'
+        metadata['tipo_documento'] = 'jurisprudencia'
+        metadata['authority_level'] = 2
+        metadata['status'] = 'jurisprudencia'
+        metadata['jurisdicao'] = 'estadual_sp' if metadata['tribunal'] in {'TCESP', 'TJSP'} else 'federal'
+        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+    if _header_value(sample, 'PROCESSO'):
+        metadata['processo'] = _header_value(sample, 'PROCESSO')
+    if _header_value(sample, 'DECISÃO/ACÓRDÃO'):
+        metadata['numero_decisao'] = _header_value(sample, 'DECISÃO/ACÓRDÃO')
+    if _header_value(sample, 'RELATOR'):
+        metadata['relator'] = _header_value(sample, 'RELATOR')
+    if _header_value(sample, 'DATA DO JULGAMENTO/SESSÃO'):
+        metadata['data_julgamento'] = _header_value(sample, 'DATA DO JULGAMENTO/SESSÃO')
     match = PROCESSO_RE.search(sample)
-    if match:
+    if match and not metadata.get('processo'):
         metadata['processo'] = match.group(1).strip(' .-')
     years = ANO_RE.findall(sample)
     if years:
