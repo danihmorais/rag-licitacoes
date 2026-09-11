@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -10,12 +12,13 @@ from pypdf import PdfReader
 from qdrant_client import QdrantClient, models
 
 import config
-from chunking import build_structural_chunks
 from index_manifest import read_manifest, write_manifest
 from metadata import extract_metadata
+from chunking import build_structural_chunks
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
+CACHE_VERSION = 2
 
 
 def sync_sources():
@@ -30,7 +33,15 @@ def sync_sources():
 def sync_jurisprudencia():
     if not config.RAG_SYNC_JURISPRUDENCIA:
         return
-    command = [sys.executable, '-m', 'jurisprudencia.collector', '--query', config.JURISPRUDENCIA_QUERY, '--limit', str(config.JURISPRUDENCIA_LIMIT)]
+    command = [
+        sys.executable,
+        '-m',
+        'jurisprudencia.collector',
+        '--query',
+        config.JURISPRUDENCIA_QUERY,
+        '--limit',
+        str(config.JURISPRUDENCIA_LIMIT),
+    ]
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
         print('Aviso: coleta de jurisprudência terminou sem novos registros; cache anterior será preservado.')
@@ -45,19 +56,39 @@ def load_documents():
 
 
 def file_hash(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1 << 20), b''):
-            h.update(chunk)
-    return h.hexdigest()
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_cache():
-    return json.loads(CACHE_PATH.read_text(encoding='utf-8')) if CACHE_PATH.exists() else {}
+    if not CACHE_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(CACHE_PATH.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f'Aviso: cache de ingestão inválido; reindexação será feita: {exc}')
+        return {}
+    if payload.get('version') != CACHE_VERSION or not isinstance(payload.get('documents'), dict):
+        return {}
+    return payload['documents']
 
 
 def write_cache(cache):
-    CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f'.{CACHE_PATH.name}.', suffix='.tmp', dir=CACHE_PATH.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump({'version': CACHE_VERSION, 'documents': cache}, handle, ensure_ascii=False, indent=2)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, CACHE_PATH)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 def extract_pages(path):
@@ -69,15 +100,18 @@ def extract_pages(path):
 def _starts(pages):
     out, offset = [], 0
     for text in pages:
-        out.append(offset); offset += len(text) + 1
+        out.append(offset)
+        offset += len(text) + 1
     return out
 
 
 def _page(offset, starts):
     number = 1
-    for i, start in enumerate(starts, 1):
-        if start <= offset: number = i
-        else: break
+    for index, start in enumerate(starts, 1):
+        if start <= offset:
+            number = index
+        else:
+            break
     return number
 
 
@@ -87,9 +121,18 @@ def build_chunks(document, pages):
     starts = _starts(pages)
     output = []
     for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP):
-        if not chunk['text'].strip(): continue
-        start = chunk['start']; end = start + len(chunk['text'])
-        output.append({**chunk, 'source': document.name, 'source_id': meta.get('source_id') or document.stem, 'page': _page(start, starts), 'page_end': _page(max(start, end - 1), starts), **meta})
+        if not chunk['text'].strip():
+            continue
+        start = chunk['start']
+        end = start + len(chunk['text'])
+        output.append({
+            **chunk,
+            'source': document.name,
+            'source_id': meta.get('source_id') or document.stem,
+            'page': _page(start, starts),
+            'page_end': _page(max(start, end - 1), starts),
+            **meta,
+        })
     return output
 
 
@@ -99,11 +142,63 @@ def embedding_kwargs():
 
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
-        client.create_collection(collection_name=config.COLLECTION_NAME, vectors_config={'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)}, sparse_vectors_config={'sparse': models.SparseVectorParams()})
+        client.create_collection(
+            collection_name=config.COLLECTION_NAME,
+            vectors_config={
+                'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)
+            },
+            sparse_vectors_config={'sparse': models.SparseVectorParams()},
+        )
 
 
 def delete_doc(client, name):
-    client.delete(collection_name=config.COLLECTION_NAME, points_selector=models.FilterSelector(filter=models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])))
+    client.delete(
+        collection_name=config.COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))]
+            )
+        ),
+        wait=True,
+    )
+
+
+def prune_stale_documents(client, active_names):
+    if not config.RAG_PRUNE_STALE:
+        return 0
+    if not client.collection_exists(config.COLLECTION_NAME):
+        return 0
+    indexed_names = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=config.COLLECTION_NAME,
+            limit=256,
+            offset=offset,
+            with_payload=['source'],
+            with_vectors=False,
+        )
+        for point in points:
+            source = point.payload.get('source') if point.payload else None
+            if source:
+                indexed_names.add(str(source))
+        if offset is None:
+            break
+    stale = sorted(indexed_names - active_names)
+    for name in stale:
+        delete_doc(client, name)
+    return len(stale)
+
+
+def validate_dense_vectors(vectors, expected):
+    for index, vector in enumerate(vectors):
+        if len(vector) != config.DENSE_DIM:
+            raise RuntimeError(
+                f'embedding denso com dimensão inválida no chunk {index}: '
+                f'{len(vector)} != {config.DENSE_DIM}'
+            )
+    if len(vectors) != expected:
+        raise RuntimeError(f'quantidade de embeddings densa inválida: {len(vectors)} != {expected}')
 
 
 def main():
@@ -116,41 +211,85 @@ def main():
     if manifest is not None:
         from index_manifest import validate_manifest
         validate_manifest()
-    elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME).count:
+    elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME, exact=True).count:
         raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
 
     dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
+    active_names = {document.name for document in files}
+    stale_removed = prune_stale_documents(client, active_names)
     cache, errors, skipped = read_cache(), [], 0
 
     for document in files:
         digest = file_hash(document)
-        count_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=document.name))])
-        if cache.get(document.name) == digest and client.count(config.COLLECTION_NAME, count_filter=count_filter).count:
-            skipped += 1; continue
+        count_filter = models.Filter(
+            must=[models.FieldCondition(key='source', match=models.MatchValue(value=document.name))]
+        )
+        entry = cache.get(document.name)
+        indexed_count = client.count(
+            config.COLLECTION_NAME,
+            count_filter=count_filter,
+            exact=True,
+        ).count
+        if (
+            isinstance(entry, dict)
+            and entry.get('sha256') == digest
+            and int(entry.get('chunks') or 0) == indexed_count
+            and indexed_count > 0
+        ):
+            skipped += 1
+            continue
         try:
             pages = extract_pages(document)
             chunks = build_chunks(document, pages)
             if not chunks:
-                print('Aviso: sem texto em', document.name); continue
+                print('Aviso: sem texto em', document.name)
+                errors.append(document.name)
+                continue
             dense_vectors = list(dense.embed(['passage: ' + item['text'] for item in chunks]))
+            validate_dense_vectors(dense_vectors, len(chunks))
             sparse_vectors = list(sparse.embed([item['text'] for item in chunks]))
-            delete_doc(client, document.name)
+            if len(sparse_vectors) != len(chunks):
+                raise RuntimeError(
+                    f'quantidade de embeddings esparsas inválida: {len(sparse_vectors)} != {len(chunks)}'
+                )
             points = []
             for index, item in enumerate(chunks):
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}"))
-                points.append(models.PointStruct(id=point_id, vector={'dense': dense_vectors[index].tolist(), 'sparse': models.SparseVector(indices=sparse_vectors[index].indices.tolist(), values=sparse_vectors[index].values.tolist())}, payload=item))
-            client.upsert(collection_name=config.COLLECTION_NAME, points=points)
-            cache[document.name] = digest
+                point_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}",
+                    )
+                )
+                points.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector={
+                            'dense': dense_vectors[index].tolist(),
+                            'sparse': models.SparseVector(
+                                indices=sparse_vectors[index].indices.tolist(),
+                                values=sparse_vectors[index].values.tolist(),
+                            ),
+                        },
+                        payload=item,
+                    )
+                )
+            delete_doc(client, document.name)
+            client.upsert(collection_name=config.COLLECTION_NAME, points=points, wait=True)
+            cache[document.name] = {'sha256': digest, 'chunks': len(points)}
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
             print(f'ERRO ao indexar {document.name}: {exc}. Arquivo ignorado nesta execução.')
             errors.append(document.name)
 
-    write_cache(cache); write_manifest()
-    print('Total:', client.count(config.COLLECTION_NAME).count, '| pulados (sem alteração):', skipped)
-    if errors: print('Arquivos com erro (não indexados):', ', '.join(errors))
+    write_cache(cache)
+    write_manifest()
+    total = client.count(config.COLLECTION_NAME, exact=True).count
+    print('Total:', total, '| pulados (sem alteração):', skipped, '| fontes obsoletas removidas:', stale_removed)
+    if errors:
+        print('Arquivos com erro (não indexados):', ', '.join(errors))
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()
