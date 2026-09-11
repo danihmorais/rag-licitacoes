@@ -2,7 +2,6 @@ import argparse
 import json
 import math
 import re
-import sys
 
 from fastembed import SparseTextEmbedding, TextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
