@@ -57,7 +57,10 @@ def parse_filters(raw):
         raise ValueError('Filtro(s) inválido(s): ' + ', '.join(f'@{item}' for item in unknown))
     for key in ('ano', 'norm_ano', 'authority_level'):
         if key in filters:
-            filters[key] = int(filters[key])
+            try:
+                filters[key] = int(filters[key])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f'Filtro @{key} deve ser numérico.') from exc
     if 'revogado' in filters:
         value = filters['revogado'].strip().lower()
         if value in {'1', 'true', 'sim', 'yes'}:
@@ -72,6 +75,14 @@ def parse_filters(raw):
 def qfilter(filters):
     if not filters:
         return None
+    unknown = sorted(set(filters) - ALLOWED_FILTERS)
+    if unknown:
+        raise ValueError('Filtro(s) não suportados: ' + ', '.join(f'@{item}' for item in unknown))
+    for key in ('ano', 'norm_ano', 'authority_level'):
+        if key in filters and not isinstance(filters[key], int):
+            raise ValueError(f'Filtro @{key} deve ser numérico.')
+    if 'revogado' in filters and not isinstance(filters['revogado'], bool):
+        raise ValueError('Filtro @revogado deve ser booleano.')
     return models.Filter(
         must=[
             models.FieldCondition(key=key, match=models.MatchValue(value=value))
@@ -158,11 +169,7 @@ def rerank(reranker, query, points):
 
 
 def expand_context(client, points):
-    """Expande cada evidência pelos chunks vizinhos da mesma unidade jurídica.
-
-    A expansão ocorre depois do reranking: vizinhos nunca podem criar relevância
-    artificial nem fazer um documento ruim superar uma evidência boa.
-    """
+    """Expande evidências pelos chunks vizinhos da mesma unidade jurídica."""
     if not points or config.CONTEXT_NEIGHBORS <= 0:
         return points
     groups = {}
@@ -242,11 +249,13 @@ def answer_query(client, dense, sparse, reranker, llm, raw):
     points = rerank(reranker, query, hybrid(client, dense, sparse, query, qfilter(filters)))
     if not points:
         return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
-    return llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context(points)), user_prompt=query), points
+    context_points = expand_context(client, points)
+    return llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context(context_points)), user_prompt=query), points
 
 
 def build_runtime():
     config.ensure_directories()
+    config.validate_config()
     if not config.QDRANT_PATH.exists():
         raise RuntimeError('Índice não encontrado. Rode python ingest.py.')
     try:
