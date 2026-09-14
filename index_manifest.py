@@ -1,12 +1,19 @@
+import hashlib
 import json
 import os
 import tempfile
+from pathlib import Path
 
 import config
 
 
 class IndexCompatibilityError(RuntimeError):
     pass
+
+
+def chunking_algorithm_sha256():
+    path = Path(__file__).with_name('chunking.py')
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def current_manifest():
@@ -23,7 +30,8 @@ def current_manifest():
         'chunk_overlap': config.CHUNK_OVERLAP,
         'context_neighbors': config.CONTEXT_NEIGHBORS,
         'max_context_chars': config.MAX_CONTEXT_CHARS,
-        'schema': 'unit_id/chunk_index/page_span/source_role/status/authority_level/source_id/document_hash',
+        'chunking_algorithm_sha256': chunking_algorithm_sha256(),
+        'schema': 'unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash',
     }
 
 

@@ -69,19 +69,35 @@ def build_structural_chunks(full_text, max_size, overlap):
         separators=['\n\n', '\n', '. ', '; ', ' ', ''],
     )
     output = []
-    for unit in _units(full_text):
+    units = _units(full_text)
+    ref_counts = {}
+    for unit in units:
+        ref = unit.get('ref')
+        if ref:
+            key = (unit['kind'], ref)
+            ref_counts[key] = ref_counts.get(key, 0) + 1
+
+    for unit in units:
         full = unit['text']
         pieces = [full] if len(full) <= max_size else splitter.split_text(full)
         position = 0
-        unit_id = f"{unit['kind']}:{unit.get('ref') or unit['start']}"
+        ref = unit.get('ref')
+        if ref:
+            unit_id = f"{unit['kind']}:{ref}"
+            if ref_counts.get((unit['kind'], ref), 0) > 1:
+                unit_id = f"{unit_id}:{unit['start']}"
+        else:
+            unit_id = f"{unit['kind']}:{unit['start']}"
         for index, piece in enumerate(pieces):
             if not piece.strip():
                 continue
+            page_uncertain = False
             found = full.find(piece, position)
             if found < 0 and overlap:
                 found = full.find(piece, max(0, position - overlap))
             if found < 0:
                 found = position
+                page_uncertain = True
             output.append(
                 {
                     'text': piece,
@@ -92,6 +108,7 @@ def build_structural_chunks(full_text, max_size, overlap):
                     'chunk_index': index,
                     'unit_length': len(full),
                     'start': unit['start'] + found,
+                    'page_uncertain': page_uncertain,
                 }
             )
             position = found + max(1, len(piece) - overlap)
