@@ -61,7 +61,7 @@ def test_jurisprudence_sidecar_authority_is_normalized_from_tribunal(tmp_path: P
 
 
 def test_jurisprudence_schema_rejects_invalid_records():
-    record = JurisprudenciaRecord(tribunal='TJSP', numero_processo='1/2026')
+    record = JurisprudenciaRecord(tribunal='XYZ', numero_processo='1/2026')
     with pytest.raises(ValueError, match='tribunal inválido'):
         record.validate()
 
