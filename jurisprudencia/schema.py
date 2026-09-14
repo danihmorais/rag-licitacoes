@@ -35,7 +35,7 @@ class JurisprudenciaRecord:
         errors = []
         tribunal = str(self.tribunal or '').strip().upper()
         process = str(self.numero_processo or '').strip()
-        if tribunal not in {'TCU', 'TCESP', 'STJ', 'STF'}:
+        if tribunal not in {'TCU', 'TCESP', 'STJ', 'STF', 'TJSP'}:
             errors.append(f'tribunal inválido: {self.tribunal!r}')
         if not process:
             errors.append('numero_processo é obrigatório')

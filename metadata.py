@@ -50,6 +50,7 @@ def _source_with_explicit(path, explicit):
         'tipo_documento': None, 'source_role': 'desconhecido', 'authority_level': None,
         'status': 'desconhecido', 'fonte_oficial': None,
         'classificacao_ambigua': False,
+        'metadata_ambiguous': False,
     }
     explicit_scope = any(explicit.get(key) not in (None, '') for key in ('jurisdicao', 'esfera', 'orgao', 'tribunal'))
     if explicit_scope:
@@ -58,6 +59,7 @@ def _source_with_explicit(path, explicit):
     federal_14133 = bool(FEDERAL_14133_RE.search(name)) or bool(re.search(r'lei.?14[ ._\-]?133', name, re.I))
     if sp_token and federal_14133:
         result['classificacao_ambigua'] = True
+        result['metadata_ambiguous'] = True
         return result
     if 'tcesp' in name or 'tribunal de contas do estado de são paulo' in name or 'tribunal de contas do estado de sao paulo' in name:
         result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TCESP', tribunal='TCESP', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=4)
@@ -135,6 +137,8 @@ def extract_metadata(text, pdf_path):
         metadata['authority_level'] = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}.get(tribunal, metadata.get('authority_level'))
         metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
         metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+    if metadata.get('classificacao_ambigua'):
+        metadata['metadata_ambiguous'] = True
     if metadata.get('fonte_oficial'):
         metadata['fonte_host'] = urlparse(str(metadata['fonte_oficial'])).netloc
     return metadata
