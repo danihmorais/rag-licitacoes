@@ -41,34 +41,70 @@ FORMATO:
 Contexto recuperado:
 {context}'''
 
-FILTER_RE = re.compile(r'@(\w+)=([^\s@]+)')
+FILTER_RE = re.compile(r'@(\w+)(>=|<=|=|>|<)([^\s@]+)')
 ALLOWED_FILTERS = {
     'jurisdicao', 'esfera', 'orgao', 'tribunal', 'tipo_documento', 'source_role',
     'authority_level', 'status', 'revogado', 'ano', 'norm_ano', 'municipio',
     'modalidade', 'tipo', 'source_id',
 }
+NUMERIC_FILTERS = {'ano', 'norm_ano', 'authority_level'}
+
+
+def _coerce_filter_value(key, value):
+    if key in NUMERIC_FILTERS:
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'Filtro @{key} deve ser numérico.') from exc
+    if key == 'revogado':
+        value = str(value).strip().lower()
+        if value in {'1', 'true', 'sim', 'yes'}:
+            return True
+        if value in {'0', 'false', 'não', 'nao', 'no'}:
+            return False
+        raise ValueError('@revogado deve ser booleano (sim/não ou true/false).')
+    return str(value).strip()
 
 
 def parse_filters(raw):
-    filters = dict(FILTER_RE.findall(raw))
+    specs = FILTER_RE.findall(raw)
+    invalid = sorted({item[0] for item in specs if item[0] not in ALLOWED_FILTERS})
+    if invalid:
+        raise ValueError('Filtro(s) inválido(s): ' + ', '.join(f'@{item}' for item in invalid))
+    filters = {}
+    for key, operator, raw_value in specs:
+        if operator != '=' and key not in NUMERIC_FILTERS:
+            raise ValueError(f'Filtro @{key} não aceita operador {operator}.')
+        if operator == '=' and ',' in raw_value:
+            values = [_coerce_filter_value(key, item) for item in raw_value.split(',') if item]
+            if not values:
+                raise ValueError(f'Filtro @{key} não pode ter valor vazio.')
+            current = filters.get(key)
+            if isinstance(current, list):
+                current.extend(values)
+            elif current is None:
+                filters[key] = values
+            else:
+                filters[key] = [current, *values]
+            continue
+        value = _coerce_filter_value(key, raw_value)
+        if operator == '=':
+            current = filters.get(key)
+            if current is None:
+                filters[key] = value
+            elif isinstance(current, list):
+                current.append(value)
+            elif isinstance(current, dict):
+                raise ValueError(f'Filtro @{key} mistura igualdade e intervalo.')
+            else:
+                filters[key] = [current, value]
+            continue
+        range_value = filters.setdefault(key, {})
+        if not isinstance(range_value, dict):
+            range_value = {'eq': range_value}
+            filters[key] = range_value
+        range_value[{'>=': 'gte', '<=': 'lte', '>': 'gt', '<': 'lt'}[operator]] = value
     clean = FILTER_RE.sub('', raw).strip()
-    unknown = sorted(set(filters) - ALLOWED_FILTERS)
-    if unknown:
-        raise ValueError('Filtro(s) inválido(s): ' + ', '.join(f'@{item}' for item in unknown))
-    for key in ('ano', 'norm_ano', 'authority_level'):
-        if key in filters:
-            try:
-                filters[key] = int(filters[key])
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f'Filtro @{key} deve ser numérico.') from exc
-    if 'revogado' in filters:
-        value = filters['revogado'].strip().lower()
-        if value in {'1', 'true', 'sim', 'yes'}:
-            filters['revogado'] = True
-        elif value in {'0', 'false', 'não', 'nao', 'no'}:
-            filters['revogado'] = False
-        else:
-            raise ValueError('@revogado deve ser booleano (sim/não ou true/false).')
     return clean, filters
 
 
@@ -78,17 +114,21 @@ def qfilter(filters):
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
     if unknown:
         raise ValueError('Filtro(s) não suportados: ' + ', '.join(f'@{item}' for item in unknown))
-    for key in ('ano', 'norm_ano', 'authority_level'):
-        if key in filters and not isinstance(filters[key], int):
-            raise ValueError(f'Filtro @{key} deve ser numérico.')
-    if 'revogado' in filters and not isinstance(filters['revogado'], bool):
-        raise ValueError('Filtro @revogado deve ser booleano.')
-    return models.Filter(
-        must=[
-            models.FieldCondition(key=key, match=models.MatchValue(value=value))
-            for key, value in filters.items()
-        ]
-    )
+    conditions = []
+    for key, value in filters.items():
+        if key in NUMERIC_FILTERS and isinstance(value, dict):
+            if 'eq' in value:
+                conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value['eq'])))
+                continue
+            conditions.append(models.FieldCondition(key=key, range=models.Range(
+                gt=value.get('gt'), gte=value.get('gte'), lt=value.get('lt'), lte=value.get('lte')
+            )))
+            continue
+        if isinstance(value, list):
+            conditions.append(models.FieldCondition(key=key, match=models.MatchAny(any=value)))
+        else:
+            conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
+    return models.Filter(must=conditions)
 
 
 def embedding_kwargs():
@@ -101,20 +141,10 @@ def hybrid(client, dense, sparse, query, query_filter):
     return client.query_points(
         collection_name=config.COLLECTION_NAME,
         prefetch=[
+            models.Prefetch(query=dense_vector.tolist(), using='dense', limit=config.CANDIDATES_K, filter=query_filter),
             models.Prefetch(
-                query=dense_vector.tolist(),
-                using='dense',
-                limit=config.CANDIDATES_K,
-                filter=query_filter,
-            ),
-            models.Prefetch(
-                query=models.SparseVector(
-                    indices=sparse_vector.indices.tolist(),
-                    values=sparse_vector.values.tolist(),
-                ),
-                using='sparse',
-                limit=config.CANDIDATES_K,
-                filter=query_filter,
+                query=models.SparseVector(indices=sparse_vector.indices.tolist(), values=sparse_vector.values.tolist()),
+                using='sparse', limit=config.CANDIDATES_K, filter=query_filter,
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
@@ -139,9 +169,7 @@ def rerank(reranker, query, points):
     texts = [p.payload.get('text', '') for p in points]
     raw_scores = list(reranker.rerank(query, texts))
     if len(raw_scores) != len(points):
-        raise RuntimeError(
-            f'reranker retornou {len(raw_scores)} scores para {len(points)} candidatos.'
-        )
+        raise RuntimeError(f'reranker retornou {len(raw_scores)} scores para {len(points)} candidatos.')
     scored = []
     for point, raw_score in zip(points, raw_scores):
         point.payload['_rerank_score'] = float(raw_score)
@@ -159,13 +187,7 @@ def rerank(reranker, query, points):
             break
     if not output or output[0].payload.get('_evidence_score', 0.0) < config.MIN_EVIDENCE_SCORE:
         return []
-    return sorted(
-        output,
-        key=lambda point: (
-            -point.payload.get('_evidence_score', 0.0),
-            point.payload.get('authority_level') if point.payload.get('authority_level') is not None else 9,
-        ),
-    )
+    return sorted(output, key=lambda point: (-point.payload.get('_evidence_score', 0.0), point.payload.get('authority_level') if point.payload.get('authority_level') is not None else 9))
 
 
 def expand_context(client, points):
@@ -181,64 +203,30 @@ def expand_context(client, points):
         payload['_context_only'] = False
         payload['_context_priority'] = float(payload.get('_evidence_score', 0.0))
         selected[point.id] = point
-
     for (source, unit_id), indexes in groups.items():
         if not source or not unit_id:
             continue
-        query_filter = models.Filter(must=[
-            models.FieldCondition(key='source', match=models.MatchValue(value=source)),
-            models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id)),
-        ])
+        query_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=source)), models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id))])
         offset = None
         while True:
-            neighbors, offset = client.scroll(
-                collection_name=config.COLLECTION_NAME,
-                scroll_filter=query_filter,
-                limit=256,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
+            neighbors, offset = client.scroll(collection_name=config.COLLECTION_NAME, scroll_filter=query_filter, limit=256, offset=offset, with_payload=True, with_vectors=False)
             for neighbor in neighbors:
                 index = int(neighbor.payload.get('chunk_index', 0))
-                parent_scores = [
-                    float(point.payload.get('_evidence_score', 0.0))
-                    for point in points
-                    if point.payload.get('source') == source
-                    and point.payload.get('unit_id') == unit_id
-                    and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS
-                ]
+                parent_scores = [float(point.payload.get('_evidence_score', 0.0)) for point in points if point.payload.get('source') == source and point.payload.get('unit_id') == unit_id and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS]
                 if not parent_scores:
                     continue
                 existing = selected.get(neighbor.id)
                 if existing is not None:
-                    existing.payload['_context_priority'] = max(
-                        float(existing.payload.get('_context_priority', 0.0)), max(parent_scores)
-                    )
+                    existing.payload['_context_priority'] = max(float(existing.payload.get('_context_priority', 0.0)), max(parent_scores))
                     continue
                 neighbor.payload['_context_only'] = True
                 neighbor.payload['_context_priority'] = max(parent_scores)
-                neighbor.payload['_context_distance'] = min(
-                    abs(index - int(point.payload.get('chunk_index', 0)))
-                    for point in points
-                    if point.payload.get('source') == source
-                    and point.payload.get('unit_id') == unit_id
-                    and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS
-                )
+                neighbor.payload['_context_distance'] = min(abs(index - int(point.payload.get('chunk_index', 0))) for point in points if point.payload.get('source') == source and point.payload.get('unit_id') == unit_id and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS)
                 selected[neighbor.id] = neighbor
             if offset is None:
                 break
-
     expanded = list(selected.values())
-    expanded.sort(key=lambda p: (
-        1 if p.payload.get('_context_only', False) else 0,
-        -float(p.payload.get('_evidence_score', p.payload.get('_context_priority', 0.0))),
-        -float(p.payload.get('_context_priority', 0.0)),
-        int(p.payload.get('_context_distance', 0)),
-        p.payload.get('source') or '',
-        p.payload.get('unit_id') or '',
-        int(p.payload.get('chunk_index', 0)),
-    ))
+    expanded.sort(key=lambda p: (1 if p.payload.get('_context_only', False) else 0, -float(p.payload.get('_evidence_score', p.payload.get('_context_priority', 0.0))), -float(p.payload.get('_context_priority', 0.0)), int(p.payload.get('_context_distance', 0)), p.payload.get('source') or '', p.payload.get('unit_id') or '', int(p.payload.get('chunk_index', 0))))
     return expanded
 
 
@@ -259,17 +247,9 @@ def context_with_sources(points):
         version_label = f" | versão={str(version)[:12]}" if version else ''
         context_only = payload.get('_context_only', False)
         context_label = ' | contexto_vizinho=true' if context_only else ''
-        part = (
-            f"[F{index}] {title} ({payload.get('source') or 'arquivo desconhecido'}), {page_label}{unit_ref} | "
-            f"papel={payload.get('source_role', 'desconhecido')} | "
-            f"autoridade={payload.get('authority_level', 'desconhecida')} | "
-            f"status={payload.get('status', 'desconhecido')} | "
-            f"jurisdicao={payload.get('jurisdicao', 'desconhecida')} | "
-            f"vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} "
-            f"até {payload.get('effective_to') or 'indeterminada'} | "
-            f"recuperado_em={retrieved}{version_label}{context_label} | "
-            f"fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}"
-        )
+        ambiguity = payload.get('metadata_ambiguous')
+        ambiguity_label = ' | metadados_ambiguos=true' if ambiguity else ''
+        part = (f"[F{index}] {title} ({payload.get('source') or 'arquivo desconhecido'}), {page_label}{unit_ref} | papel={payload.get('source_role', 'desconhecido')} | autoridade={payload.get('authority_level', 'desconhecida')} | status={payload.get('status', 'desconhecido')} | jurisdicao={payload.get('jurisdicao', 'desconhecida')} | vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} até {payload.get('effective_to') or 'indeterminada'} | recuperado_em={retrieved}{version_label}{context_label}{ambiguity_label} | fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}")
         if total + len(part) > config.MAX_CONTEXT_CHARS:
             if context_only:
                 continue
@@ -335,21 +315,7 @@ def main():
         except Exception as error:
             print(f'Erro: {error}')
             return 1
-        payload = {
-            'query': args.query,
-            'answer': answer,
-            'sources': [
-                {
-                    'citation': f'[F{index}]',
-                    'source': point.payload.get('source'),
-                    'title': point.payload.get('title'),
-                    'page': point.payload.get('page'),
-                    'score': round(point.payload.get('_evidence_score', 0.0), 6),
-                    'context_only': bool(point.payload.get('_context_only', False)),
-                }
-                for index, point in enumerate(points, 1)
-            ],
-        }
+        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'context_only': bool(point.payload.get('_context_only', False))} for index, point in enumerate(points, 1)]}
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
@@ -378,10 +344,7 @@ def main():
         print('\n' + answer + '\n')
         for index, point in enumerate(points, 1):
             marker = ' contexto' if point.payload.get('_context_only', False) else ''
-            print(
-                f"[F{index}]{marker} {point.payload.get('title') or point.payload['source']} "
-                f"(p. {point.payload.get('page')}, score={point.payload.get('_evidence_score', 0):.3f})"
-            )
+            print(f"[F{index}]{marker} {point.payload.get('title') or point.payload['source']} (p. {point.payload.get('page')}, score={point.payload.get('_evidence_score', 0):.3f})")
     return 0
 
 
