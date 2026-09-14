@@ -325,6 +325,7 @@ def main():
             client.upsert(collection_name=config.COLLECTION_NAME, points=points, wait=True)
             delete_point_ids(client, old_ids - new_ids)
             cache[document.name] = {'sha256': digest, 'chunks': len(points)}
+            write_cache(cache)
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
             print(f'ERRO ao indexar {document.name}: {exc}. A versão anterior permanece disponível quando o upsert falhar.')
