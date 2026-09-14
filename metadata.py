@@ -54,7 +54,6 @@ def _source_with_explicit(path, explicit):
     explicit_scope = any(explicit.get(key) not in (None, '') for key in ('jurisdicao', 'esfera', 'orgao', 'tribunal'))
     if explicit_scope:
         return result
-
     sp_token = bool(SP_NAME_RE.search(name))
     federal_14133 = bool(FEDERAL_14133_RE.search(name)) or bool(re.search(r'lei.?14[ ._\-]?133', name, re.I))
     if sp_token and federal_14133:
@@ -106,24 +105,14 @@ def extract_metadata(text, pdf_path):
         metadata['orgao'] = tribunal
         metadata['source_role'] = 'jurisprudencia_controle' if tribunal in {'TCU', 'TCESP'} else 'jurisprudencia'
         metadata['tipo_documento'] = 'jurisprudencia'
-        metadata['authority_level'] = {
-            'STF': 2,
-            'STJ': 3,
-            'TCU': 3,
-            'TCESP': 4,
-            'TJSP': 4,
-        }.get(tribunal, 4)
+        metadata['authority_level'] = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}.get(tribunal, 4)
         metadata['status'] = 'jurisprudencia'
         metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
         metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     processo_header = _header_value(sample, 'PROCESSO')
     if processo_header and not sidecar_values.get('processo'):
         metadata['processo'] = processo_header
-    for label, key in (
-        ('DECISÃO/ACÓRDÃO', 'numero_decisao'),
-        ('RELATOR', 'relator'),
-        ('DATA DO JULGAMENTO/SESSÃO', 'data_julgamento'),
-    ):
+    for label, key in (('DECISÃO/ACÓRDÃO', 'numero_decisao'), ('RELATOR', 'relator'), ('DATA DO JULGAMENTO/SESSÃO', 'data_julgamento')):
         value = _header_value(sample, label)
         if value and not sidecar_values.get(key):
             metadata[key] = value
@@ -141,6 +130,11 @@ def extract_metadata(text, pdf_path):
     for key, value in sidecar_values.items():
         if value not in (None, ''):
             metadata[key] = value
+    tribunal = str(metadata.get('tribunal') or '').upper()
+    if tribunal:
+        metadata['authority_level'] = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}.get(tribunal, metadata.get('authority_level'))
+        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     if metadata.get('fonte_oficial'):
         metadata['fonte_host'] = urlparse(str(metadata['fonte_oficial'])).netloc
     return metadata
