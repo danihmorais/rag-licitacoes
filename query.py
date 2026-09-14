@@ -173,13 +173,13 @@ def expand_context(client, points):
     if not points or config.CONTEXT_NEIGHBORS <= 0:
         return points
     groups = {}
+    selected = {}
     for point in points:
         payload = point.payload
         key = (payload.get('source'), payload.get('unit_id'))
         groups.setdefault(key, set()).add(int(payload.get('chunk_index', 0)))
-
-    selected = {}
-    for point in points:
+        payload['_context_only'] = False
+        payload['_context_priority'] = float(payload.get('_evidence_score', 0.0))
         selected[point.id] = point
 
     for (source, unit_id), indexes in groups.items():
@@ -201,14 +201,40 @@ def expand_context(client, points):
             )
             for neighbor in neighbors:
                 index = int(neighbor.payload.get('chunk_index', 0))
-                if any(abs(index - selected_index) <= config.CONTEXT_NEIGHBORS for selected_index in indexes):
-                    neighbor.payload['_context_only'] = neighbor.id not in selected
-                    selected.setdefault(neighbor.id, neighbor)
+                parent_scores = [
+                    float(point.payload.get('_evidence_score', 0.0))
+                    for point in points
+                    if point.payload.get('source') == source
+                    and point.payload.get('unit_id') == unit_id
+                    and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS
+                ]
+                if not parent_scores:
+                    continue
+                existing = selected.get(neighbor.id)
+                if existing is not None:
+                    existing.payload['_context_priority'] = max(
+                        float(existing.payload.get('_context_priority', 0.0)), max(parent_scores)
+                    )
+                    continue
+                neighbor.payload['_context_only'] = True
+                neighbor.payload['_context_priority'] = max(parent_scores)
+                neighbor.payload['_context_distance'] = min(
+                    abs(index - int(point.payload.get('chunk_index', 0)))
+                    for point in points
+                    if point.payload.get('source') == source
+                    and point.payload.get('unit_id') == unit_id
+                    and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS
+                )
+                selected[neighbor.id] = neighbor
             if offset is None:
                 break
 
     expanded = list(selected.values())
     expanded.sort(key=lambda p: (
+        1 if p.payload.get('_context_only', False) else 0,
+        -float(p.payload.get('_evidence_score', p.payload.get('_context_priority', 0.0))),
+        -float(p.payload.get('_context_priority', 0.0)),
+        int(p.payload.get('_context_distance', 0)),
         p.payload.get('source') or '',
         p.payload.get('unit_id') or '',
         int(p.payload.get('chunk_index', 0)),
@@ -224,6 +250,8 @@ def context_with_sources(points):
         page = payload.get('page')
         page_end = payload.get('page_end') or page
         page_label = 'p. desconhecida' if page is None else (f'p. {page}' if page == page_end else f'pp. {page}-{page_end}')
+        if payload.get('page_uncertain'):
+            page_label += ' (posição incerta)'
         unit_ref = f", {payload['unit_ref']}" if payload.get('unit_ref') else ''
         title = payload.get('title') or payload.get('source') or 'fonte não identificada'
         retrieved = payload.get('retrieved_at') or 'desconhecido'
@@ -243,6 +271,8 @@ def context_with_sources(points):
             f"fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}"
         )
         if total + len(part) > config.MAX_CONTEXT_CHARS:
+            if context_only:
+                continue
             break
         parts.append(part)
         included.append(point)
