@@ -185,7 +185,8 @@ def rerank(reranker, query, points):
         output.append(point)
         if len(output) >= config.FINAL_K:
             break
-    if not output or output[0].payload.get('_evidence_score', 0.0) < config.MIN_EVIDENCE_SCORE:
+    output = [point for point in output if point.payload.get('_evidence_score', 0.0) >= config.MIN_EVIDENCE_SCORE]
+    if not output:
         return []
     return sorted(output, key=lambda point: (-point.payload.get('_evidence_score', 0.0), point.payload.get('authority_level') if point.payload.get('authority_level') is not None else 9))
 
