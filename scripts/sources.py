@@ -123,3 +123,5 @@ SOURCES = [
     _sp("sp-res28", "Resolução SGGD nº 28/2026 — competência da Central de Compras para TAG", "https://compras.sp.gov.br/resolucao-sggd-no-28-de-16-de-junho-de-2026/", tipo_documento="resolucao"),
     _sp("sp-compras", "Compras SP — legislação e regulamentação", "https://compras.sp.gov.br/legislacao/", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, required=True, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=60),
 ]
+
+SOURCE_BY_ID = {item["id"]: item for item in SOURCES}
