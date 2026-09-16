@@ -75,12 +75,12 @@ def _source_with_explicit(path, explicit):
         result.update(jurisdicao='estadual_sp' if 'estadual' in name else 'federal', esfera='estadual' if 'estadual' in name else 'federal', orgao='Constituição', tipo_documento='constituicao', source_role='norma', authority_level=1)
     elif federal_14133:
         result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='lei', source_role='norma', authority_level=1)
+    elif any(x in name for x in ('sustent', 'ambient', 'engenharia', 'obras')):
+        result.update(jurisdicao='federal', esfera='federal', orgao='AGU', tipo_documento='guia', source_role='orientacao_oficial', authority_level=3)
     elif sp_token:
         result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='Estado de São Paulo', source_role='norma', authority_level=1)
     elif any(x in name for x in ('lei_', 'decreto_', 'decretolei', 'resolucao_', 'lindb')):
         result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='norma', source_role='norma', authority_level=1)
-    elif any(x in name for x in ('sustent', 'ambient', 'engenharia', 'obras')):
-        result.update(jurisdicao='federal', esfera='federal', orgao='AGU', tipo_documento='guia', source_role='orientacao_oficial', authority_level=3)
     elif 'doutrina' in name:
         result.update(tipo_documento='doutrina', source_role='doutrina', authority_level=5)
     elif any(x in name for x in ('direito_administrativo', 'lindb', 'improbidade')):
