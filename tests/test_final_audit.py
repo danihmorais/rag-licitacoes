@@ -6,6 +6,7 @@ import pytest
 from metadata import extract_metadata
 from query import parse_filters, qfilter
 from jurisprudencia.schema import JurisprudenciaRecord
+from scripts.sources import SOURCES
 
 
 def test_filters_support_or_values():
@@ -57,6 +58,25 @@ def test_jurisprudence_sidecar_authority_is_normalized_from_tribunal(tmp_path: P
         encoding='utf-8',
     )
     metadata = extract_metadata('TRIBUNAL: TCU\nPROCESSO: 1/2026', path)
+    assert metadata['authority_level'] == 3
+
+
+def test_catalog_jurisprudence_sources_have_tribunal_and_valid_authority():
+    expected = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}
+    roles = {'jurisprudencia', 'jurisprudencia_controle'}
+    for source in SOURCES:
+        if source.get('source_role') not in roles:
+            continue
+        tribunal = source.get('tribunal')
+        assert tribunal in expected, f"fonte sem tribunal válido: {source.get('id')}"
+        assert source.get('authority_level') == expected[tribunal], f"autoridade inconsistente: {source.get('id')}"
+
+
+def test_orientation_filename_with_sp_is_not_promoted_to_norma(tmp_path: Path):
+    path = tmp_path / 'guia_sustentabilidade_sp.pdf'
+    path.write_text('', encoding='utf-8')
+    metadata = extract_metadata('Guia de sustentabilidade', path)
+    assert metadata['source_role'] == 'orientacao_oficial'
     assert metadata['authority_level'] == 3
 
 
