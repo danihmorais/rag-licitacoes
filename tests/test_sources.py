@@ -5,7 +5,7 @@ from scripts.sync_sources import discover_links, normalized_pattern
 def test_pdf_follow_pattern_accepts_normal_and_double_escaped_regex():
     html = '<main><a href="/docs/a.pdf">PDF oficial</a><a href="/docs/b.html">HTML</a></main>'
     normal = r"\.pdf(?:$|\?)"
-    overescaped = normal.replace("\", "\\")
+    overescaped = normal.replace("\\", "\\\\")
     source = {"follow_patterns": [overescaped], "max_follow": 10}
     assert normalized_pattern(overescaped) == normal
     assert discover_links(html, "https://example.gov.br/pagina", source) == [("https://example.gov.br/docs/a.pdf", "PDF oficial")]
