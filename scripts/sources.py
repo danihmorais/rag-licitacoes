@@ -98,8 +98,8 @@ def _municipal_sp(id_: str, title: str, url: str, *, tipo_documento: str = "decr
 
 
 SOURCES = [
-    _federal("cf1988", "Constituição Federal de 1988", "https://www2.camara.leg.br/legin/fed/consti/1988/constituicao-1988-5-outubro-1988-322142-normaatualizada-pl.html", tipo_documento="constituicao", required=True),
-    _federal("lei14133", "Lei nº 14.133/2021 — Licitações e Contratos Administrativos", "https://www2.camara.leg.br/legin/fed/lei/2021/lei-14133-1-abril-2021-791222-normaatualizada-pl.html", required=True),
+    _federal("cf1988", "Constituição Federal de 1988", "https://www2.camara.leg.br/legin/fed/consti/1988/constituicao-1988-5-outubro-1988-322142-normaatualizada-pl.html", tipo_documento="constituicao", required=True, ramo_direito="Constitucional"),
+    _federal("lei14133", "Lei nº 14.133/2021 — Licitações e Contratos Administrativos", "https://www2.camara.leg.br/legin/fed/lei/2021/lei-14133-1-abril-2021-791222-normaatualizada-pl.html", required=True, ramo_direito="Administrativo"),
     _federal("decreto12807", "Decreto nº 12.807/2025 — valores da Lei nº 14.133/2021", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2025/decreto/d12807.htm", tipo_documento="decreto", required=True),
     _federal("lindb", "Decreto-Lei nº 4.657/1942 — LINDB", "https://www.planalto.gov.br/ccivil_03/decreto-lei/del4657compilado.htm", tipo_documento="decreto_lei", required=True),
     _federal("del200", "Decreto-Lei nº 200/1967 — Organização da Administração Federal", "https://www.planalto.gov.br/ccivil_03/decreto-lei/del0200.htm", tipo_documento="decreto_lei"),
@@ -110,7 +110,7 @@ SOURCES = [
     _federal("lei12527", "Lei nº 12.527/2011 — Lei de Acesso à Informação", "https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2011/lei/l12527.htm"),
     _federal("lei13709", "Lei nº 13.709/2018 — LGPD", "https://www2.camara.leg.br/legin/fed/lei/2018/lei-13709-14-agosto-2018-787077-normaatualizada-pl.html"),
     _federal("lei13303", "Lei nº 13.303/2016 — Empresas Estatais", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2016/lei/l13303.htm"),
-    _federal("lei8987", "Lei nº 8.987/1995 — Concessões e Permissões", "https://www.planalto.gov.br/ccivil_03/leis/l8987cons.htm"),
+    _federal("lei8987", "Lei nº 8.987/1995 — Concessões e Permissões", "https://www.planalto.gov.br/ccivil_03/leis/l8987cons.htm", ramo_direito="Serviços Públicos"),
     _federal("lei11079", "Lei nº 11.079/2004 — Parcerias Público-Privadas", "https://www.planalto.gov.br/ccivil_03/_ato2004-2006/2004/lei/l11079.htm"),
     _federal("lrf", "Lei Complementar nº 101/2000 — Responsabilidade Fiscal", "https://www2.camara.leg.br/legin/fed/leicom/2000/leicomplementar-101-4-maio-2000-351480-normaatualizada-pl.html", tipo_documento="lei_complementar"),
     _federal("lei4320", "Lei nº 4.320/1964 — Direito Financeiro", "https://www.planalto.gov.br/ccivil_03/leis/l4320compilado.htm"),
@@ -130,7 +130,7 @@ SOURCES = [
     _federal("in512", "IN SEGES/MGI nº 512/2025 — diálogo competitivo (texto atualizado)", "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-seges-mgi-no-512-de-3-de-dezembro-de-2025", tipo_documento="instrucao_normativa", status="vacatio_legis", effective_from="2026-11-30"),
     _federal("in129", "IN SEGES/MGI nº 129/2026 — posterga a vigência da IN 512/2025", "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-seges-mgi-no-129-de-30-de-marco-de-2026", tipo_documento="instrucao_normativa", required=True),
     _federal("portaria938", "Portaria SEGES/ME nº 938/2022 — catálogo eletrônico de padronização", "https://www.gov.br/pncp/pt-br/catalogo-eletronico-de-padronizacao/legislacao/portaria-seges-me-no-938-de-2-de-fevereiro-de-2022", tipo_documento="portaria", required=True),
-    _federal("lei6938", "Lei nº 6.938/1981 — Política Nacional do Meio Ambiente", "https://www.planalto.gov.br/ccivil_03/leis/l6938compilada.htm"),
+    _federal("lei6938", "Lei nº 6.938/1981 — Política Nacional do Meio Ambiente", "https://www.planalto.gov.br/ccivil_03/leis/l6938compilada.htm", ramo_direito="Ambiental"),
     _federal("lei12305", "Lei nº 12.305/2010 — Política Nacional de Resíduos Sólidos", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2010/lei/l12305.htm"),
     _federal("lei9605", "Lei nº 9.605/1998 — Crimes Ambientais", "https://www.planalto.gov.br/ccivil_03/leis/l9605.htm"),
     _federal("lei13146", "Lei nº 13.146/2015 — Estatuto da Pessoa com Deficiência", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2015/lei/l13146.htm"),
@@ -210,7 +210,7 @@ SOURCES = [
     _federal("lc131", "Lei Complementar nº 131/2009 — Lei da Transparência", "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp131.htm", tipo_documento="lei_complementar", ramo_direito="Transparência e Controle"),
     _federal("decreto7724", "Decreto nº 7.724/2012 — regulamenta a Lei de Acesso à Informação", "https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2012/decreto/d7724.htm", tipo_documento="decreto", ramo_direito="Transparência e Controle"),
     _federal("lei6019", "Lei nº 6.019/1974 — trabalho temporário e terceirização", "https://www.planalto.gov.br/ccivil_03/leis/l6019.htm", ramo_direito="Trabalhista e Terceirização"),
-    _federal("lei12016", "Lei nº 12.016/2009 — Mandado de Segurança", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2009/lei/l12016.htm", ramo_direito="Processo e Controle Judicial"),
+    _federal("lei12016", "Lei nº 12.016/2009 — Mandado de Segurança", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2009/lei/l12016.htm", ramo_direito="Processual Público"),
     _federal("lc182", "Lei Complementar nº 182/2021 — Marco Legal das Startups e Contrato Público para Solução Inovadora", "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp182.htm", tipo_documento="lei_complementar", ramo_direito="Ciência, Tecnologia e Inovação"),
     _sp("sp-lai", "Decreto SP nº 68.155/2023 — regulamenta a Lei de Acesso à Informação no Estado de São Paulo", "https://www.al.sp.gov.br/repositorio/legislacao/decreto/2023/decreto-68155-09.12.2023.html", tipo_documento="decreto", required=True, ramo_direito="Transparência e Controle"),
     _municipal_sp("spm-decreto62100", "Decreto Municipal SP nº 62.100/2022 — licitações e contratos administrativos", "https://legislacao.prefeitura.sp.gov.br/decreto-62100-de-27-de-dezembro-de-2022/detalhe", tipo_documento="decreto", required=True, ramo_direito="Contratações Públicas"),
