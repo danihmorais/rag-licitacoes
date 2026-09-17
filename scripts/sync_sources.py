@@ -20,11 +20,13 @@ from urllib3.util.retry import Retry
 try:
     from scripts.sources import SOURCES as BASE_SOURCES
     from scripts.sources_additional import EXTRA_SOURCES
+    from scripts.sources_public_law import PUBLIC_LAW_SOURCES
 except ModuleNotFoundError:
     from sources import SOURCES as BASE_SOURCES
     from sources_additional import EXTRA_SOURCES
+    from sources_public_law import PUBLIC_LAW_SOURCES
 
-SOURCES = [dict(item) for item in BASE_SOURCES] + [dict(item) for item in EXTRA_SOURCES]
+SOURCES = [dict(item) for item in BASE_SOURCES] + [dict(item) for item in EXTRA_SOURCES] + [dict(item) for item in PUBLIC_LAW_SOURCES]
 for item in SOURCES:
     if item.get('id') == 'sp-lei6544':
         item['status'] = 'historico'
@@ -183,6 +185,7 @@ def write_cache(source, final, kind, raw, text, document_id, title):
         'tipo_documento': source.get('tipo_documento'),
         'source_role': source.get('source_role', 'desconhecido'),
         'authority_level': source.get('authority_level'),
+        'ramo_direito': source.get('ramo_direito'),
         'status': source.get('status') or 'orientativo',
         'revogado': source.get('revogado', False),
         'data_publicacao': source.get('data_publicacao'),
