@@ -20,6 +20,7 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, responses): self.responses = iter(responses)
     def get(self, *args, **kwargs): return next(self.responses)
+    def request(self, method, *args, **kwargs): return self.get(*args, **kwargs)
 
 
 def test_tcu_adapter_normalizes_official_acordao_payload():
@@ -41,7 +42,7 @@ def test_tcm_sp_adapter_parses_official_result_links():
     <table><tr><td>1234/989/26</td><td>Licitação de serviços</td><td>Exame de edital e fiscalização contratual</td></tr></table>
     <a href="/Acordao/Detalhe/1234">1234/989/26 — Licitação de serviços</a>
     </body></html>'''
-    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index")])
+    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"), FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index?termo=licitação")])
     records = TCMSPAdapter(session).search("licitação", 1)
     assert len(records) == 1
     assert records[0].tribunal == "TCM-SP"
