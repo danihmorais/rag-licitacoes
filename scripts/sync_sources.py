@@ -38,6 +38,17 @@ LEGAL_RE = re.compile(
     re.I,
 )
 NOISE = {'[Input]', '[Button: Pesquisar]', 'expand_more', 'collapse'}
+NORMATIVE_HEADER_RE = re.compile(
+    r'(?im)^\s*(?:LEI\s+COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLU[ÇC][ÃA]O|INSTRU[ÇC][ÃA]O\s+NORMATIVA|CONSTITUI[ÇC][ÃÃ]O)\b'
+)
+ARTICLE_RE = re.compile(r'(?im)^\s*Art(?:igo)?\.?\s+\d+[A-Za-zºª\-]*\b')
+RETIRED_SOURCE_IDS = {
+    'tcu', 'tcesp', 'stj-jurisprudencia', 'stj-teses', 'stj-repetitivos-iacs',
+    'stj-sumulas-anotadas', 'stj-legislacao-aplicada', 'stj-informativos',
+    'stf-repercussao-geral', 'stf-teses-rg', 'stf-tesauro', 'stf-jurisprudencia',
+    'tjsp-jurisprudencia', 'tjsp-saj-jurisprudencia', 'tcu-dados-jurisprudencia',
+    'tcu-jurisprudencia-pesquisa',
+}
 
 
 def make_session():
@@ -101,14 +112,54 @@ def fetch(session, url):
     return 'html', final, raw, clean_html(response.text)
 
 
-def validate(source, text):
-    if len(text.strip()) < 800:
-        raise RuntimeError(f'conteúdo insuficiente: {len(text)} caracteres')
-    if source.get('source_role') == 'norma':
-        if not LEGAL_RE.search(text):
-            raise RuntimeError('conteúdo não aparenta ser íntegra normativa')
-        if source.get('tipo_documento') not in {'resolucao', 'portal_oficial'} and text.lower().count('art') < 2:
-            raise RuntimeError('conteúdo normativo suspeito/incompleto')
+def _compact(value):
+    return re.sub(r'[^0-9A-Za-z]', '', str(value or '')).casefold()
+
+
+def _expected_normative_number(source):
+    title = str(source.get('title') or '')
+    match = re.search(r'\b(?:n[ºo]?\s*)?((?:\d{1,4}\.)*\d{1,4})(?:/\d{2,4})?\b', title)
+    return match.group(1) if match else None
+
+
+def _substantive_lines(text):
+    return [line.strip() for line in text.splitlines() if len(line.strip()) >= 40]
+
+
+def _looks_like_shell(text):
+    lowered = text.casefold()
+    shell_hits = sum(
+        term in lowered
+        for term in ('enable javascript', 'habilite javascript', 'carregando', 'aguarde', '[input]', '[button')
+    )
+    return shell_hits >= 2 and len(_substantive_lines(text)) < 8
+
+
+def validate(source, text, *, linked=False):
+    stripped = text.strip()
+    if len(stripped) < 800:
+        raise RuntimeError(f'conteúdo insuficiente: {len(stripped)} caracteres')
+    substantive = _substantive_lines(stripped)
+    if len(substantive) < 6:
+        raise RuntimeError(f'conteúdo sem densidade substantiva suficiente: {len(substantive)} linhas')
+    if _looks_like_shell(stripped):
+        raise RuntimeError('conteúdo aparenta ser apenas casca de portal/SPA')
+    if source.get('index_only') and not linked:
+        return
+
+    role = source.get('source_role')
+    if role == 'norma':
+        if not NORMATIVE_HEADER_RE.search(stripped) and not LEGAL_RE.search(stripped):
+            raise RuntimeError('conteúdo não apresenta estrutura normativa reconhecível')
+        expected = _expected_normative_number(source)
+        if expected and _compact(expected) not in _compact(stripped[:30000]):
+            raise RuntimeError(f'identidade normativa ausente: {expected}')
+        if source.get('tipo_documento') not in {'resolucao', 'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 2:
+            raise RuntimeError('conteúdo normativo sem quantidade suficiente de artigos/dispositivos')
+    elif role == 'orientacao_oficial':
+        markers = ('parecer', 'manual', 'guia', 'orientação', 'orientacao', 'modelo', 'boletim')
+        if not any(marker in stripped.casefold() for marker in markers):
+            raise RuntimeError('conteúdo de orientação oficial sem marcador documental reconhecível')
 
 
 def slug(value):
@@ -181,6 +232,7 @@ def write_cache(source, final, kind, raw, text, document_id, title):
         'tipo_documento': source.get('tipo_documento'),
         'source_role': source.get('source_role', 'desconhecido'),
         'authority_level': source.get('authority_level'),
+        'normative_rank': source.get('normative_rank'),
         'ramo_direito': source.get('ramo_direito'),
         'status': source.get('status') or 'orientativo',
         'revogado': source.get('revogado', False),
@@ -217,12 +269,31 @@ def cleanup_source_cache(source_id, keep_document_ids):
     return removed
 
 
+
+def purge_retired_source_cache():
+    removed = 0
+    if not CACHE.exists():
+        return removed
+    for sidecar in CACHE.glob('*.json'):
+        try:
+            meta = json.loads(sidecar.read_text(encoding='utf-8'))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if meta.get('source_id') not in RETIRED_SOURCE_IDS and meta.get('parent_source_id') not in RETIRED_SOURCE_IDS:
+            continue
+        sidecar.unlink(missing_ok=True)
+        sidecar.with_suffix('.txt').unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
+
 def sync_one(session, source, check=False, follow_links=True):
     last = ''
     for url in source.get('urls', []):
         try:
             kind, final, raw, text = fetch(session, url)
-            validate(source, text)
+            validate(source, text, linked=False)
             seen_ids = {slug(source['id'])}
             if not check and not source.get('index_only'):
                 write_cache(source, final, kind, raw, text, source['id'], source['title'])
@@ -233,7 +304,7 @@ def sync_one(session, source, check=False, follow_links=True):
                     linked_total += 1
                     try:
                         linked_kind, linked_final, linked_raw, linked_text = fetch(session, link_url)
-                        validate(source, linked_text)
+                        validate(source, linked_text, linked=True)
                         linked_ok += 1
                         document_id = (
                             f"{source['id']}__{slug(link_title)}__{hashlib.sha1(linked_final.encode()).hexdigest()[:10]}"
@@ -266,6 +337,10 @@ def main():
     args = parser.parse_args()
     sources = [s for s in SOURCES if not args.required_only or s.get('required')]
     session = make_session()
+    if not args.check:
+        removed_retired = purge_retired_source_cache()
+        if removed_retired:
+            print(f'Fontes jurisprudenciais legadas removidas do cache: {removed_retired}')
     failures = []
     ok = 0
     for source in sources:
