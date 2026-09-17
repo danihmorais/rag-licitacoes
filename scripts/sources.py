@@ -121,7 +121,7 @@ SOURCES = [
     _sp("sp-res29", "Resolução SGGD nº 29/2026 — tabela de preços de insumos de informática PRODESP", "https://compras.sp.gov.br/resolucao-sggd-no-29-de-19-de-junho-de-2026/", tipo_documento="resolucao"),
     _sp("sp-res28", "Resolução SGGD nº 28/2026 — competência da Central de Compras para TAG", "https://compras.sp.gov.br/resolucao-sggd-no-28-de-16-de-junho-de-2026/", tipo_documento="resolucao"),
     _sp("sp-compras", "Compras SP — legislação e regulamentação", "https://compras.sp.gov.br/legislacao/", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, required=True, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=60),
-_federal("lei13655", "Lei nº 13.655/2018 — alterações na LINDB sobre decisão e controle público", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13655.htm", tipo_documento="lei"),
+    _federal("lei13655", "Lei nº 13.655/2018 — alterações na LINDB sobre decisão e controle público", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13655.htm", tipo_documento="lei"),
     _federal("decreto9830", "Decreto nº 9.830/2019 — regulamenta a LINDB para decisão pública", "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2019/decreto/d9830.htm", tipo_documento="decreto"),
     _federal("lei12813", "Lei nº 12.813/2013 — conflito de interesses", "https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2013/lei/l12813.htm", tipo_documento="lei"),
     _federal("lei14770", "Lei nº 14.770/2023 — altera a Lei nº 14.133/2021", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2023/lei/l14770.htm", tipo_documento="lei"),
