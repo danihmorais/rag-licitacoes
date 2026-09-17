@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from query import authority_score, jurisdiction_score, rerank
+from query import _query_jurisdiction, authority_score, jurisdiction_score, rerank
 
 
 class FakeReranker:
@@ -49,3 +49,11 @@ def test_jurisdiction_changes_rank_for_state_control():
     assert ranked[0].payload["source"] == "tcesp"
     assert ranked[0].payload["_jurisdiction_score"] == 1.0
     assert ranked[0].payload["_authority_score"] == ranked[1].payload["_authority_score"]
+
+
+def test_ambiguous_query_keeps_jurisdiction_neutral():
+    assert _query_jurisdiction("qual o prazo para impugnar edital?") is None
+
+
+def test_structured_jurisdiction_overrides_keyword_ambiguity():
+    assert _query_jurisdiction("qual o prazo para impugnar edital?", {"jurisdicao": ["estadual_sp"]}) == "estadual_sp"

@@ -53,13 +53,13 @@ Constituição Estadual; Lei 10.177/1998; LC 709/1993; Lei 6.544/1989; regulamen
 
 ### Controle, orientação e jurisprudência
 
-TCU, TCESP, STJ, STF e TCM-SP são tratados exclusivamente pelo coletor estruturado de jurisprudência. PNCP, Compras.gov.br, Compras SP e PGE-SP usam o sincronizador apenas para localizar documentos; páginas-índice são index_only=True e não entram como evidência. Jurisprudência, parecer, manual, guia e orientação nunca são tratados como texto legal.
+TCU, TCESP, STJ, STF e TCM-SP são tratados exclusivamente pelo coletor estruturado de jurisprudência. PNCP, Compras.gov.br, Compras SP e PGE-SP usam o sincronizador apenas para localizar documentos; páginas-índice são index_only=True e não entram como evidência. No caso da PGE-SP, o portal funciona como índice de descoberta: pareceres/PDFs efetivamente localizados são armazenados como documentos vinculados e podem entrar como evidência. Jurisprudência, parecer, manual, guia e orientação nunca são tratados como texto legal.
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
 ## Política de autoridade e jurisdição
 
-A recuperação usa uma escala única: authority_level=1 para norma, 2 para jurisprudência/controle, 3 para orientação oficial e 4 para doutrina. Dentro das normas, normative_rank distingue Constituição, lei, decreto e ato infralegal. O score final é ponderado por relevância (0.68), autoridade (0.20) e jurisdição (0.12) antes do limite de FINAL_K. Consultas sobre município, Estado de São Paulo ou esfera federal recebem também aderência jurisdicional; TCM-SP usa jurisdicao=municipal_sp e não é misturado com TCESP.
+A recuperação usa uma escala única: authority_level=1 para norma, 2 para jurisprudência/controle, 3 para orientação oficial e 4 para doutrina. Dentro das normas, normative_rank distingue Constituição, lei, decreto e ato infralegal. O score final é ponderado por relevância (0.68), autoridade (0.20) e jurisdição (0.12) antes do limite de FINAL_K. A ponderação jurisdicional só atua quando a jurisdição pode ser determinada pelos filtros estruturados ou por indicadores explícitos da consulta; sem essa evidência, o componente permanece neutro. TCM-SP usa jurisdicao=municipal_sp e não é misturado com TCESP.
 
 ## Cobertura jurídica ampliada
 
@@ -92,7 +92,7 @@ Cada registro recebe `version_sha256`, de modo que uma alteração do conteúdo 
 - Chunking estrutural por artigo/súmula antes do split por tamanho.
 - Cada fragmento mantém `source_id`, `unit_id`, `unit_ref`, `chunk_index`, `document_hash` e páginas quando aplicáveis.
 - Reranker independente do LLM.
-- Relevância é o critério primário; autoridade só desempata.
+- O reranking combina relevância, autoridade e jurisdição antes do corte de FINAL_K; autoridade não é apenas um critério de desempate.
 - Após o reranking, chunks vizinhos da mesma `unit_id` podem completar o contexto sem influenciar a relevância inicial.
 - `RAG_MIN_EVIDENCE_SCORE` impede chamar o LLM quando não há evidência suficientemente relevante.
 - Citações `[F#]` para afirmações jurídicas relevantes.
