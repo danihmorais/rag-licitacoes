@@ -24,3 +24,9 @@ def test_discovery_indexes_are_not_indexed_as_corpus_documents():
     index_ids = {"pl-camara-federal","pl-lexml","pl-leis-2026","pl-leis-2025","pl-lc-atualizadas","pl-decretos-2026"}
     catalog = {item["id"]: item for item in SOURCES}
     assert all(catalog[item].get("index_only") is True for item in index_ids)
+
+
+
+def test_no_duplicate_primary_source_urls():
+    urls = [url for item in SOURCES if not item.get("index_only") for url in item.get("urls", [])]
+    assert len(urls) == len(set(urls))
