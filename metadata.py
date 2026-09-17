@@ -48,7 +48,7 @@ def _source_with_explicit(path, explicit):
     result = {
         'jurisdicao': None, 'esfera': None, 'orgao': None, 'tribunal': None,
         'tipo_documento': None, 'source_role': 'desconhecido', 'authority_level': None,
-        'status': 'desconhecido', 'fonte_oficial': None,
+        'ramo_direito': None, 'status': 'desconhecido', 'fonte_oficial': None,
         'classificacao_ambigua': False,
         'metadata_ambiguous': False,
     }
@@ -99,7 +99,7 @@ def extract_metadata(text, pdf_path):
         'data_publicacao': None, 'data_vigencia': None, 'revogado': None,
         'norma_alteradora': None, 'norm_numero': None, 'norm_ano': None,
         'effective_from': None, 'effective_to': None, 'retrieved_at': None,
-        'fonte_host': None, **source_values,
+        'ramo_direito': None, 'fonte_host': None, **source_values,
     }
     tribunal = _header_value(sample, 'TRIBUNAL')
     if tribunal and not sidecar_values.get('tribunal'):
