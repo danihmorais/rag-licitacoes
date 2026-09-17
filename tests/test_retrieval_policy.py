@@ -29,7 +29,7 @@ def test_authority_score_distinguishes_normative_sublevels():
 
 
 def test_rerank_authority_changes_top_k_selection(monkeypatch):
-    monkeypatch.setattr("config.FINAL_K", 1)
+    monkeypatch.setattr("config.FINAL_K", 2)
     points = [
         point("guidance", 0.97, 3, "federal"),
         point("law", 0.78, 1, "federal", normative_rank=2),
