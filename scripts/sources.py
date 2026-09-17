@@ -134,10 +134,10 @@ SOURCES = [
     _federal("lei8666", "Lei nº 8.666/1993 — regime histórico de licitações", "https://www.planalto.gov.br/ccivil_03/leis/l8666cons.htm", status="revogado", revogado=True, effective_to="2023-12-30"),
     _federal("lei10520", "Lei nº 10.520/2002 — pregão (regime histórico)", "https://www.planalto.gov.br/ccivil_03/leis/2002/l10520.htm", status="revogado", revogado=True, effective_to="2023-12-30"),
     _federal("lei12462", "Lei nº 12.462/2011 — RDC (regime histórico)", "https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2011/lei/l12462.htm", status="revogado", revogado=True, effective_to="2023-12-30"),
-    _federal("pncp", "PNCP — legislação e atos oficiais", "https://www.gov.br/pncp/pt-br/pncp/legislacao/leis", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=20),
-    _federal("compras", "Compras.gov.br — legislação de contratações públicas", "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=30),
-    _federal("compras-in", "Compras.gov.br — Instruções Normativas", "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas", tipo_documento="instrucao_normativa", source_role="norma", authority_level=1, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=60),
-    _sp("tcesp-srp", "TCESP — Deliberação 2026 sobre Sistema de Registro de Preços e adesão", "https://tce.sp.gov.br/legislacao/deliberacao/dispoe-sobre-diretrizes-e-procedimentos-serem-observados-pelos-orgaos-e", tipo_documento="deliberacao", source_role="jurisprudencia_controle", authority_level=4, tribunal="TCESP", required=True),
+    _federal("pncp", "PNCP — legislação e atos oficiais", "https://www.gov.br/pncp/pt-br/pncp/legislacao/leis", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=20, index_only=True),
+    _federal("compras", "Compras.gov.br — legislação de contratações públicas", "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=30, index_only=True),
+    _federal("compras-in", "Compras.gov.br — Instruções Normativas", "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas", tipo_documento="instrucao_normativa", source_role="norma", authority_level=1, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=60, index_only=True),
+    _sp("tcesp-srp", "TCESP — Deliberação 2026 sobre Sistema de Registro de Preços e adesão", "https://tce.sp.gov.br/legislacao/deliberacao/dispoe-sobre-diretrizes-e-procedimentos-serem-observados-pelos-orgaos-e", tipo_documento="deliberacao", source_role="jurisprudencia_controle", authority_level=2, tribunal="TCESP", required=True),
     _sp("sp-const", "Constituição do Estado de São Paulo — texto atualizado", "https://www.al.sp.gov.br/repositorio/legislacao/constituicao/1989/compilacao-constituicao-0-05.10.1989.html", tipo_documento="constituicao_estadual", required=True),
     _sp("sp-lei10177", "Lei SP nº 10.177/1998 — Processo Administrativo", "https://www.al.sp.gov.br/repositorio/legislacao/lei/1998/compilacao-lei-10177-30.12.1998.html", tipo_documento="lei", required=True),
     _sp("sp-lei6544", "Lei SP nº 6.544/1989 — licitações e contratos", "https://www.al.sp.gov.br/repositorio/legislacao/lei/1989/compilacao-lei-6544-22.11.1989.html", tipo_documento="lei"),
@@ -158,7 +158,7 @@ SOURCES = [
     _sp("sp-marketplace", "Resolução SGGD nº 34/2026 — Marketplace.SP e credenciamento", "https://compras.sp.gov.br/resolucao-sggd-no-34-de-29-de-julho-de-2026/", tipo_documento="resolucao", required=True),
     _sp("sp-res29", "Resolução SGGD nº 29/2026 — tabela de preços de insumos de informática PRODESP", "https://compras.sp.gov.br/resolucao-sggd-no-29-de-19-de-junho-de-2026/", tipo_documento="resolucao"),
     _sp("sp-res28", "Resolução SGGD nº 28/2026 — competência da Central de Compras para TAG", "https://compras.sp.gov.br/resolucao-sggd-no-28-de-16-de-junho-de-2026/", tipo_documento="resolucao"),
-    _sp("sp-compras", "Compras SP — legislação e regulamentação", "https://compras.sp.gov.br/legislacao/", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, required=True, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=60),
+    _sp("sp-compras", "Compras SP — legislação e regulamentação", "https://compras.sp.gov.br/legislacao/", tipo_documento="portal_oficial", source_role="orientacao_oficial", authority_level=3, required=True, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=60, index_only=True),
     _federal("lei13655", "Lei nº 13.655/2018 — alterações na LINDB sobre decisão e controle público", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13655.htm", tipo_documento="lei"),
     _federal("decreto9830", "Decreto nº 9.830/2019 — regulamenta a LINDB para decisão pública", "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2019/decreto/d9830.htm", tipo_documento="decreto"),
     _federal("lei12813", "Lei nº 12.813/2013 — conflito de interesses", "https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2013/lei/l12813.htm", tipo_documento="lei"),
@@ -230,6 +230,22 @@ def _validate_catalog():
     invalid = [item["id"] for item in SOURCES if not required_keys <= set(item)]
     if invalid:
         raise ValueError("Fontes sem metadados obrigatórios: " + ", ".join(invalid))
+    expected_levels = {
+        "norma": 1,
+        "jurisprudencia": 2,
+        "jurisprudencia_controle": 2,
+        "orientacao_oficial": 3,
+        "doutrina": 4,
+        "taxonomia": 3,
+        "descoberta_legislativa": 3,
+        "controle_estadual": 2,
+    }
+    inconsistent = [
+        item["id"] for item in SOURCES
+        if item.get("source_role") in expected_levels and item.get("authority_level") != expected_levels[item["source_role"]]
+    ]
+    if inconsistent:
+        raise ValueError("Nível de autoridade incompatível com o papel da fonte: " + ", ".join(inconsistent))
 
 
 _validate_catalog()
