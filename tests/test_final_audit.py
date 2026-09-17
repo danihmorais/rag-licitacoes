@@ -58,11 +58,11 @@ def test_jurisprudence_sidecar_authority_is_normalized_from_tribunal(tmp_path: P
         encoding='utf-8',
     )
     metadata = extract_metadata('TRIBUNAL: TCU\nPROCESSO: 1/2026', path)
-    assert metadata['authority_level'] == 3
+    assert metadata['authority_level'] == 2
 
 
 def test_catalog_jurisprudence_sources_have_tribunal_and_valid_authority():
-    expected = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}
+    expected = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}
     roles = {'jurisprudencia', 'jurisprudencia_controle'}
     for source in SOURCES:
         if source.get('source_role') not in roles:
@@ -84,6 +84,19 @@ def test_jurisprudence_schema_rejects_invalid_records():
     record = JurisprudenciaRecord(tribunal='XYZ', numero_processo='1/2026')
     with pytest.raises(ValueError, match='tribunal inválido'):
         record.validate()
+
+
+def test_tcm_sp_is_municipal_and_separate_from_tcesp(tmp_path: Path):
+    path = tmp_path / 'tcm-sp-acordao.pdf'
+    path.write_bytes(b'')
+    path.with_suffix('.json').write_text(
+        json.dumps({'tribunal': 'TCM-SP', 'jurisdicao': 'municipal_sp', 'esfera': 'municipal'}),
+        encoding='utf-8',
+    )
+    metadata = extract_metadata('TRIBUNAL: TCM-SP\nPROCESSO: 123/2026', path)
+    assert metadata['jurisdicao'] == 'municipal_sp'
+    assert metadata['esfera'] == 'municipal'
+    assert metadata['authority_level'] == 2
 
 
 def test_jurisprudence_schema_accepts_supported_record():
