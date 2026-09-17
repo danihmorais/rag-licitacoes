@@ -4,7 +4,6 @@ from scripts.sync_sources import discover_links, normalized_pattern
 
 def test_pdf_follow_pattern_accepts_normal_and_double_escaped_regex():
     normal = "\\.pdf(?:$|\\?)"
-    normal = r"\.pdf(?:$|\?)"
     overescaped = normal.replace("\\", "\\\\")
     source = {"follow_patterns": [overescaped], "max_follow": 10}
     assert normalized_pattern(overescaped) == normal
