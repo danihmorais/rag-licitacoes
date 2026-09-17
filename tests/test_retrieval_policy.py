@@ -36,7 +36,8 @@ def test_rerank_authority_changes_top_k_selection(monkeypatch):
     ]
     ranked = rerank(FakeReranker([5.0, 3.0]), "qualificação técnica", points)
     assert ranked[0].payload["source"] == "law"
-    assert ranked[0].payload["_retrieval_score"] > ranked[0].payload["_evidence_score"]
+    assert ranked[0].payload["_authority_score"] > ranked[1].payload["_authority_score"]
+    assert ranked[0].payload["_retrieval_score"] > ranked[1].payload["_retrieval_score"]
 
 
 def test_jurisdiction_changes_rank_for_state_control():
@@ -44,7 +45,7 @@ def test_jurisdiction_changes_rank_for_state_control():
         point("stj", 0.90, 2, "federal"),
         point("tcesp", 0.86, 2, "estadual_sp"),
     ]
-    ranked = rerank(FakeReranker([3.0, 2.5]), "São Paulo fiscalização de contrato", points)
+    ranked = rerank(FakeReranker([3.0, 2.5]), "fiscalização de contrato", points, {"jurisdicao": ["estadual_sp"]})
     assert ranked[0].payload["source"] == "tcesp"
     assert ranked[0].payload["_jurisdiction_score"] == 1.0
     assert ranked[0].payload["_authority_score"] == ranked[1].payload["_authority_score"]
