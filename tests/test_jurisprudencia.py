@@ -37,12 +37,12 @@ def test_tcesp_adapter_parses_result_table():
 
 
 def test_tcm_sp_adapter_parses_official_result_links():
-    html = b'''<html><body>
+    html = '''<html><body>
     <form action="/Acordao/Index" method="get"><label>Pesquisa por ementa</label><input name="termo" type="text"></form>
     <table><tr><td>1234/989/26</td><td>Licitação de serviços</td><td>Exame de edital e fiscalização contratual</td></tr></table>
     <a href="/Acordao/Detalhe/1234">1234/989/26 — Licitação de serviços</a>
     </body></html>'''
-    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"), FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index?termo=licitação")])
+    session = FakeSession([FakeResponse(html.encode("utf-8"), content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"), FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index?termo=licitação")])
     records = TCMSPAdapter(session).search("licitação", 1)
     assert len(records) == 1
     assert records[0].tribunal == "TCM-SP"
