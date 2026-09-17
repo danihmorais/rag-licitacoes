@@ -67,7 +67,10 @@ def _sp(id_: str, title: str, url: str, *, tipo_documento: str = "decreto", requ
     if follow_links:
         item.update(follow_links=True, follow_patterns=list(follow_patterns), max_follow=max_follow)
     item.update(extra)
+    if "normative_rank" not in item:
+        item["normative_rank"] = _normative_rank(item.get("source_role"), item.get("tipo_documento"))
     return item
+
 
 def _municipal_sp(id_: str, title: str, url: str, *, tipo_documento: str = "decreto", required: bool = False,
                   source_role: str = "norma", authority_level: int = 1, follow_links: bool = False,
@@ -201,7 +204,7 @@ SOURCES = [
     _federal("pl-lc173", "Lei Complementar nº 173/2020 — regras fiscais do Programa Federativo", "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp173.htm", tipo_documento="lei_complementar", ramo_direito="Financeiro e Orçamentário"),
     _federal("pl-12232", "Lei nº 12.232/2010 — serviços de publicidade prestados por agências", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2010/lei/l12232.htm", ramo_direito="Contratações Públicas"),
     _federal("pl-13243", "Lei nº 13.243/2016 — ciência, tecnologia e inovação", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2016/lei/l13243.htm", ramo_direito="Regulação e Direito Econômico"),
-    _federal("pl-10973", "Lei nº 10.973/2004 — inovação e pesquisa científica e tecnológica", "https://www.planalto.gov.br/ccivil_03/_ato2004-2006/2004/lei/l10973.htm", ramo_direito="Regulação e Direito Econômico")
+    _federal("pl-10973", "Lei nº 10.973/2004 — inovação e pesquisa científica e tecnológica", "https://www.planalto.gov.br/ccivil_03/_ato2004-2006/2004/lei/l10973.htm", ramo_direito="Regulação e Direito Econômico"),
     _federal("lei4717", "Lei nº 4.717/1965 — Ação Popular", "https://www.planalto.gov.br/ccivil_03/leis/l4717.htm", ramo_direito="Controle e Responsabilização"),
     _federal("lei7347", "Lei nº 7.347/1985 — Ação Civil Pública", "https://www.planalto.gov.br/ccivil_03/leis/l7347compilada.htm", ramo_direito="Controle e Responsabilização"),
     _federal("lc131", "Lei Complementar nº 131/2009 — Lei da Transparência", "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp131.htm", tipo_documento="lei_complementar", ramo_direito="Transparência e Controle"),
