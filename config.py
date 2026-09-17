@@ -16,6 +16,9 @@ DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
 SPARSE_MODEL = os.getenv('RAG_SPARSE_MODEL', 'Qdrant/bm25')
 RERANK_MODEL = os.getenv('RAG_RERANK_MODEL', 'BAAI/bge-reranker-base')
 RERANK_SCORE_MODE = os.getenv('RAG_RERANK_SCORE_MODE', 'sigmoid').strip().lower()
+RERANK_RELEVANCE_WEIGHT = float(os.getenv('RAG_RERANK_RELEVANCE_WEIGHT', '0.68'))
+RERANK_AUTHORITY_WEIGHT = float(os.getenv('RAG_RERANK_AUTHORITY_WEIGHT', '0.20'))
+RERANK_JURISDICTION_WEIGHT = float(os.getenv('RAG_RERANK_JURISDICTION_WEIGHT', '0.12'))
 CHUNK_SIZE = int(os.getenv('RAG_CHUNK_SIZE', '1000'))
 CHUNK_OVERLAP = int(os.getenv('RAG_CHUNK_OVERLAP', '150'))
 CANDIDATES_K = int(os.getenv('RAG_CANDIDATES_K', '60'))
@@ -57,6 +60,10 @@ def validate_config() -> None:
         (MAX_CONTEXT_CHARS > 0, 'RAG_MAX_CONTEXT_CHARS deve ser maior que zero.'),
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
         (RERANK_SCORE_MODE in {'sigmoid', 'identity'}, "RAG_RERANK_SCORE_MODE deve ser 'sigmoid' ou 'identity'."),
+        (RERANK_RELEVANCE_WEIGHT >= 0, 'RAG_RERANK_RELEVANCE_WEIGHT não pode ser negativo.'),
+        (RERANK_AUTHORITY_WEIGHT >= 0, 'RAG_RERANK_AUTHORITY_WEIGHT não pode ser negativo.'),
+        (RERANK_JURISDICTION_WEIGHT >= 0, 'RAG_RERANK_JURISDICTION_WEIGHT não pode ser negativo.'),
+        (abs((RERANK_RELEVANCE_WEIGHT + RERANK_AUTHORITY_WEIGHT + RERANK_JURISDICTION_WEIGHT) - 1.0) < 1e-9, 'Os pesos de reranking devem somar 1.'),
         (LLM_TIMEOUT > 0, 'RAG_LLM_TIMEOUT deve ser maior que zero.'),
         (LLM_MAX_TOKENS >= 0, 'RAG_LLM_MAX_TOKENS não pode ser negativo.'),
         (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
