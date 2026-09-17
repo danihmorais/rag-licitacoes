@@ -132,7 +132,7 @@ def _looks_like_shell(text):
         term in lowered
         for term in ('enable javascript', 'habilite javascript', 'carregando', 'aguarde', '[input]', '[button')
     )
-    return shell_hits >= 2 and len(_substantive_lines(text)) < 8
+    return shell_hits >= 2 and len(_substantive_lines(text)) <= 8
 
 
 def validate(source, text, *, linked=False):
