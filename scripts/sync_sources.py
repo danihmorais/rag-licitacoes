@@ -18,15 +18,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 try:
-    from scripts.sources import SOURCES as BASE_SOURCES
-    from scripts.sources_additional import EXTRA_SOURCES
-    from scripts.sources_public_law import PUBLIC_LAW_SOURCES
+    from scripts.sources import SOURCES
 except ModuleNotFoundError:
-    from sources import SOURCES as BASE_SOURCES
-    from sources_additional import EXTRA_SOURCES
-    from sources_public_law import PUBLIC_LAW_SOURCES
+    from sources import SOURCES
 
-SOURCES = [dict(item) for item in BASE_SOURCES] + [dict(item) for item in EXTRA_SOURCES] + [dict(item) for item in PUBLIC_LAW_SOURCES]
+SOURCES = [dict(item) for item in SOURCES]
 for item in SOURCES:
     if item.get('id') == 'sp-lei6544':
         item['status'] = 'historico'
@@ -228,7 +224,7 @@ def sync_one(session, source, check=False, follow_links=True):
             kind, final, raw, text = fetch(session, url)
             validate(source, text)
             seen_ids = {slug(source['id'])}
-            if not check:
+            if not check and not source.get('index_only'):
                 write_cache(source, final, kind, raw, text, source['id'], source['title'])
             linked_ok = linked_total = 0
             link_failures = False
@@ -248,6 +244,8 @@ def sync_one(session, source, check=False, follow_links=True):
                     except Exception as exc:
                         link_failures = True
                         print(f'  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}; cache anterior preservado')
+            if source.get('index_only'):
+                seen_ids.discard(slug(source['id']))
             removed = cleanup_source_cache(source['id'], seen_ids) if not check and not link_failures else 0
             suffix = f', PDFs linkados {linked_ok}/{linked_total}' if linked_total else ''
             if link_failures:
