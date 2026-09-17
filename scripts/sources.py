@@ -171,13 +171,6 @@ SOURCES = [
     _federal("stf-jurisprudencia","STF — Pesquisa de jurisprudência e inteiro teor","https://portal.stf.jus.br/jurisprudencia/",jurisdicao="federal",esfera="federal",orgao="STF",tribunal="STF",tipo_documento="jurisprudencia",source_role="jurisprudencia",authority_level=2,status="vigente"),
     _federal("tjsp-jurisprudencia","TJSP — Jurisprudência e precedentes","https://www.tjsp.jus.br/Servicos/Jurisprudencia",jurisdicao="estadual_sp",esfera="estadual",orgao="TJSP",tribunal="TJSP",tipo_documento="jurisprudencia",source_role="jurisprudencia",authority_level=2,status="vigente"),
     _federal("tjsp-saj-jurisprudencia","TJSP — consulta de jurisprudência SAJ","https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do",jurisdicao="estadual_sp",esfera="estadual",orgao="TJSP",tribunal="TJSP",tipo_documento="jurisprudencia",source_role="jurisprudencia",authority_level=2,status="vigente"),
-    _federal("pl-9605", "Lei nº 9.605/1998 — Crimes Ambientais", "https://www.planalto.gov.br/ccivil_03/leis/l9605.htm", ramo_direito="Direito Penal Público"),
-    _federal("pl-13146", "Lei nº 13.146/2015 — Lei Brasileira de Inclusão", "https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2015/lei/l13146.htm", ramo_direito="Direitos Sociais e Proteção"),
-    _federal("pl-6938", "Lei nº 6.938/1981 — Política Nacional do Meio Ambiente", "https://www.planalto.gov.br/ccivil_03/leis/l6938compilada.htm", ramo_direito="Ambiental"),
-    _federal("pl-12305", "Lei nº 12.305/2010 — Política Nacional de Resíduos Sólidos", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2010/lei/l12305.htm", ramo_direito="Ambiental"),
-    _federal("pl-15190", "Lei nº 15.190/2025 — Lei Geral do Licenciamento Ambiental", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2025/lei/l15190.htm", ramo_direito="Ambiental"),
-    _federal("pl-8987", "Lei nº 8.987/1995 — concessões e permissões de serviços públicos", "https://www.planalto.gov.br/ccivil_03/leis/l8987cons.htm", ramo_direito="Serviços Públicos"),
-    _federal("pl-11079", "Lei nº 11.079/2004 — Parcerias Público-Privadas", "https://www.planalto.gov.br/ccivil_03/_ato2004-2006/2004/lei/l11079.htm", ramo_direito="Serviços Públicos"),
 
     _federal("pl-14230", "Lei nº 14.230/2021 — alterações na Lei de Improbidade Administrativa", "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2021/lei/l14230.htm", ramo_direito="Responsabilização Pública"),
     _federal("pl-6017", "Decreto nº 6.017/2007 — regulamentação dos consórcios públicos", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2007/decreto/d6017.htm", tipo_documento="decreto", ramo_direito="Federalismo e Cooperação"),
