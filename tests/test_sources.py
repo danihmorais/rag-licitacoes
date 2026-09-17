@@ -1,5 +1,8 @@
 from scripts.sources import SOURCES
-from scripts.sync_sources import discover_links, normalized_pattern
+from pathlib import Path
+import pytest
+
+from scripts.sync_sources import discover_links, normalized_pattern, validate
 
 
 def test_pdf_follow_pattern_accepts_normal_and_double_escaped_regex():
@@ -33,3 +36,28 @@ def test_discovery_indexes_are_not_indexed_as_corpus_documents():
 def test_no_duplicate_primary_source_urls():
     urls = [url for item in SOURCES if not item.get("index_only") for url in item.get("urls", [])]
     assert len(urls) == len(set(urls))
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_validator_rejects_spa_portal_shell():
+    shell = (ROOT / "tests" / "fixtures" / "spa_shell.html").read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError, match="casca de portal"):
+        validate(next(item for item in SOURCES if item["id"] == "lei14133"), shell)
+
+
+def test_validator_rejects_wrong_normative_identity():
+    legal = (ROOT / "tests" / "fixtures" / "legal_act.txt").read_text(encoding="utf-8").replace("14.133", "13.999")
+    with pytest.raises(RuntimeError, match="identidade normativa"):
+        validate(next(item for item in SOURCES if item["id"] == "lei14133"), legal)
+
+
+def test_validator_accepts_structured_normative_content():
+    legal = (ROOT / "tests" / "fixtures" / "legal_act.txt").read_text(encoding="utf-8")
+    validate(next(item for item in SOURCES if item["id"] == "lei14133"), legal)
+
+
+def test_validator_accepts_official_guidance_content():
+    guidance = (ROOT / "tests" / "fixtures" / "pge_guidance.txt").read_text(encoding="utf-8")
+    validate(next(item for item in SOURCES if item["id"] == "sp-pge-pareceres"), guidance, linked=True)
