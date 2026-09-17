@@ -22,7 +22,7 @@ import config
 from .schema import JurisprudenciaRecord
 
 DEFAULT_QUERY = 'licitação'
-TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf')
+TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp')
 HEADERS = {
     'User-Agent': 'rag-licitacoes-jurisprudencia/1.0 (+https://github.com/danihmorais/rag-licitacoes)',
     'Accept': 'text/html,application/xhtml+xml,application/json,application/pdf;q=0.9,*/*;q=0.8',
@@ -232,6 +232,124 @@ class TCESPAdapter(JurisprudenciaAdapter):
         return records[:limit]
 
 
+
+class TCMSPAdapter(JurisprudenciaAdapter):
+    tribunal = 'TCM-SP'
+    endpoint = 'https://jurisprudencia.tcm.sp.gov.br/Acordao/Index'
+
+    def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
+        kind, final, raw = fetch(self.session, self.endpoint)
+        if kind != 'html':
+            return []
+        soup = BeautifulSoup(raw, 'html.parser')
+        result_raw = raw
+        result_url = final
+        forms = []
+        for form in soup.find_all('form'):
+            text = clean_text(form.get_text(' ', strip=True))
+            names = ' '.join(str(field.get('name') or '') + ' ' + str(field.get('id') or '') for field in form.find_all(['input', 'select', 'textarea']))
+            if any(token in (text + ' ' + names).casefold() for token in ('pesquis', 'ementa', 'palavra', 'acórd', 'acord')):
+                forms.append(form)
+        if forms:
+            form = forms[0]
+            action = urljoin(final, str(form.get('action') or final))
+            method = str(form.get('method') or 'get').lower()
+            data = {}
+            for field in form.find_all(['input', 'select', 'textarea']):
+                name = str(field.get('name') or '').strip()
+                if not name:
+                    continue
+                if field.name == 'input' and str(field.get('type') or 'text').lower() in {'submit', 'button', 'reset'}:
+                    continue
+                if field.name == 'select':
+                    option = field.find('option', selected=True) or field.find('option')
+                    value = str(option.get('value') if option else '')
+                else:
+                    value = str(field.get('value') or field.get_text() or '')
+                data[name] = value
+            query_field = next(
+                (
+                    field for field in form.find_all('input')
+                    if str(field.get('type') or 'text').lower() in {'text', 'search'}
+                    and any(token in (str(field.get('name') or '') + ' ' + str(field.get('id') or '')).casefold()
+                            for token in ('pesquis', 'ementa', 'palavra', 'termo', 'livre', 'acord'))
+                ),
+                None,
+            )
+            if query_field is not None:
+                name = str(query_field.get('name') or '').strip()
+                data[name] = query
+                try:
+                    kind, result_url, result_raw = fetch(
+                        self.session,
+                        action,
+                        method='POST' if method == 'post' else 'GET',
+                        data=data if method == 'post' else None,
+                        params=None if method == 'post' else data,
+                    )
+                except Exception as exc:
+                    print(f'aviso: consulta TCM-SP pelo formulário falhou: {type(exc).__name__}: {exc}')
+        soup = BeautifulSoup(result_raw, 'html.parser')
+        records = []
+        seen = set()
+        for anchor in soup.find_all('a', href=True):
+            absolute = urljoin(result_url, str(anchor['href'])).split('#', 1)[0]
+            parsed = urlparse(absolute)
+            if parsed.netloc.lower() != urlparse(result_url).netloc.lower():
+                continue
+            path = parsed.path.casefold()
+            if '/acordao/' not in path and '/sumula' not in path:
+                continue
+            label = clean_text(anchor.get_text(' ', strip=True))
+            if not label or absolute in seen:
+                continue
+            container = anchor.find_parent(['tr', 'li', 'article', 'section', 'div'])
+            container_text = clean_text(container.get_text(' ', strip=True)) if container else label
+            if not _query_matches(query, label, container_text):
+                continue
+            process = _extract_process(container_text, absolute) or _extract_process(label, absolute)
+            if not process:
+                sumula = re.search(r'\bS[ÚU]MULA\s*N?[ºO.]?\s*(\d+)\b', container_text, re.I)
+                if sumula:
+                    process = f'Súmula {sumula.group(1)}'
+            if not process:
+                continue
+            seen.add(absolute)
+            detail_text = ''
+            relator = None
+            data = None
+            ementa = label or container_text[:1200]
+            if detail:
+                try:
+                    detail_kind, detail_final, detail_raw = fetch(self.session, absolute)
+                    if detail_kind == 'html':
+                        detail_text = page_text(detail_raw)
+                        ementa = _label_value(detail_text, ('EMENTA', 'Ementa')) or ementa
+                        relator = _label_value(detail_text, ('RELATOR', 'Relator'))
+                        data = _label_value(detail_text, ('DATA DO JULGAMENTO', 'Data do julgamento', 'SESSÃO'))
+                        absolute = detail_final
+                except Exception as exc:
+                    print(f'aviso: detalhe TCM-SP indisponível para {process}: {type(exc).__name__}: {exc}')
+            records.append(
+                JurisprudenciaRecord(
+                    tribunal='TCM-SP',
+                    numero_processo=process,
+                    relator=relator,
+                    data=data,
+                    ementa=ementa,
+                    assunto=_as_list('licitações/contratos', 'controle municipal'),
+                    url_oficial=absolute,
+                    tipo_decisao='súmula' if process.casefold().startswith('súmula') else 'acórdão',
+                    origem='TCM-SP — Jurisprudência Oficial',
+                    inteiro_teor=detail_text if with_content and detail_text else None,
+                )
+            )
+            if len(records) >= limit:
+                break
+        return records
+
+
+
 def _label_value(text: str, labels: tuple[str, ...]) -> str | None:
     for label in labels:
         match = re.search(rf'(?im)^\s*{re.escape(label)}\s*[:\-]?\s*(.+)$', text)
@@ -382,14 +500,14 @@ class STFAdapter(JurisprudenciaAdapter):
 
 
 def adapters(session):
-    return {'tcu': TCUAdapter(session), 'tcesp': TCESPAdapter(session), 'stj': STJAdapter(session), 'stf': STFAdapter(session)}
+    return {'tcu': TCUAdapter(session), 'tcesp': TCESPAdapter(session), 'stj': STJAdapter(session), 'stf': STFAdapter(session), 'tcm-sp': TCMSPAdapter(session)}
 
 
 def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     record.retrieved_at = record.retrieved_at or datetime.now(timezone.utc).isoformat()
     record.version_sha256 = record.version_sha256 or record.calculate_version_sha256()
-    source_id = {'TCU': 'tcu-dados-jurisprudencia', 'TCESP': 'tcesp', 'STJ': 'stj-jurisprudencia', 'STF': 'stf-jurisprudencia'}.get(record.tribunal, f'{record.tribunal.lower()}-jurisprudencia')
+    source_id = {'TCU': 'tcu-jurisprudencia', 'TCESP': 'tcesp-jurisprudencia', 'STJ': 'stj-jurisprudencia', 'STF': 'stf-jurisprudencia', 'TCM-SP': 'tcm-sp-jurisprudencia'}.get(record.tribunal, f'{record.tribunal.lower()}-jurisprudencia')
     basename = f'jurisprudencia__{record.tribunal.lower()}__{record.document_key}__{record.version_sha256[:10]}'
     text_path = output_dir / f'{basename}.txt'
     json_path = output_dir / f'{basename}.json'
@@ -400,11 +518,12 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
         'source_id': source_id,
         'parent_source_id': source_id,
         'source_role': 'jurisprudencia_controle' if record.tribunal in {'TCU', 'TCESP'} else 'jurisprudencia',
-        'jurisdicao': 'estadual_sp' if record.tribunal == 'TCESP' else 'federal',
-        'esfera': 'estadual' if record.tribunal == 'TCESP' else 'federal',
+        'jurisdicao': 'municipal_sp' if record.tribunal == 'TCM-SP' else ('estadual_sp' if record.tribunal == 'TCESP' else 'federal'),
+        'esfera': 'municipal' if record.tribunal == 'TCM-SP' else ('estadual' if record.tribunal == 'TCESP' else 'federal'),
         'orgao': record.tribunal,
         'tipo_documento': 'jurisprudencia',
         'authority_level': 2,
+        'normative_rank': None,
         'status': 'jurisprudencia',
         'fonte_oficial': record.url_oficial,
         'fonte_host': urlparse(record.url_oficial).netloc if record.url_oficial else None,
