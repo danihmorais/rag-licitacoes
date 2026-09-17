@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from jurisprudencia.collector import STJAdapter, TCESPAdapter, TCUAdapter, _discover_form, save_record
+from jurisprudencia.collector import STJAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, _discover_form, save_record
 from jurisprudencia.schema import JurisprudenciaRecord
 
 
@@ -32,6 +32,29 @@ def test_tcesp_adapter_parses_result_table():
     html = '''<html><body><table><tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr><tr><td>Relatório / Voto</td><td>5600/989/25</td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Exame de edital</td><td>2025</td></tr><tr><td colspan="8">Trechos localizados no documento:</td></tr><tr><td colspan="8">A exigência de qualificação técnica deve ser pertinente e proporcional.</td></tr></table></body></html>'''.encode("utf-8")
     records = TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
     assert len(records) == 1 and records[0].numero_processo == "5600/989/25" and "qualificação técnica" in records[0].ementa
+
+
+
+def test_tcm_sp_adapter_parses_official_result_links():
+    html = b'''<html><body>
+    <form action="/Acordao/Index" method="get"><label>Pesquisa por ementa</label><input name="termo" type="text"></form>
+    <table><tr><td>1234/989/26</td><td>Licitação de serviços</td><td>Exame de edital e fiscalização contratual</td></tr></table>
+    <a href="/Acordao/Detalhe/1234">1234/989/26 — Licitação de serviços</a>
+    </body></html>'''
+    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index")])
+    records = TCMSPAdapter(session).search("licitação", 1)
+    assert len(records) == 1
+    assert records[0].tribunal == "TCM-SP"
+    assert records[0].numero_processo == "1234/989/26"
+
+
+def test_tcm_sp_save_record_has_municipal_scope(tmp_path: Path):
+    record = JurisprudenciaRecord(tribunal="TCM-SP", numero_processo="1234/989/26", ementa="Licitação municipal.", url_oficial="https://jurisprudencia.tcm.sp.gov.br/Acordao/Detalhe/1234")
+    path = save_record(record, tmp_path)
+    data = path.with_suffix(".json").read_text(encoding="utf-8")
+    assert '"jurisdicao": "municipal_sp"' in data
+    assert '"esfera": "municipal"' in data
+    assert '"authority_level": 2' in data
 
 
 def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Path):
