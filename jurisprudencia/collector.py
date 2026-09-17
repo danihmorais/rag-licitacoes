@@ -507,7 +507,7 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     record.retrieved_at = record.retrieved_at or datetime.now(timezone.utc).isoformat()
     record.version_sha256 = record.version_sha256 or record.calculate_version_sha256()
-    source_id = {'TCU': 'tcu-jurisprudencia', 'TCESP': 'tcesp-jurisprudencia', 'STJ': 'stj-jurisprudencia', 'STF': 'stf-jurisprudencia', 'TCM-SP': 'tcm-sp-jurisprudencia'}.get(record.tribunal, f'{record.tribunal.lower()}-jurisprudencia')
+    source_id = {'TCU': 'tcu-jurisprudencia', 'TCESP': 'tcesp-jurisprudencia', 'STJ': 'stj-jurisprudencia-estruturada', 'STF': 'stf-jurisprudencia-estruturada', 'TCM-SP': 'tcm-sp-jurisprudencia'}.get(record.tribunal, f'{record.tribunal.lower()}-jurisprudencia')
     basename = f'jurisprudencia__{record.tribunal.lower()}__{record.document_key}__{record.version_sha256[:10]}'
     text_path = output_dir / f'{basename}.txt'
     json_path = output_dir / f'{basename}.json'
