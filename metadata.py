@@ -90,6 +90,21 @@ def _source_with_explicit(path, explicit):
     return result
 
 
+
+def _normative_rank(source_role, tipo_documento):
+    if source_role != 'norma':
+        return None
+    tipo = str(tipo_documento or '').casefold()
+    if 'constituicao' in tipo:
+        return 1
+    if tipo in {'lei', 'lei_complementar', 'lei_ordinaria', 'decreto_lei', 'emenda_constitucional'} or tipo.startswith('lei_'):
+        return 2
+    if tipo == 'decreto' or tipo.startswith('decreto_'):
+        return 3
+    if tipo in {'instrucao_normativa', 'portaria', 'resolucao', 'deliberacao', 'ato_normativo'}:
+        return 4
+    return 4
+
 def extract_metadata(text, pdf_path):
     path = Path(pdf_path)
     sample = text[:30000]
@@ -146,6 +161,8 @@ def extract_metadata(text, pdf_path):
             metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     if metadata.get('classificacao_ambigua'):
         metadata['metadata_ambiguous'] = True
+    if metadata.get('normative_rank') is None:
+        metadata['normative_rank'] = _normative_rank(metadata.get('source_role'), metadata.get('tipo_documento'))
     if metadata.get('fonte_oficial'):
         metadata['fonte_host'] = urlparse(str(metadata['fonte_oficial'])).netloc
     return metadata
