@@ -84,7 +84,7 @@ def _source_with_explicit(path, explicit):
     elif any(x in name for x in ('lei_', 'decreto_', 'decretolei', 'resolucao_', 'lindb')):
         result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='norma', source_role='norma', authority_level=1)
     elif 'doutrina' in name:
-        result.update(tipo_documento='doutrina', source_role='doutrina', authority_level=5)
+        result.update(tipo_documento='doutrina', source_role='doutrina', authority_level=4)
     elif any(x in name for x in ('direito_administrativo', 'lindb', 'improbidade')):
         result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='mapa_fontes', source_role='orientacao_oficial', authority_level=3)
     return result
@@ -137,7 +137,7 @@ def extract_metadata(text, pdf_path):
     tribunal = str(metadata.get('tribunal') or '').upper()
     if tribunal:
         inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}.get(tribunal)
-        if metadata.get('authority_level') in (None, '') and inferred_authority is not None:
+        if inferred_authority is not None:
             metadata['authority_level'] = inferred_authority
         if tribunal == 'TCM-SP':
             metadata['jurisdicao'], metadata['esfera'] = 'municipal_sp', 'municipal'
