@@ -362,6 +362,7 @@ def _extract_process(text: str, url: str = '') -> str:
     for pattern in (
         r'\b(?:REsp|AREsp|AgInt no REsp|AgRg no REsp|RMS|MS|HC|RHC|AgInt|EDcl)\s+[\d.]+(?:/[A-Z]{2})?',
         r'\b\d{1,7}[\d.]+/[A-Z]{2}\b',
+        r'\b\d{1,7}/\d{1,7}/\d{2,4}\b',
     ):
         match = re.search(pattern, text, re.I)
         if match:
