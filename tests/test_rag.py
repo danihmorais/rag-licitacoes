@@ -23,7 +23,7 @@ def test_core_official_sources_exist():
 
 
 def test_sources_have_urls_and_metadata():
-    allowed = {'norma','jurisprudencia','jurisprudencia_controle','orientacao_oficial','taxonomia','descoberta_legislativa'}
+    allowed = {'norma','jurisprudencia','jurisprudencia_controle','orientacao_oficial','taxonomia','descoberta_legislativa','controle_estadual'}
     statuses = {'vigente','revogado','historico','vacatio_legis'}
     for item in source_module().SOURCES:
         assert item['urls'] and item['title']
