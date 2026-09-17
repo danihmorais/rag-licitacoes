@@ -53,19 +53,27 @@ Constituição Estadual; Lei 10.177/1998; LC 709/1993; Lei 6.544/1989; regulamen
 
 ### Controle, orientação e jurisprudência
 
-TCU, TCESP, AGU, PNCP, Compras.gov.br, Compras SP, STJ e STF têm `source_role` explícito. Jurisprudência, manual, guia e orientação nunca são tratados como texto legal pelo prompt.
+TCU, TCESP, STJ, STF e TCM-SP são tratados exclusivamente pelo coletor estruturado de jurisprudência. PNCP, Compras.gov.br, Compras SP e PGE-SP usam o sincronizador apenas para localizar documentos; páginas-índice são index_only=True e não entram como evidência. Jurisprudência, parecer, manual, guia e orientação nunca são tratados como texto legal.
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
+## Política de autoridade e jurisdição
+
+A recuperação usa uma escala única: authority_level=1 para norma, 2 para jurisprudência/controle, 3 para orientação oficial e 4 para doutrina. Dentro das normas, normative_rank distingue Constituição, lei, decreto e ato infralegal. O score final é ponderado por relevância (0.68), autoridade (0.20) e jurisdição (0.12) antes do limite de FINAL_K. Consultas sobre município, Estado de São Paulo ou esfera federal recebem também aderência jurisdicional; TCM-SP usa jurisdicao=municipal_sp e não é misturado com TCESP.
+
+## Cobertura jurídica ampliada
+
+O catálogo inclui as bases adicionais de controle e responsabilização (Lei nº 4.717/1965, Lei nº 7.347/1985 e LC nº 131/2009), transparência e LAI (Decreto nº 7.724/2012 e Decreto SP nº 68.155/2023), terceirização (Lei nº 6.019/1974), controle judicial (Lei nº 12.016/2009), inovação (LC nº 182/2021), além da regulamentação municipal de contratações de São Paulo e pareceres/orientações da PGE-SP. As leis 14.230/2021, LC 173/2020, Lei 12.232/2010 e Leis 10.973/2004 e 13.243/2016 já pertenciam ao catálogo e permanecem nele.
+
 ## Coletor estruturado de jurisprudência
 
-A jurisprudência possui um esquema independente do LLM em `jurisprudencia/schema.py` e adaptadores em `jurisprudencia/collector.py`. O objetivo é transformar resultados de pesquisa em registros com processo, órgão/tribunal, relator, data, ementa, tese/decisão, assunto, URL oficial, situação e hash de versão.
+A jurisprudência possui um esquema independente do LLM em `jurisprudencia/schema.py` e adaptadores dedicados em `jurisprudencia/collector.py`. Portais de pesquisa jurisprudencial não são indexados pelo sincronizador genérico de fontes. O objetivo é transformar resultados de pesquisa em registros com processo, órgão/tribunal, relator, data, ementa, tese/decisão, assunto, URL oficial, situação e hash de versão.
 
-O TCU é coletado pela interface oficial de dados abertos de acórdãos, o TCESP pela pesquisa oficial, o STJ pelo SCON e o STF pelo portal oficial de jurisprudência. Quando a fonte oferece PDF de inteiro teor, o coletor pode preservá-lo como texto com `--with-content`.
+O TCU é coletado pela interface oficial de dados abertos de acórdãos, o TCESP pela pesquisa oficial, o STJ pelo SCON, o STF pelo portal oficial e o TCM-SP pelo portal oficial de jurisprudência municipal. Quando a fonte oferece PDF de inteiro teor, o coletor pode preservá-lo como texto com `--with-content`.
 
 ```bash
 python -m jurisprudencia.collector --query "licitação" --limit 25
-python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf --query "contrato administrativo" --limit 50 --detail
+python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tcm-sp --query "contrato administrativo" --limit 50 --detail
 ```
 
 Na execução normal de `ingest.py`, a coleta pode ocorrer automaticamente. Configure:
@@ -139,9 +147,9 @@ O projeto é validado em Python 3.12 no CI. Essa escolha é intencional para o `
 
 `ci.yml` compila e testa apenas lógica determinística; não depende de sites jurídicos externos.
 
-`sync-sources.yml` é um health-check separado e não bloqueante: indisponibilidade temporária de Planalto, TCESP, TCU ou outro site não deixa o branch vermelho. A lógica de parsing das fontes continua coberta pelo CI offline.
+`sync-sources.yml` é um health-check separado e não bloqueante: indisponibilidade temporária de Planalto, TCESP, TCU ou outro site não deixa o branch vermelho. A lógica de parsing das fontes continua coberta pelo CI offline, com fixtures que rejeitam casca de SPA, exigem identidade normativa e validam documentos de orientação oficial.
 
-O CI cobre chunking estrutural, filtros, catálogo de fontes, parsing dos adaptadores de jurisprudência, compatibilidade de configuração, cache de ingestão, limpeza de fontes obsoletas e respostas OpenAI-compatible.
+O CI cobre chunking estrutural, filtros, política de autoridade/jurisdição, catálogo de fontes, regressão de conteúdo jurídico, parsing dos adaptadores de jurisprudência (incluindo TCM-SP), compatibilidade de configuração, cache de ingestão, limpeza de fontes obsoletas e respostas OpenAI-compatible.
 
 Foi corrigido o caso de regex de PDF com escape duplicado que fazia `discover_links()` ignorar PDFs oficiais. O normalizador aceita regex normal e duplamente escapado.
 

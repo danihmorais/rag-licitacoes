@@ -6,7 +6,6 @@ from jurisprudencia import batch
 from jurisprudencia.queries import DEFAULT_QUERIES, parse_queries
 from jurisprudencia.schema import JurisprudenciaRecord
 from scripts.sources import SOURCES
-from scripts.sources_additional import EXTRA_SOURCES
 
 
 def test_default_query_pack_covers_core_procurement_topics():
@@ -37,19 +36,26 @@ def test_record_key_distinguishes_records_without_decision_number():
 
 
 def test_expanded_sources_are_present():
-    ids = {item['id'] for item in SOURCES + EXTRA_SOURCES}
+    ids = {item['id'] for item in SOURCES}
     required = {
         'decreto11430', 'decreto11461', 'decreto11531', 'portaria8678',
         'in147', 'in148', 'in176', 'in190', 'in381', 'in382',
         'agu-on', 'agu-pareceres-referenciais', 'agu-modelos-14133',
-        'tcu-dados-jurisprudencia', 'stj-teses', 'stj-repetitivos-iacs',
-        'stf-teses-rg', 'tjsp-jurisprudencia',
+        'lei4717', 'lei7347', 'lc131', 'decreto7724', 'lei6019',
+        'lei12016', 'lc182', 'sp-lai', 'spm-decreto62100',
+        'spm-decreto62436', 'spm-decreto64863', 'sp-pge-pareceres',
     }
     assert required <= ids
+    retired = {
+        'tcu', 'tcesp', 'tcu-dados-jurisprudencia', 'stj-jurisprudencia',
+        'stj-teses', 'stj-repetitivos-iacs', 'stf-jurisprudencia',
+        'stf-teses-rg', 'tjsp-jurisprudencia',
+    }
+    assert retired.isdisjoint(ids)
 
 
 def test_config_uses_expanded_jurisprudence_collection_defaults():
-    assert config.INDEX_VERSION == '10'
+    assert config.INDEX_VERSION == '11'
     assert len(config.JURISPRUDENCIA_QUERIES) >= 8
     assert config.JURISPRUDENCIA_LIMIT >= 10
 

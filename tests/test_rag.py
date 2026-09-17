@@ -19,7 +19,7 @@ def source_module():
 
 def test_core_official_sources_exist():
     ids = {item['id'] for item in source_module().SOURCES}
-    assert {'lei14133','cf1988','sp-const','tcesp','tcesp-srp','decreto11462','decreto11878','in65','in58','in81','sp-pca','lei14770','lei15190','lei15266','lei15471','decreto13031','decreto13106','tcu-dados-jurisprudencia','stj-jurisprudencia','stf-jurisprudencia'} <= ids
+    assert {'lei14133','cf1988','sp-const','tcesp-srp','decreto11462','decreto11878','in65','in58','in81','sp-pca','lei14770','lei15190','lei15266','lei15471','decreto13031','decreto13106','lei4717','lei7347','lc131','decreto7724','lei6019','lei12016','lc182','sp-lai','spm-decreto62100','spm-decreto62436','spm-decreto64863','sp-pge-pareceres'} <= ids
 
 
 def test_sources_have_urls_and_metadata():
@@ -110,6 +110,16 @@ def test_evidence_score_identity_mode_is_bounded():
     assert evidence_score(0.5, 'identity') == 0.5
     assert evidence_score(-5.0, 'identity') == 0.0
     assert evidence_score(5.0, 'identity') == 1.0
+
+
+def test_catalog_uses_consistent_authority_tiers():
+    sources = source_module().SOURCES
+    expected = {"norma": 1, "jurisprudencia": 2, "jurisprudencia_controle": 2, "orientacao_oficial": 3, "doutrina": 4}
+    assert all(
+        item.get("authority_level") == expected.get(item.get("source_role"), item.get("authority_level"))
+        for item in sources
+        if item.get("source_role") in expected
+    )
 
 
 def test_config_rejects_inconsistent_retrieval_limits(monkeypatch):

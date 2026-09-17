@@ -48,7 +48,7 @@ def _source_with_explicit(path, explicit):
     result = {
         'jurisdicao': None, 'esfera': None, 'orgao': None, 'tribunal': None,
         'tipo_documento': None, 'source_role': 'desconhecido', 'authority_level': None,
-        'ramo_direito': None, 'status': 'desconhecido', 'fonte_oficial': None,
+        'ramo_direito': None, 'normative_rank': None, 'status': 'desconhecido', 'fonte_oficial': None,
         'classificacao_ambigua': False,
         'metadata_ambiguous': False,
     }
@@ -62,15 +62,17 @@ def _source_with_explicit(path, explicit):
         result['metadata_ambiguous'] = True
         return result
     if 'tcesp' in name or 'tribunal de contas do estado de são paulo' in name or 'tribunal de contas do estado de sao paulo' in name:
-        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TCESP', tribunal='TCESP', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=4)
+        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TCESP', tribunal='TCESP', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
     elif 'tcu' in name:
-        result.update(jurisdicao='federal', esfera='federal', orgao='TCU', tribunal='TCU', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=3)
+        result.update(jurisdicao='federal', esfera='federal', orgao='TCU', tribunal='TCU', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
     elif 'stj' in name:
-        result.update(jurisdicao='federal', esfera='federal', orgao='STJ', tribunal='STJ', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=3)
+        result.update(jurisdicao='federal', esfera='federal', orgao='STJ', tribunal='STJ', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
     elif 'stf' in name:
         result.update(jurisdicao='federal', esfera='federal', orgao='STF', tribunal='STF', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
+    elif 'tcm-sp' in name or 'tcm_sp' in name or 'tcmsP'.casefold() in name:
+        result.update(jurisdicao='municipal_sp', esfera='municipal', orgao='TCM-SP', tribunal='TCM-SP', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
     elif 'tjsp' in name:
-        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TJSP', tribunal='TJSP', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=4)
+        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TJSP', tribunal='TJSP', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
     elif 'constituicao' in name:
         result.update(jurisdicao='estadual_sp' if 'estadual' in name else 'federal', esfera='estadual' if 'estadual' in name else 'federal', orgao='Constituição', tipo_documento='constituicao', source_role='norma', authority_level=1)
     elif federal_14133:
@@ -82,11 +84,26 @@ def _source_with_explicit(path, explicit):
     elif any(x in name for x in ('lei_', 'decreto_', 'decretolei', 'resolucao_', 'lindb')):
         result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='norma', source_role='norma', authority_level=1)
     elif 'doutrina' in name:
-        result.update(tipo_documento='doutrina', source_role='doutrina', authority_level=5)
+        result.update(tipo_documento='doutrina', source_role='doutrina', authority_level=4)
     elif any(x in name for x in ('direito_administrativo', 'lindb', 'improbidade')):
         result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='mapa_fontes', source_role='orientacao_oficial', authority_level=3)
     return result
 
+
+
+def _normative_rank(source_role, tipo_documento):
+    if source_role != 'norma':
+        return None
+    tipo = str(tipo_documento or '').casefold()
+    if 'constituicao' in tipo:
+        return 1
+    if tipo in {'lei', 'lei_complementar', 'lei_ordinaria', 'decreto_lei', 'emenda_constitucional'} or tipo.startswith('lei_'):
+        return 2
+    if tipo == 'decreto' or tipo.startswith('decreto_'):
+        return 3
+    if tipo in {'instrucao_normativa', 'portaria', 'resolucao', 'deliberacao', 'ato_normativo'}:
+        return 4
+    return 4
 
 def extract_metadata(text, pdf_path):
     path = Path(pdf_path)
@@ -107,10 +124,10 @@ def extract_metadata(text, pdf_path):
         metadata['orgao'] = tribunal
         metadata['source_role'] = 'jurisprudencia_controle' if tribunal in {'TCU', 'TCESP'} else 'jurisprudencia'
         metadata['tipo_documento'] = 'jurisprudencia'
-        metadata['authority_level'] = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}.get(tribunal, 4)
+        metadata['authority_level'] = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}.get(tribunal, 4)
         metadata['status'] = 'jurisprudencia'
-        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
-        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+        metadata['jurisdicao'] = 'municipal_sp' if tribunal == 'TCM-SP' else ('estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal')
+        metadata['esfera'] = 'municipal' if metadata['jurisdicao'] == 'municipal_sp' else ('estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal')
     processo_header = _header_value(sample, 'PROCESSO')
     if processo_header and not sidecar_values.get('processo'):
         metadata['processo'] = processo_header
@@ -134,11 +151,18 @@ def extract_metadata(text, pdf_path):
             metadata[key] = value
     tribunal = str(metadata.get('tribunal') or '').upper()
     if tribunal:
-        metadata['authority_level'] = {'STF': 2, 'STJ': 3, 'TCU': 3, 'TCESP': 4, 'TJSP': 4}.get(tribunal, metadata.get('authority_level'))
-        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
-        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+        inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}.get(tribunal)
+        if inferred_authority is not None:
+            metadata['authority_level'] = inferred_authority
+        if tribunal == 'TCM-SP':
+            metadata['jurisdicao'], metadata['esfera'] = 'municipal_sp', 'municipal'
+        else:
+            metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+            metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     if metadata.get('classificacao_ambigua'):
         metadata['metadata_ambiguous'] = True
+    if metadata.get('normative_rank') is None:
+        metadata['normative_rank'] = _normative_rank(metadata.get('source_role'), metadata.get('tipo_documento'))
     if metadata.get('fonte_oficial'):
         metadata['fonte_host'] = urlparse(str(metadata['fonte_oficial'])).netloc
     return metadata
