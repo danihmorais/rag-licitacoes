@@ -1,8 +1,8 @@
-# Expansão do corpus para Direito Público — 17/09/2026
+# Reestruturação e expansão do corpus de Direito Público — 17/09/2026
 
 ## Objetivo
 
-O corpus deixa de ser predominantemente orientado a licitações e contratos e passa a ter um núcleo geral de Direito Público brasileiro, mantendo prioridade para fontes oficiais e para a correta separação entre norma, jurisprudência, controle e orientação.
+O corpus deixa de ser predominantemente orientado a licitações e contratos e passa a ter um núcleo geral de Direito Público brasileiro. O catálogo jurídico foi consolidado em um único módulo (`scripts/sources.py`), reduzindo duplicidade e pontos de manutenção. A ingestão também passou a tratar páginas de índice como fontes de descoberta, e não como evidência jurídica.
 
 ## Cobertura jurídica
 

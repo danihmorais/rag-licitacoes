@@ -26,7 +26,7 @@ O LLM é desacoplado do índice: Qwen, Gemma, Llama, Gemini, llama.cpp, LM Studi
 
 ## Corpus jurídico
 
-Legislação pública não fica congelada em PDFs no Git. `scripts/sources.py` mantém o catálogo oficial e `scripts/sources_additional.py` complementa a cobertura com legislação recente e portais de jurisprudência. `scripts/sync_sources.py` consulta as URLs, usa retry/backoff, valida o conteúdo e grava o cache local em `db/source_cache/`, que é ignorado pelo Git.
+Legislação pública não fica congelada em PDFs no Git. `scripts/sources.py` mantém o catálogo jurídico unificado, com metadados de jurisdição, esfera, órgão, papel da fonte, autoridade, status e ramo do Direito. `scripts/sync_sources.py` consulta as URLs, usa retry/backoff, valida o conteúdo e grava o cache local em `db/source_cache/`, que é ignorado pelo Git. Páginas de índice/discovery podem ser usadas para localizar atos novos, mas não entram no corpus como evidência jurídica (`index_only=True`).
 
 A sincronização também descobre PDFs diretamente linkados por páginas oficiais selecionadas. PDFs manuais continuam permitidos em `pdfs/` e, quando versionados, devem terminar em `.DDMMAAAA.pdf`, por exemplo `.27082026.pdf`.
 
@@ -43,7 +43,7 @@ python scripts/sync_sources.py --check --required-only
 
 ### Federal
 
-Constituição; Lei 14.133/2021; Decreto 12.807/2025; LINDB; Decreto-Lei 200/1967; Lei 9.784/1999; improbidade; anticorrupção; LAI; LGPD; estatais; concessões; PPPs; LRF; Lei 4.320/1964; LC 123/2006; Lei 13.019/2014; Governo Digital; PCA; agentes e fiscais; SRP; credenciamento; ETP; TR; dispensa eletrônica; pesquisa de preços; meio ambiente; resíduos; acessibilidade; além das alterações recentes da Lei 14.133/2021 e regulamentações conexas.
+O núcleo cobre Constituição e controle de constitucionalidade; Administração Pública, processo administrativo e LINDB; servidores e responsabilização; licitações e contratos; controle e precedentes; Direito Financeiro e Orçamentário; Direito Tributário; concessões, PPPs, regulação e serviços públicos; consórcios e federalismo cooperativo; transparência, proteção de dados e governo digital; urbanismo e patrimônio; meio ambiente; saúde, educação e assistência social; direitos de grupos protegidos; defesa civil; ciência, tecnologia e inovação; e legislação eleitoral. A Lei 14.133/2021 permanece como núcleo de contratações públicas, mas deixa de ser o limite temático do RAG.
 
 Leis 8.666/1993, 10.520/2002 e RDC permanecem como corpus histórico e são marcadas como `revogado`. A Lei paulista 6.544/1989 é preservada como `historico`, para evitar que o modelo a trate automaticamente como regime geral atual.
 
