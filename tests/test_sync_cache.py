@@ -21,11 +21,12 @@ def test_link_failure_does_not_delete_previous_cache(monkeypatch, tmp_path: Path
         'title': 'Fonte de teste',
         'urls': ['https://example.test/pagina'],
         'source_role': 'orientacao_oficial',
+        'authority_level': 3,
         'follow_links': True,
         'follow_patterns': [r'\\.pdf(?:$|\\?)'],
         'max_follow': 10,
     }
-    root_text = 'conteudo oficial ' * 100
+    root_text = '\n'.join(['orientação oficial ' + ('conteudo ' * 50) for _ in range(6)])
 
     def fake_fetch(_session, url):
         if url.endswith('/pagina'):
