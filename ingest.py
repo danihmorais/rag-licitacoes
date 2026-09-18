@@ -218,7 +218,13 @@ def _point_ids_for_filter(client, filters):
             with_payload=False,
             with_vectors=False,
         )
-        ids.update(point.id for point in points)
+        ids.update(
+            value for value in (
+                getattr(point, 'id', None),
+                (point.payload or {}).get('source') if getattr(point, 'payload', None) else None,
+            )
+            if value is not None
+        )
         if offset is None:
             break
     return ids
