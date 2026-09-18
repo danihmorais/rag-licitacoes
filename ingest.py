@@ -31,7 +31,7 @@ def sync_sources():
     )
     if result.returncode != 0:
         raise RuntimeError(
-            'Sincronização legislativa incompleta. Corrija as fontes rejeitadas antes de indexar; '
+            'Sincronização de fontes jurídicas incompleta. Corrija as fontes rejeitadas antes de indexar; '
             'o cache anterior foi preservado onde aplicável.'
         )
 
