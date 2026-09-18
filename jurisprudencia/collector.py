@@ -364,8 +364,21 @@ class TCESPAdapter(JurisprudenciaAdapter):
             if table is None:
                 break
             found_on_page = 0
+            expect_excerpt = False
             for row in table.find_all('tr'):
                 cells = [clean_text(cell.get_text(' ', strip=True)) for cell in row.find_all(['th', 'td'])]
+                if not cells:
+                    continue
+                joined = ' | '.join(cells)
+                if joined.casefold().startswith('trechos localizados'):
+                    expect_excerpt = True
+                    continue
+                if expect_excerpt and records and len(cells) == 1:
+                    excerpt = cells[0]
+                    if excerpt:
+                        records[-1].ementa = excerpt
+                    expect_excerpt = False
+                    continue
                 if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
                     continue
                 detail_anchor = next(
