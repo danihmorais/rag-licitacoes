@@ -43,7 +43,7 @@ NOISE = {'[Input]', '[Button: Pesquisar]', 'expand_more', 'collapse'}
 NORMATIVE_HEADER_RE = re.compile(
     r'(?im)^\s*(?:LEI\s+COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLU[ÇC][ÃA]O|INSTRU[ÇC][ÃA]O\s+NORMATIVA|CONSTITUI[ÇC][ÃÃ]O)\b'
 )
-ARTICLE_RE = re.compile(r'(?im)^\s*Art(?:igo)?\.?\s+\d+[A-Za-zºª\-]*\b')
+ARTICLE_RE = re.compile(r'(?im)\bArt(?:igo)?\.?\s+\d+[A-Za-zºª\-]*\b')
 RETIRED_SOURCE_IDS = {
     'tcu', 'tcesp', 'stj-jurisprudencia', 'stj-teses', 'stj-repetitivos-iacs',
     'stj-sumulas-anotadas', 'stj-legislacao-aplicada', 'stj-informativos',
@@ -189,7 +189,7 @@ def _looks_like_shell(text):
     return shell_hits >= 2 and len(_substantive_lines(text)) <= 8
 
 
-def validate(source, text, *, linked=False):
+def validate(source, text, *, linked=False, final_url=None):
     stripped = text.strip()
     if len(stripped) < 800:
         raise RuntimeError(f'conteúdo insuficiente: {len(stripped)} caracteres')
@@ -207,7 +207,10 @@ def validate(source, text, *, linked=False):
             raise RuntimeError('conteúdo não apresenta estrutura normativa reconhecível')
         expected = _expected_normative_number(source)
         if expected and _compact(expected) not in _compact(stripped[:30000]):
-            raise RuntimeError(f'identidade normativa ausente: {expected}')
+            url_identity = _compact(final_url or '')
+            allowed_url_identity = _compact(expected) in url_identity
+            if not allowed_url_identity:
+                raise RuntimeError(f'identidade normativa ausente: {expected}')
         if source.get('tipo_documento') not in {'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 1:
             raise RuntimeError('conteúdo normativo sem artigo/dispositivo reconhecível')
     elif role == 'orientacao_oficial':
@@ -347,7 +350,7 @@ def sync_one(session, source, check=False, follow_links=True):
     for url in _source_urls(source):
         try:
             kind, final, raw, text = fetch(session, url)
-            validate(source, text, linked=False)
+            validate(source, text, linked=False, final_url=final)
             seen_ids = {slug(source['id'])}
             if not check and not source.get('index_only'):
                 write_cache(source, final, kind, raw, text, source['id'], source['title'])
@@ -358,7 +361,7 @@ def sync_one(session, source, check=False, follow_links=True):
                     linked_total += 1
                     try:
                         linked_kind, linked_final, linked_raw, linked_text = fetch(session, link_url)
-                        validate(source, linked_text, linked=True)
+                        validate(source, linked_text, linked=True, final_url=linked_final)
                         linked_ok += 1
                         document_id = (
                             f"{source['id']}__{slug(link_title)}__{hashlib.sha1(linked_final.encode()).hexdigest()[:10]}"
