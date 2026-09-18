@@ -35,6 +35,7 @@ JURISPRUDENCIA_QUERIES = parse_queries(os.getenv('RAG_JURISPRUDENCIA_QUERIES'))
 JURISPRUDENCIA_LIMIT = int(os.getenv('RAG_JURISPRUDENCIA_LIMIT', '12'))
 JURISPRUDENCIA_DETAIL = os.getenv('RAG_JURISPRUDENCIA_DETAIL', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
 JURISPRUDENCIA_WITH_CONTENT = os.getenv('RAG_JURISPRUDENCIA_WITH_CONTENT', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
+JURISPRUDENCIA_STRICT = os.getenv('RAG_JURISPRUDENCIA_STRICT', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 LLM_PROVIDER = os.getenv('RAG_LLM_PROVIDER', 'openai_compatible')
 LLM_MODEL = os.getenv('RAG_LLM_MODEL', 'local')
 LLM_TEMPERATURE = float(os.getenv('RAG_LLM_TEMPERATURE', '0.1'))
