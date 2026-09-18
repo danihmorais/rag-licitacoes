@@ -25,9 +25,15 @@ def sync_sources():
     if not config.RAG_SYNC_SOURCES:
         return
     script = Path(__file__).parent / 'scripts' / 'sync_sources.py'
-    result = subprocess.run([sys.executable, str(script)], check=False)
+    result = subprocess.run(
+        [sys.executable, str(script), '--strict'],
+        check=False,
+    )
     if result.returncode != 0:
-        print('Aviso: sincronização de fontes terminou com falhas; cache anterior será preservado.')
+        raise RuntimeError(
+            'Sincronização legislativa incompleta. Corrija as fontes rejeitadas antes de indexar; '
+            'o cache anterior foi preservado onde aplicável.'
+        )
 
 
 def sync_jurisprudencia():
