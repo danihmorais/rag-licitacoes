@@ -442,13 +442,15 @@ def main():
             source['id']
             for source in sources
             if source['id'] in failures
-            and source.get('source_role') == 'norma'
-            and not source.get('index_only')
+            and (
+                (source.get('source_role') == 'norma' and not source.get('index_only'))
+                or source.get('source_type') == 'web_articles'
+            )
         ]
     if failures and args.required_only:
         return 1
     if strict_failures:
-        print('Falhas legislativas bloqueantes:', ', '.join(strict_failures))
+        print('Falhas bloqueantes de fontes:', ', '.join(strict_failures))
         return 1
     return 0
 
