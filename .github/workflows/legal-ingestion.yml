@@ -42,16 +42,10 @@ jobs:
         env:
           RAG_SYNC_SOURCES: "0"
           RAG_SYNC_JURISPRUDENCIA: "0"
-          RAG_RAG_PRUNE_STALE: "1"
+          RAG_PRUNE_STALE: "1"
         run: |
           python ingest.py
 
-      - name: Verificar consulta sobre legislação indexada
-        env:
-          RAG_SYNC_SOURCES: "0"
-          RAG_SYNC_JURISPRUDENCIA: "0"
-          RAG_LLM_PROVIDER: "openai_compatible"
-          RAG_LLM_MODEL: "ci"
-          RAG_OPENAI_BASE_URL: "http://127.0.0.1:9/v1"
+      - name: Testar código e política do RAG
         run: |
-          python -m pytest -q tests/test_sync_sources.py tests/test_sync_policy.py tests/test_rag.py
+          python -m pytest -q
