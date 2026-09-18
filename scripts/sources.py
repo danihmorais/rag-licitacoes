@@ -234,6 +234,149 @@ SOURCES = [
     _federal("pl-discovery-decretos-2026", "Planalto — decretos de 2026 para descoberta", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2026/decreto/_decretos2026.htm", tipo_documento="portal_oficial", source_role="descoberta_legislativa", authority_level=3, index_only=True),
 ]
 
+
+WEB_ARTICLE_BASE = {
+    "jurisdicao": "nacional",
+    "esfera": "nacional",
+    "source_role": "doutrina",
+    "authority_level": 4,
+    "status": "orientativo",
+    "tipo_documento": "materia_web",
+    "index_only": False,
+    "min_publication_date": "2021-01-01",
+}
+
+
+def _web_article(id_: str, title: str, orgao: str, urls: tuple[str, ...], *,
+                 ramo_direito: str = "Contratações Públicas",
+                 scope: str = "dedicated_licitacao",
+                 max_documents: int = 250,
+                 discovery_max_pages: int = 80,
+                 sitemap_urls: tuple[str, ...] = (),
+                 **extra):
+    item = {
+        **WEB_ARTICLE_BASE,
+        "id": id_,
+        "title": title,
+        "orgao": orgao,
+        "urls": list(urls),
+        "ramo_direito": ramo_direito,
+        "web_article_scope": scope,
+        "max_documents": max_documents,
+        "discovery_max_pages": discovery_max_pages,
+        "sitemap_urls": list(sitemap_urls),
+    }
+    item.update(extra)
+    return item
+
+
+SOURCES.extend([
+    _web_article(
+        "web-nova-lei-licitacao",
+        "Nova Lei de Licitação — matérias sobre licitações e contratos",
+        "Nova Lei de Licitação",
+        ("https://www.novaleilicitacao.com.br/",),
+        max_documents=250,
+        discovery_max_pages=100,
+        sitemap_urls=(
+            "https://www.novaleilicitacao.com.br/wp-sitemap.xml",
+            "https://www.novaleilicitacao.com.br/sitemap_index.xml",
+        ),
+    ),
+    _web_article(
+        "web-licitacoes-publicas-blog",
+        "Licitações Públicas — matérias sobre licitações públicas",
+        "Licitações Públicas",
+        ("https://licitacoespublicas.blog.br/",),
+        max_documents=250,
+        discovery_max_pages=100,
+        sitemap_urls=("https://licitacoespublicas.blog.br/wp-sitemap.xml",),
+    ),
+    _web_article(
+        "web-conlicitacao",
+        "ConLicitação — matérias sobre licitações e contratos",
+        "ConLicitação",
+        ("https://conlicitacao.com.br/blog/",),
+        max_documents=250,
+        discovery_max_pages=70,
+        sitemap_urls=("https://conlicitacao.com.br/wp-sitemap.xml",),
+    ),
+    _web_article(
+        "web-zenite",
+        "Zênite — matérias sobre licitação e contratos administrativos",
+        "Zênite",
+        ("https://zenite.blog.br/caderno/categoria-licitacao/",),
+        max_documents=250,
+        discovery_max_pages=100,
+        sitemap_urls=("https://zenite.blog.br/wp-sitemap.xml",),
+    ),
+    _web_article(
+        "web-migalhas",
+        "Migalhas — matérias de Direito Administrativo e Direito Público",
+        "Migalhas",
+        ("https://www.migalhas.com.br/depeso", "https://www.migalhas.com.br/quentes"),
+        scope="legal_admin_public",
+        ramo_direito="Direito Administrativo e Direito Público",
+        max_documents=300,
+        discovery_max_pages=200,
+        sitemap_urls=("https://www.migalhas.com.br/sitemap.xml",),
+        topic_include_terms=(
+            "direito administrativo", "direito público", "direito publico",
+            "licitação", "licitações", "licitação pública", "licitações públicas",
+            "contrato administrativo", "contratos administrativos",
+            "contratação pública", "contratações públicas",
+            "administração pública", "poder público", "serviço público",
+            "processo administrativo", "ato administrativo",
+            "improbidade administrativa", "responsabilidade do estado",
+            "compras públicas", "pregão", "edital", "inexigibilidade",
+            "dispensa de licitação", "lei 14.133", "lei 13.303",
+            "tribunal de contas", "tcu", "tcesp", "controladoria",
+            "transparência pública", "concessão", "concessões",
+            "parceria público-privada", "parcerias público-privadas", "ppp",
+            "regulação", "regulação pública",
+        ),
+        topic_exclude_terms=(
+            "direito de família", "divórcio", "direito trabalhista",
+            "direito do trabalho", "direito previdenciário",
+            "direito penal", "direito empresarial", "direito societário",
+            "direito do consumidor", "propriedade intelectual",
+        ),
+    ),
+    _web_article(
+        "web-conjur",
+        "ConJur — matérias de Direito Administrativo e Direito Público",
+        "Consultor Jurídico (ConJur)",
+        ("https://conjur.com.br/artigos/", "https://conjur.com.br/colunas/", "https://conjur.com.br/feed"),
+        scope="legal_admin_public",
+        ramo_direito="Direito Administrativo e Direito Público",
+        max_documents=300,
+        discovery_max_pages=200,
+        sitemap_urls=(),
+        topic_include_terms=(
+            "administrativo", "direito público", "direito publico",
+            "licitação", "licitações", "licitação pública", "licitações públicas",
+            "contrato administrativo", "contratos administrativos",
+            "contratação pública", "contratações públicas",
+            "administração pública", "poder público", "serviço público",
+            "processo administrativo", "ato administrativo",
+            "improbidade administrativa", "responsabilidade do estado",
+            "compras públicas", "pregão", "edital", "inexigibilidade",
+            "dispensa de licitação", "lei 14.133", "lei 13.303",
+            "tribunal de contas", "tcu", "tcesp", "controladoria",
+            "transparência pública", "concessão", "concessões",
+            "parceria público-privada", "parcerias público-privadas", "ppp",
+            "regulação", "regulação pública", "licitações e contratos",
+        ),
+        topic_exclude_terms=(
+            "direito de família", "divórcio", "direito trabalhista",
+            "direito do trabalho", "direito previdenciário",
+            "direito penal", "direito empresarial", "direito societário",
+            "direito do consumidor", "propriedade intelectual",
+        ),
+    ),
+])
+
+
 SOURCE_BY_ID = {item["id"]: item for item in SOURCES}
 
 
