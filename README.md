@@ -139,7 +139,7 @@ O histórico de alterações é controlado por hash dos documentos. A ingestão 
 
 ## RTX 5060 Ti 16 GB
 
-Recuperação e LLM permanecem desacoplados. Para gerar embeddings na GPU, use o perfil `requirements-gpu.txt` em um ambiente novo. O FastEmbed oficial exige `fastembed-gpu` para execução em GPU; `fastembed` e `fastembed-gpu` não devem coexistir no mesmo ambiente. citeturn742825view0turn859935search5
+Recuperação e LLM permanecem desacoplados. Para gerar embeddings na GPU, use o perfil `requirements-gpu.txt` em um ambiente novo. O FastEmbed oficial exige `fastembed-gpu` para execução em GPU; `fastembed` e `fastembed-gpu` não devem coexistir no mesmo ambiente.
 
 ```bash
 python -m venv .venv-gpu
