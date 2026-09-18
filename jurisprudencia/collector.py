@@ -370,14 +370,14 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 if not cells:
                     continue
                 joined = ' | '.join(cells)
-                if 'trechos localizados' in joined.casefold():
-                    expect_excerpt = True
-                    continue
-                if expect_excerpt and records and len(cells) == 1:
-                    excerpt = cells[0]
+                if expect_excerpt and records:
+                    excerpt = joined
                     if excerpt:
                         records[-1].ementa = excerpt
                     expect_excerpt = False
+                    continue
+                if 'trechos localizados' in joined.casefold():
+                    expect_excerpt = True
                     continue
                 if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
                     continue
