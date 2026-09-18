@@ -12,7 +12,7 @@ fontes oficiais HTML/PDF -> sincronização -> cache local -> metadados/versiona
                                       -> expansão de vizinhança -> contexto -> LLM
 ```
 
-O LLM é desacoplado do índice: Qwen, Gemma, Llama, Gemini, llama.cpp, LM Studio, vLLM, Ollama ou qualquer endpoint OpenAI-compatible podem ser trocados sem reindexação quando somente o gerador muda.
+O LLM é desacoplado do índice e pode ser trocado sem reindexação quando somente o gerador muda. A execução local deste projeto exige GPU para embeddings e reranking; não há perfil de execução por CPU.
 
 ## Melhorias de confiabilidade
 
@@ -64,7 +64,7 @@ TCU, TCESP, STJ, STF, TCM-SP e TJSP são tratados pelo coletor estruturado de ju
 | TCM-SP | Sim | Sim | Opcional |
 | TJSP | Sim | Sim | Opcional |
 
-O TCU possui webservice oficial de acórdãos com URL de texto, DOC e PDF. O TCESP mantém pesquisa de jurisprudência com resultados de decisões, súmulas e boletins. O STJ disponibiliza o SCON para pesquisa de jurisprudência. O TCM-SP mantém consulta oficial de julgados e jurisprudência. O TJSP disponibiliza a Consulta Completa do segundo grau, incluindo Pesquisa Livre no inteiro teor dos acórdãos.
+O TCU mantém e documenta o webservice oficial de acórdãos usado pelo coletor, com paginação por `inicio`/ `quantidade` e campos para acórdão, DOC e PDF. O portal também publica datasets estáticos; o adaptador usa o webservice documentado para pesquisa paginada. O TCESP mantém pesquisa de jurisprudência com resultados de decisões, súmulas e boletins. O STJ disponibiliza o SCON para pesquisa de jurisprudência. O TCM-SP mantém consulta oficial de julgados e jurisprudência. O TJSP disponibiliza a Consulta Completa do segundo grau, incluindo Pesquisa Livre no inteiro teor dos acórdãos.
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
@@ -139,22 +139,22 @@ O histórico de alterações é controlado por hash dos documentos. A ingestão 
 
 ## RTX 5060 Ti 16 GB
 
-Recuperação e LLM permanecem desacoplados. Para gerar embeddings na GPU, use o perfil `requirements-gpu.txt` em um ambiente novo. O FastEmbed oficial exige `fastembed-gpu` para execução em GPU; `fastembed` e `fastembed-gpu` não devem coexistir no mesmo ambiente.
+O runtime é GPU-only. A instalação oficial do FastEmbed em GPU usa `fastembed-gpu` e o provedor `CUDAExecutionProvider`; o projeto rejeita configuração com provedor CPU ou sem CUDA disponível.
 
 ```bash
-python -m venv .venv-gpu
-source .venv-gpu/bin/activate
-pip install -r requirements-gpu.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
 ```
 
-No `.env`, habilite:
+O `.env.example` já define:
 
 ```text
 RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
 ```
 
-A implementação usa a mesma coleção Qdrant para CPU e GPU; mudar apenas o provedor de execução não altera os vetores. Trocar o modelo de embedding, porém, exige reindexação e atualização do manifesto.
+`requirements.txt` e `requirements-gpu.txt` usam a mesma base GPU e não instalam o pacote CPU `fastembed` nem `onnxruntime`. O runtime verifica a presença de `CUDAExecutionProvider` antes de criar os modelos. Trocar o modelo de embedding exige reindexação e atualização do manifesto.
 
 ## Instalação
 
@@ -174,7 +174,7 @@ O projeto é validado em Python 3.12 no CI. Essa escolha é intencional para o `
 
 `ci.yml` compila e testa apenas lógica determinística; não depende de sites jurídicos externos.
 
-`sync-sources.yml` é um health-check separado e não bloqueante: indisponibilidade temporária de Planalto, TCESP, TCU ou outro site não deixa o branch vermelho. A lógica de parsing das fontes continua coberta pelo CI offline, com fixtures que rejeitam casca de SPA, exigem identidade normativa e validam documentos de orientação oficial.
+`sync-sources.yml` é um health-check separado das fontes legislativas. `jurisprudencia-health.yml` executa semanalmente e também manualmente `python -m jurisprudencia.batch --strict --limit 1` contra os seis portais oficiais de jurisprudência; falhas de rede, mudança estrutural e ausência de resultados bloqueiam o job e ficam visíveis no GitHub Actions. A suíte `ci.yml` continua determinística e offline.
 
 O CI cobre chunking estrutural, filtros, política de autoridade/jurisdição, catálogo de fontes, regressão de conteúdo jurídico, parsing dos adaptadores de jurisprudência (incluindo TCM-SP), compatibilidade de configuração, cache de ingestão, limpeza de fontes obsoletas e respostas OpenAI-compatible.
 
