@@ -423,6 +423,7 @@ def sync_web_articles(session, source, check=False):
     accepted = []
     fetched = 0
     seen_articles = set()
+    article_failures = 0
     for candidate in candidates:
         if len(accepted) >= target or fetched >= target * 6:
             break
@@ -443,7 +444,15 @@ def sync_web_articles(session, source, check=False):
             article["_raw"] = raw
             accepted.append(article)
         except Exception as exc:
+            article_failures += 1
             print(f"  aviso: matéria {candidate} falhou: {type(exc).__name__}: {exc}")
+
+    if successful_discoveries == 0:
+        return False, f"FAIL {source['id']}: nenhuma página de descoberta acessível", set()
+    if not candidates:
+        return False, f"FAIL {source['id']}: nenhuma matéria candidata encontrada", set()
+    if not accepted:
+        return False, f"FAIL {source['id']}: nenhuma matéria válida de {min_date.isoformat()} em diante", set()
 
     accepted.sort(key=lambda item: item["date_publicacao"], reverse=True)
     accepted = accepted[:target]
@@ -473,13 +482,10 @@ def sync_web_articles(session, source, check=False):
                     "web_source_title": source.get("title"),
                 },
             )
-    removed = cleanup_source_cache(source["id"], kept_ids) if not check else 0
-    if successful_discoveries == 0:
-        return False, f"FAIL {source['id']}: nenhuma página de descoberta acessível", kept_ids
-    if not candidates:
-        return False, f"FAIL {source['id']}: nenhuma matéria candidata encontrada", kept_ids
+    removed = cleanup_source_cache(source["id"], kept_ids) if not check and not article_failures else 0
+    suffix = ", cache obsoleto preservado por falha de matéria" if article_failures else f", cache obsoleto removido {removed}"
     return True, (
         f"OK {source['id']}: {len(accepted)} matérias aceitas "
         f"(>= {min_date.isoformat()}, limite {target}, candidatas {len(candidates)}, "
-        f"buscadas {fetched}, cache removido {removed})"
+        f"buscadas {fetched}{suffix})"
     ), kept_ids
