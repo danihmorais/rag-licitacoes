@@ -567,7 +567,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         kind, final, raw = fetch(self.session, self.endpoint)
         if kind != 'html':
-            return []
+            raise RuntimeError('Página de pesquisa do TCM-SP retornou uma resposta não HTML inesperada.')
         soup = BeautifulSoup(raw, 'html.parser')
         result_raw = raw
         result_url = final
@@ -586,18 +586,18 @@ class TCMSPAdapter(JurisprudenciaAdapter):
         payload = _form_data(form, query, ('pesquisa', 'ementa', 'palavra', 'termo', 'livre', 'acord'))
         if payload is None:
             raise RuntimeError('Campo de pesquisa do TCM-SP não foi encontrado no formulário oficial.')
-                action, method, data = payload
-                action = urljoin(final, action or final)
-                try:
-                    kind, result_url, result_raw = fetch(
-                        self.session,
-                        action,
-                        method='POST' if method == 'post' else 'GET',
-                        data=data if method == 'post' else None,
-                        params=data if method != 'post' else None,
-                    )
-                except Exception as exc:
-                    raise RuntimeError(f'Consulta TCM-SP pelo formulário falhou: {type(exc).__name__}: {exc}') from exc
+        action, method, data = payload
+        action = urljoin(final, action or final)
+        try:
+            kind, result_url, result_raw = fetch(
+                self.session,
+                action,
+                method='POST' if method == 'post' else 'GET',
+                data=data if method == 'post' else None,
+                params=data if method != 'post' else None,
+            )
+        except Exception as exc:
+            raise RuntimeError(f'Consulta TCM-SP pelo formulário falhou: {type(exc).__name__}: {exc}') from exc
         if kind != 'html':
             raise RuntimeError('Pesquisa do TCM-SP retornou uma resposta não HTML inesperada.')
         soup = BeautifulSoup(result_raw, 'html.parser')
