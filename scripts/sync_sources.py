@@ -306,7 +306,8 @@ def write_cache(source, final, kind, raw, text, document_id, title, extra_meta=N
         'effective_from': source.get('effective_from'),
         'effective_to': source.get('effective_to'),
         'norma_alteradora': source.get('norma_alteradora'),
-        'fonte_oficial': final,
+        'fonte_oficial': final if source.get('is_official', True) else None,
+        'fonte_url': final,
         'fonte_host': urlparse(final).netloc,
         'retrieved_at': datetime.now(timezone.utc).isoformat(),
         'data_versao': source.get('data_versao'),
@@ -403,6 +404,7 @@ def main():
     parser.add_argument('--legislation-only', action='store_true')
     parser.add_argument('--strict', action='store_true')
     parser.add_argument('--no-follow-links', action='store_true')
+    parser.add_argument('--web-only', action='store_true')
     args = parser.parse_args()
     sources = [
         s for s in SOURCES
@@ -410,6 +412,10 @@ def main():
         and (
             not args.legislation_only
             or (s.get('source_role') == 'norma' and not s.get('index_only'))
+        )
+        and (
+            not args.web_only
+            or s.get('source_type') == 'web_articles'
         )
     ]
     session = make_session()
