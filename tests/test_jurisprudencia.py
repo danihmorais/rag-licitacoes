@@ -56,18 +56,13 @@ def test_tcesp_adapter_parses_result_table():
 
 
 
-def test_tcm_sp_adapter_parses_official_result_links():
+def test_tcm_sp_parser_handles_current_official_document_link():
     html = '''<html><body>
-    <form action="/Acordao/Index" method="get"><label>Pesquisa por ementa</label><input name="termo" type="text"></form>
-    <table><tr><td>1234/989/26</td><td>Licitação de serviços</td><td>Exame de edital e fiscalização contratual</td></tr></table>
-    <a href="/Acordao/Detalhe/1234">1234/989/26 — Licitação de serviços</a>
-    </body></html>'''
-    session = FakeSession([FakeResponse(html.encode("utf-8"), content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"), FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index?termo=licitação")])
-    records = TCMSPAdapter(session).search("licitação", 1)
+    <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação de serviços</a>
+    </body></html>'''.encode("utf-8")
+    records = TCMSPAdapter._parse_records(html, "https://portal.tcm.sp.gov.br/Acordao/Index", "licitação")
     assert len(records) == 1
-    assert records[0].tribunal == "TCM-SP"
-    assert records[0].numero_processo == "1234/989/26"
-
+    assert records[0].numero_processo == "TC/002198/2023"
 
 def test_tcm_sp_save_record_has_municipal_scope(tmp_path: Path):
     record = JurisprudenciaRecord(tribunal="TCM-SP", numero_processo="1234/989/26", ementa="Licitação municipal.", url_oficial="https://jurisprudencia.tcm.sp.gov.br/Acordao/Detalhe/1234")
@@ -200,11 +195,10 @@ def test_query_matching_requires_half_terms_for_long_queries():
     assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
 
 
-def test_tcm_sp_missing_search_structure_is_reported_as_failure():
-    html = "<html><body><p>Portal indisponível.</p></body></html>".encode("utf-8")
-    with pytest.raises(RuntimeError, match="Pesquisa de jurisprudência do TCM-SP"):
-        TCMSPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://portal.tcm.sp.gov.br/Acordao")])).search("licitação", 1)
-
+def test_tcm_sp_missing_browser_results_are_reported_as_failure(monkeypatch):
+    monkeypatch.setattr(TCMSPAdapter, "_browser_records", lambda self, query, limit: [])
+    with pytest.raises(RuntimeError, match="TCM-SP não retornou registros estruturados"):
+        TCMSPAdapter(FakeSession([])).search("licitação", 1)
 
 def test_tcesp_missing_results_table_is_reported_as_structure_failure():
     html = "<html><body><p>A página do TCESP foi redesenhada.</p></body></html>".encode("utf-8")
@@ -268,5 +262,5 @@ def test_tjsp_falls_back_from_long_query():
     assert records[0].numero_processo == "1000000-10.2026.8.26.0053"
 
 
-def test_stj_adapter_uses_current_process_host():
-    assert STJAdapter.endpoint == "https://processo.stj.jus.br/SCON/pesquisar.jsp"
+def test_stj_adapter_uses_current_open_data_host():
+    assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
