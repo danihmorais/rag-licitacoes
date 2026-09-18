@@ -68,7 +68,7 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
 
 
 def test_stj_adapter_finds_official_acordao_links():
-    html = b'<html><body><a href="/SCON/jurisprudencia/doc.jsp?livre=123456">REsp 1.234.567/SP</a></body></html>'
+    html = b'<html><body><h1>Pesquisa de Jurisprudência</h1><a href="/SCON/jurisprudencia/doc.jsp?livre=123456">REsp 1.234.567/SP</a></body></html>'
     records = STJAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://scon.stj.jus.br/SCON/pesquisar.jsp?livre=licitação")])).search("licitação", 1)
     assert len(records) == 1 and records[0].tribunal == "STJ" and "1.234.567/SP" in records[0].numero_processo
 
