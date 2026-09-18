@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import itertools
 import json
 import os
+import random
 import re
 import tempfile
 from abc import ABC, abstractmethod
@@ -28,17 +30,49 @@ from .schema import JurisprudenciaRecord
 
 DEFAULT_QUERY = 'licitação'
 TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf', 'tjsp')
+USER_AGENTS = (
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/132.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 Version/18.2 Safari/605.1.15',
+    'rag-licitacoes-jurisprudencia/3.0 (+https://github.com/danihmorais/rag-licitacoes)',
+)
 HEADERS = {
-    'User-Agent': 'rag-licitacoes-jurisprudencia/2.0 (+https://github.com/danihmorais/rag-licitacoes)',
+    'User-Agent': USER_AGENTS[0],
     'Accept': 'text/html,application/xhtml+xml,application/json,application/pdf;q=0.9,*/*;q=0.8',
 }
+DEFAULT_HTTP_TIMEOUT = (
+    float(os.getenv('RAG_JURISPRUDENCIA_CONNECT_TIMEOUT', '20')),
+    float(os.getenv('RAG_JURISPRUDENCIA_READ_TIMEOUT', '90')),
+)
+
+
+class JitterRetry(Retry):
+    def get_backoff_time(self):
+        base = super().get_backoff_time()
+        if base <= 0:
+            return 0.0
+        return min(self.backoff_max, base) + random.uniform(0.0, min(self.backoff_max, base * 0.25))
+
+
+class RotatingSession(requests.Session):
+    def __init__(self):
+        super().__init__()
+        self._user_agents = itertools.cycle(USER_AGENTS)
+
+    def request(self, method, url, **kwargs):
+        headers = dict(kwargs.pop('headers', {}) or {})
+        headers.setdefault('Accept', HEADERS['Accept'])
+        headers['User-Agent'] = next(self._user_agents)
+        kwargs['headers'] = headers
+        kwargs.setdefault('timeout', DEFAULT_HTTP_TIMEOUT)
+        return super().request(method, url, **kwargs)
 
 
 def make_session() -> requests.Session:
     if truststore is not None:
         truststore.inject_into_ssl()
-    session = requests.Session()
-    retry = Retry(
+    session = RotatingSession()
+    retry = JitterRetry(
         total=4,
         connect=4,
         read=4,
