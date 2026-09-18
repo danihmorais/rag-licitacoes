@@ -84,9 +84,32 @@ def test_validator_rejects_empty_discovery_page():
         validate(source, "   ")
 
 
-def test_index_only_linked_official_table_does_not_require_guidance_marker():
-    source = next(item for item in SOURCES if item["id"] == "sp-compras")
-    content = ("Secretaria de Gestão e Governo Digital\n"
-               "Código UGE Código UASG NOME DA UASG NOME DO ÓRGÃO\n"
-               + ("010030 956534 ESP-FED-ASSEMBLEIA LEGISLATIVA EST.SP. ESP-ASSEMBLEIA LEGISLATIVA\n" * 40))
-    validate(source, content, linked=True, final_url="https://compras.sp.gov.br/wp-content/uploads/2026/06/CorrelacaoUASG-UGE-AUDESP-2026-06-03.pdf")
+def test_discover_links_honors_exclude_patterns():
+    source = {
+        "follow_patterns": [r"\\.pdf(?:$|\\?)"],
+        "exclude_patterns": [r"observatorio_da_democracia", r"(?:^|/)cartilha\\.pdf(?:$|\\?)"],
+        "max_follow": 10,
+    }
+    html = (
+        '<main>'
+        '<a href="pareceres/PARECERREFERENCIAL.pdf">Parecer Referencial</a>'
+        '<a href="/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
+        '</main>'
+    )
+    assert discover_links(
+        html, "https://www.gov.br/agu/pagina", source
+    ) == [("https://www.gov.br/agu/pareceres/PARECERREFERENCIAL.pdf", "Parecer Referencial")]
+
+
+def test_validator_accepts_official_guidance_when_marker_is_only_in_link_metadata():
+    source = next(item for item in SOURCES if item["id"] == "agu-pareceres-referenciais")
+    content = "\n".join(
+        ["MANIFESTAÇÃO JURÍDICA " + ("fundamentação jurídica " * 25) for _ in range(6)]
+    )
+    validate(
+        source,
+        content,
+        linked=True,
+        final_url="https://www.gov.br/agu/documentos/00009.pdf",
+        document_title="PARECER REFERENCIAL n. 00009/2025/GERTEC/ELIC/PGF/AGU",
+    )
