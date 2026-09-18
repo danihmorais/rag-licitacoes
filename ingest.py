@@ -318,9 +318,9 @@ def replace_document_points(client, doc_id, new_points, legacy_source=None):
 
 def prune_stale_documents(client, active_names, *, delete=True, return_ids=False):
     if not config.RAG_PRUNE_STALE:
-        return []
+        return [] if return_ids else 0
     if not client.collection_exists(config.COLLECTION_NAME):
-        return []
+        return [] if return_ids else 0
     indexed_ids = set()
     offset = None
     while True:
@@ -342,7 +342,7 @@ def prune_stale_documents(client, active_names, *, delete=True, return_ids=False
     if delete:
         for doc_id in stale:
             delete_doc(client, doc_id)
-    return stale
+    return stale if return_ids else len(stale)
 
 
 def validate_dense_vectors(vectors, expected):
