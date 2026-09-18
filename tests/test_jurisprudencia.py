@@ -124,21 +124,27 @@ def test_all_required_tribunals_have_adapters():
     assert TRIBUNALS == ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp', 'tjsp')
 
 
-def test_stf_adapter_uses_current_search_endpoint_and_result_links():
-    html = b'<html><body><a href="/pages/search/sjur524003/false">RE 1.234.567/SP - Direito Administrativo</a></body></html>'
-    records = STFAdapter(
-        FakeSession([
-            FakeResponse(
-                html,
-                content_type="text/html",
-                url="https://jurisprudencia.stf.jus.br/pages/search?base=acordaos",
-            )
-        ])
-    ).search("direito administrativo", 1)
+def test_stf_adapter_uses_current_search_api_and_maps_hits(monkeypatch):
+    payload = {"result": {"hits": {"total": {"value": 1}, "hits": [{
+        "_id": "sjur524003",
+        "_source": {
+            "processo_codigo_completo": "RE 1234567/SP",
+            "orgao_julgador": "Primeira Turma",
+            "relator_acordao_nome": "Ministro X",
+            "julgamento_data": "2026-08-20",
+            "publicacao_data": "2026-08-29",
+            "ementa_texto": "Licitação e contrato administrativo.",
+            "documental_tese_texto": "A contratação deve observar a legislação aplicável.",
+            "inteiro_teor_texto": "Inteiro teor do acórdão.",
+            "ramo_direito": "Direito Administrativo"
+        }
+    }]}}}
+    monkeypatch.setattr(STFAdapter, "_browser_search", lambda self, query, limit, *, with_content: payload)
+    records = STFAdapter(FakeSession([])).search("licitação", 1, with_content=True)
     assert len(records) == 1
-    assert records[0].tribunal == "STF"
-    assert records[0].numero_processo == "1.234.567/SP"
-
+    assert records[0].numero_processo == "RE 1234567/SP"
+    assert records[0].inteiro_teor == "Inteiro teor do acórdão."
+    assert STFAdapter.endpoint == "https://jurisprudencia.stf.jus.br/api/search/search"
 
 def test_tjsp_adapter_uses_esaj_second_degree_search_and_result_pdf():
     html = '''<html><body>
@@ -182,8 +188,7 @@ def test_tjsp_save_record_has_state_scope(tmp_path: Path):
 
 
 def test_tcm_sp_uses_current_portal_endpoint():
-    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao"
-
+    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao/Index"
 
 def test_query_matching_requires_all_terms_for_short_queries():
     assert _query_matches("contrato administrativo", "contrato administrativo")
