@@ -46,7 +46,7 @@ FILTER_RE = re.compile(r'@(\w+)(>=|<=|=|>|<)([^\s@]+)')
 ALLOWED_FILTERS = {
     'jurisdicao', 'esfera', 'orgao', 'tribunal', 'tipo_documento', 'source_role',
     'authority_level', 'normative_rank', 'status', 'revogado', 'ano', 'norm_ano', 'municipio',
-    'modalidade', 'tipo', 'source_id',
+    'modalidade', 'tipo', 'source_id', 'regime_juridico',
 }
 NUMERIC_FILTERS = {'ano', 'norm_ano', 'authority_level', 'normative_rank'}
 
@@ -109,13 +109,23 @@ def parse_filters(raw):
     return clean, filters
 
 
-def qfilter(filters):
-    if not filters:
+def _is_transition_query(query):
+    normalized = _normalize_query_text(query)
+    return any(term in normalized for term in (
+        'transicao', 'transicao legislativa', 'regime anterior', 'lei 8.666',
+        'lei 8666', '8.666/1993', 'historico', 'histórico',
+    ))
+
+
+def qfilter(filters, query=None):
+    if not filters and not query:
         return None
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
     if unknown:
         raise ValueError('Filtro(s) não suportados: ' + ', '.join(f'@{item}' for item in unknown))
     conditions = []
+    must_not = []
+    explicit_regime = filters.get('regime_juridico')
     for key, value in filters.items():
         if key in NUMERIC_FILTERS and isinstance(value, dict):
             if 'eq' in value:
@@ -129,7 +139,16 @@ def qfilter(filters):
             conditions.append(models.FieldCondition(key=key, match=models.MatchAny(any=value)))
         else:
             conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
-    return models.Filter(must=conditions)
+    if explicit_regime is None and query and not _is_transition_query(query):
+        must_not.append(
+            models.FieldCondition(
+                key='regime_juridico',
+                match=models.MatchAny(any=['lei_8666', 'lei_10520']),
+            )
+        )
+    if not conditions and not must_not:
+        return None
+    return models.Filter(must=conditions, must_not=must_not or None)
 
 
 def embedding_kwargs():
@@ -172,6 +191,81 @@ AUTHORITY_LEVEL_SCORES = {
     3: 0.40,
     4: 0.20,
 }
+
+EVIDENCE_CITATION_RE = re.compile(r'\\[F(\\d+)\\]')
+EVIDENCE_TOKEN_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}|\\d{2,}')
+EVIDENCE_STOPWORDS = {
+    'para', 'como', 'essa', 'esse', 'isso', 'esta', 'este', 'sao', 'são',
+    'uma', 'uns', 'das', 'dos', 'com', 'sem', 'por', 'que', 'não', 'nao',
+    'sobre', 'entre', 'pelos', 'pelas', 'quando', 'onde', 'tambem', 'também',
+    'deve', 'podera', 'poderá', 'ser', 'nos', 'nas', 'aos', 'ainda',
+}
+LEGAL_IDENTIFIER_RES = (
+    re.compile(r'(?i)\\blei\\s+(?:n[ºo.]*\\s*)?\\d+[.]?\\d*(?:/\\d{4})?'),
+    re.compile(r'(?i)\\bart(?:igo)?[.]?\\s*\\d+[A-Za-z-]*(?:\\s*,?\\s*§\\s*\\d+[ºo]?)?'),
+    re.compile(r'\\b\\d{1,7}[/-]\\d{1,7}(?:[/-]\\d{2,4})?\\b'),
+)
+
+
+class EvidenceGateError(RuntimeError):
+    pass
+
+
+def _evidence_tokens(text):
+    normalized = _normalize_query_text(text)
+    return {
+        token for token in EVIDENCE_TOKEN_RE.findall(normalized)
+        if token not in EVIDENCE_STOPWORDS
+    }
+
+
+def _normalized_identifier(value):
+    return re.sub(r'[^a-z0-9]+', '', _normalize_query_text(value))
+
+
+def _sentence_citations(sentence):
+    return {int(value) for value in EVIDENCE_CITATION_RE.findall(sentence)}
+
+
+def validate_generated_answer(answer, sources):
+    answer = str(answer or '').strip()
+    if not answer:
+        raise EvidenceGateError('A resposta do LLM veio vazia.')
+    citations = sorted(set(int(value) for value in EVIDENCE_CITATION_RE.findall(answer)))
+    if not citations:
+        substantive = _evidence_tokens(EVIDENCE_CITATION_RE.sub('', answer))
+        if substantive:
+            raise EvidenceGateError('Resposta sem citações [F#].')
+        return True
+    if any(index < 1 or index > len(sources) for index in citations):
+        raise EvidenceGateError('A resposta contém citação para uma fonte que não está no contexto.')
+    sentences = [part.strip() for part in re.split(r'(?<=[.!?;])\\s+|\\n+', answer) if part.strip()]
+    for sentence in sentences:
+        sentence_citations = _sentence_citations(sentence)
+        factual = EVIDENCE_CITATION_RE.sub('', sentence).strip(' .,:;-')
+        tokens = _evidence_tokens(factual)
+        if not sentence_citations:
+            if tokens and tokens - {'resposta', 'segue', 'conforme', 'abaixo', 'observacao', 'observação'}:
+                raise EvidenceGateError('Afirmação sem citação explícita: ' + factual[:180])
+            continue
+        cited_text = ' '.join(
+            str(sources[index - 1].payload.get('page_content') or sources[index - 1].payload.get('text') or '')
+            for index in sorted(sentence_citations)
+        )
+        for pattern in LEGAL_IDENTIFIER_RES:
+            for identifier in pattern.findall(factual):
+                if _normalized_identifier(identifier) not in _normalized_identifier(cited_text):
+                    raise EvidenceGateError(
+                        f'Identificador jurídico não sustentado pela fonte citada: {identifier}.'
+                    )
+        if len(tokens) >= 3:
+            cited_tokens = _evidence_tokens(cited_text)
+            overlap = len(tokens & cited_tokens) / max(1, len(tokens))
+            if overlap < config.EVIDENCE_TOKEN_OVERLAP:
+                raise EvidenceGateError(
+                    f'Citação insuficiente para a afirmação: sobreposição lexical={overlap:.3f}.'
+                )
+    return True
 
 
 def _number(value, default=9):
@@ -372,7 +466,12 @@ def answer_query(client, dense, sparse, reranker, llm, raw):
     context_text, context_sources = context_with_sources(context_points)
     if not context_sources:
         return 'Não encontrei espaço suficiente no contexto para apresentar evidência de forma segura.', []
-    return llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context_text), user_prompt=query), context_sources
+    answer = llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context_text), user_prompt=query)
+    try:
+        validate_generated_answer(answer, context_sources)
+    except EvidenceGateError:
+        return 'Não foi possível validar as citações da resposta contra as evidências recuperadas. A resposta não será apresentada como fundamentada.', context_sources
+    return answer, context_sources
 
 
 def build_runtime():
