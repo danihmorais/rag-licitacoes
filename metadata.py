@@ -105,6 +105,52 @@ def _normative_rank(source_role, tipo_documento):
         return 4
     return 4
 
+
+REGIME_CANONICAL = {
+    'lei_14133': 'Lei 14.133/2021',
+    'lei_8666': 'Lei 8.666/1993',
+    'lei_10520': 'Lei 10.520/2002',
+    'lei_12462': 'Lei 12.462/2011',
+    'jurisprudencia': 'Jurisprudência',
+    'nao_especificado': 'Não especificado',
+}
+
+
+def _detect_regime(text, source_values):
+    source_id = str(source_values.get('source_id') or '').casefold()
+    title = str(source_values.get('title') or '').casefold()
+    haystack = f'{source_id} {title} {text[:40000]}'
+    rules = (
+        ('lei_14133', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?14[.\- ]133\s*(?:/\s*)?2021\b', re.I)),
+        ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\s*(?:/\s*)?1993\b', re.I)),
+        ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\s*(?:/\s*)?2002\b', re.I)),
+        ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\s*(?:/\s*)?2011\b', re.I)),
+    )
+    explicit = source_values.get('regime_juridico') or source_values.get('regime')
+    if explicit:
+        explicit_norm = str(explicit).strip().casefold()
+        for key, label in REGIME_CANONICAL.items():
+            if explicit_norm in {key, label.casefold()}:
+                return key, label
+        return str(explicit).strip(), str(explicit).strip()
+    for key, pattern in rules:
+        if pattern.search(haystack):
+            return key, REGIME_CANONICAL[key]
+    if source_values.get('tipo_documento') == 'jurisprudencia' or source_values.get('source_role') in {'jurisprudencia', 'jurisprudencia_controle'}:
+        return 'jurisprudencia', REGIME_CANONICAL['jurisprudencia']
+    return 'nao_especificado', REGIME_CANONICAL['nao_especificado']
+
+
+def embedding_metadata_prefix(metadata):
+    regime = metadata.get('norma_canonica') or metadata.get('regime_juridico') or REGIME_CANONICAL['nao_especificado']
+    status = metadata.get('status') or 'desconhecido'
+    esfera = metadata.get('esfera') or 'desconhecida'
+    jurisdicao = metadata.get('jurisdicao') or 'desconhecida'
+    return (
+        f'[REGIME: {regime} | STATUS: {status} | ESFERA: {esfera} | '
+        f'JURISDIÇÃO: {jurisdicao}]'
+    )
+
 def extract_metadata(text, pdf_path):
     path = Path(pdf_path)
     sample = text[:30000]
@@ -116,7 +162,9 @@ def extract_metadata(text, pdf_path):
         'data_publicacao': None, 'data_vigencia': None, 'revogado': None,
         'norma_alteradora': None, 'norm_numero': None, 'norm_ano': None,
         'effective_from': None, 'effective_to': None, 'retrieved_at': None,
-        'ramo_direito': None, 'fonte_host': None, **source_values,
+        'ramo_direito': None, 'fonte_host': None,
+        'regime_juridico': 'nao_especificado', 'norma_canonica': REGIME_CANONICAL['nao_especificado'],
+        **source_values,
     }
     tribunal = _header_value(sample, 'TRIBUNAL')
     if tribunal and not sidecar_values.get('tribunal'):
@@ -161,6 +209,9 @@ def extract_metadata(text, pdf_path):
             metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     if metadata.get('classificacao_ambigua'):
         metadata['metadata_ambiguous'] = True
+    regime_key, regime_label = _detect_regime(sample, {**source_values, **metadata})
+    metadata['regime_juridico'] = regime_key
+    metadata['norma_canonica'] = regime_label
     if metadata.get('normative_rank') is None:
         metadata['normative_rank'] = _normative_rank(metadata.get('source_role'), metadata.get('tipo_documento'))
     if metadata.get('fonte_oficial'):
