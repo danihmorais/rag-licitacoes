@@ -264,3 +264,26 @@ def test_tjsp_falls_back_from_long_query():
 
 def test_stj_adapter_uses_current_open_data_host():
     assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
+
+def test_stf_body_uses_acordaos_and_full_text_fields():
+    body = STFAdapter(FakeSession([]))._body("licitação", 1, include_full_text=True)
+    assert body["query"]["bool"]["filter"][0] == {"term": {"base": "acordaos"}}
+    assert "inteiro_teor_texto.plural" in body["_source"]
+    assert "inteiro_teor_texto" in body["highlight"]["fields"]
+
+
+def test_tjsp_reports_visible_antibot_without_treating_it_as_zero():
+    html = b"<html><body><div>CAPTCHA</div><div>Verificacao de seguranca</div></body></html>"
+    with pytest.raises(RuntimeError, match="desafio/captcha/antibot"):
+        TJSPAdapter._check_access_block(html)
+
+
+def test_tcesp_search_sends_required_form_markers():
+    html = b'''<html><body><table><tr><th>N° Proc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr></table></body></html>'''
+    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])
+    try:
+        TCESPAdapter(session).search("licitação", 1)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("a página sintética não deveria gerar registro")
