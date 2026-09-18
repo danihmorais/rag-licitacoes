@@ -6,6 +6,8 @@ import html
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,14 +36,14 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
 }
 LEGAL_RE = re.compile(
-    r'\b(?:Art\.?|Artigo|CAPÍTULO|TÍTULO|SEÇÃO|SUBSEÇÃO|ANEXO|S[ÚU]MULA|LEI|DECRETO|RESOLUÇÃO|PORTARIA)\b',
+    r'\b(?:Art\.?|Artigo|CAPÍTULO|TÍTULO|SEÇÃO|SUBSEÇÃO|ANEXO|S[ÚU]MULA|LEI|DECRETO|DECRETO-LEI|RESOLUÇÃO|PORTARIA|INSTRUÇÃO\s+NORMATIVA|CONSTITUIÇÃO)\b',
     re.I,
 )
 NOISE = {'[Input]', '[Button: Pesquisar]', 'expand_more', 'collapse'}
 NORMATIVE_HEADER_RE = re.compile(
     r'(?im)^\s*(?:LEI\s+COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLU[ÇC][ÃA]O|INSTRU[ÇC][ÃA]O\s+NORMATIVA|CONSTITUI[ÇC][ÃÃ]O)\b'
 )
-ARTICLE_RE = re.compile(r'(?im)^\s*Art(?:igo)?\.?\s+\d+[A-Za-zºª\-]*\b')
+ARTICLE_RE = re.compile(r'(?im)\bArt(?:igo)?\.?\s+\d+[A-Za-zºª\-]*\b')
 RETIRED_SOURCE_IDS = {
     'tcu', 'tcesp', 'stj-jurisprudencia', 'stj-teses', 'stj-repetitivos-iacs',
     'stj-sumulas-anotadas', 'stj-legislacao-aplicada', 'stj-informativos',
@@ -54,11 +56,11 @@ RETIRED_SOURCE_IDS = {
 def make_session():
     session = requests.Session()
     retry = Retry(
-        total=5,
-        connect=5,
-        read=5,
-        status=5,
-        backoff_factor=1.5,
+        total=2,
+        connect=2,
+        read=2,
+        status=2,
+        backoff_factor=0.8,
         status_forcelist=(408, 429, 500, 502, 503, 504),
         allowed_methods=frozenset({'GET', 'HEAD'}),
         respect_retry_after_header=True,
@@ -99,17 +101,62 @@ def pdf_text(data):
             Path(temp_name).unlink(missing_ok=True)
 
 
-def fetch(session, url):
-    response = session.get(url, timeout=(20, 90), allow_redirects=True)
-    response.raise_for_status()
-    raw = response.content
-    final = response.url
-    ctype = (response.headers.get('content-type') or '').lower()
-    is_pdf = 'application/pdf' in ctype or final.lower().split('?', 1)[0].endswith('.pdf') or raw.startswith(b'%PDF')
+def _decode_response(raw, final, content_type=''):
+    is_pdf = (
+        'application/pdf' in content_type.lower()
+        or final.lower().split('?', 1)[0].endswith('.pdf')
+        or raw.startswith(b'%PDF')
+    )
     if is_pdf:
         return 'pdf', final, raw, pdf_text(raw)
-    response.encoding = response.apparent_encoding or response.encoding
-    return 'html', final, raw, clean_html(response.text)
+    return 'html', final, raw, clean_html(raw)
+
+
+def _fetch_with_wget(url):
+    if shutil.which('wget') is None:
+        raise RuntimeError('wget não está instalado no sistema.')
+    result = subprocess.run(
+        [
+            'wget',
+            '--quiet',
+            '--server-response',
+            '--max-redirect=10',
+            '--timeout=20',
+            '--tries=2',
+            '--user-agent=Mozilla/5.0',
+            '--header=Accept: text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
+            '--output-document=-',
+            url,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=50,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode('utf-8', errors='replace').strip().splitlines()
+        raise ConnectionError(detail[-1] if detail else f'wget falhou com código {result.returncode}')
+    raw = result.stdout
+    final = url
+    return _decode_response(raw, final)
+
+
+def fetch(session, url):
+    try:
+        response = session.get(url, timeout=(8, 20), allow_redirects=True)
+        response.raise_for_status()
+        return _decode_response(
+            response.content,
+            response.url,
+            response.headers.get('content-type', ''),
+        )
+    except (requests.RequestException, ConnectionError, TimeoutError) as request_error:
+        try:
+            return _fetch_with_wget(url)
+        except Exception as wget_error:
+            raise ConnectionError(
+                f'requests falhou: {request_error}; wget falhou: {wget_error}'
+            ) from wget_error
 
 
 def _compact(value):
@@ -117,9 +164,16 @@ def _compact(value):
 
 
 def _expected_normative_number(source):
+    if source.get('tipo_documento') in {'constituicao', 'constituicao_estadual'}:
+        return None
     title = str(source.get('title') or '')
     match = re.search(r'\b(?:n[ºo]?\s*)?((?:\d{1,4}\.)*\d{1,4})(?:/\d{2,4})?\b', title)
     return match.group(1) if match else None
+
+
+def _source_urls(source):
+    urls = [*source.get('urls', ()), *source.get('fallback_urls', ())]
+    return list(dict.fromkeys(str(url).strip() for url in urls if str(url).strip()))
 
 
 def _substantive_lines(text):
@@ -135,7 +189,7 @@ def _looks_like_shell(text):
     return shell_hits >= 2 and len(_substantive_lines(text)) <= 8
 
 
-def validate(source, text, *, linked=False):
+def validate(source, text, *, linked=False, final_url=None):
     stripped = text.strip()
     if len(stripped) < 800:
         raise RuntimeError(f'conteúdo insuficiente: {len(stripped)} caracteres')
@@ -153,9 +207,12 @@ def validate(source, text, *, linked=False):
             raise RuntimeError('conteúdo não apresenta estrutura normativa reconhecível')
         expected = _expected_normative_number(source)
         if expected and _compact(expected) not in _compact(stripped[:30000]):
-            raise RuntimeError(f'identidade normativa ausente: {expected}')
-        if source.get('tipo_documento') not in {'resolucao', 'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 2:
-            raise RuntimeError('conteúdo normativo sem quantidade suficiente de artigos/dispositivos')
+            url_identity = _compact(final_url or '')
+            allowed_url_identity = _compact(expected) in url_identity
+            if not allowed_url_identity:
+                raise RuntimeError(f'identidade normativa ausente: {expected}')
+        if source.get('tipo_documento') not in {'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 1:
+            raise RuntimeError('conteúdo normativo sem artigo/dispositivo reconhecível')
     elif role == 'orientacao_oficial':
         markers = ('parecer', 'manual', 'guia', 'orientação', 'orientacao', 'modelo', 'boletim')
         if not any(marker in stripped.casefold() for marker in markers):
@@ -290,10 +347,10 @@ def purge_retired_source_cache():
 
 def sync_one(session, source, check=False, follow_links=True):
     last = ''
-    for url in source.get('urls', []):
+    for url in _source_urls(source):
         try:
             kind, final, raw, text = fetch(session, url)
-            validate(source, text, linked=False)
+            validate(source, text, linked=False, final_url=final)
             seen_ids = {slug(source['id'])}
             if not check and not source.get('index_only'):
                 write_cache(source, final, kind, raw, text, source['id'], source['title'])
@@ -304,7 +361,7 @@ def sync_one(session, source, check=False, follow_links=True):
                     linked_total += 1
                     try:
                         linked_kind, linked_final, linked_raw, linked_text = fetch(session, link_url)
-                        validate(source, linked_text, linked=True)
+                        validate(source, linked_text, linked=True, final_url=linked_final)
                         linked_ok += 1
                         document_id = (
                             f"{source['id']}__{slug(link_title)}__{hashlib.sha1(linked_final.encode()).hexdigest()[:10]}"
@@ -333,9 +390,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--required-only', action='store_true')
+    parser.add_argument('--legislation-only', action='store_true')
+    parser.add_argument('--strict', action='store_true')
     parser.add_argument('--no-follow-links', action='store_true')
     args = parser.parse_args()
-    sources = [s for s in SOURCES if not args.required_only or s.get('required')]
+    sources = [
+        s for s in SOURCES
+        if (not args.required_only or s.get('required'))
+        and (
+            not args.legislation_only
+            or (s.get('source_role') == 'norma' and not s.get('index_only'))
+        )
+    ]
     session = make_session()
     if not args.check:
         removed_retired = purge_retired_source_cache()
@@ -343,16 +409,31 @@ def main():
             print(f'Fontes jurisprudenciais legadas removidas do cache: {removed_retired}')
     failures = []
     ok = 0
-    for source in sources:
+    for index, source in enumerate(sources, 1):
+        print(f'[{index}/{len(sources)}] {source["id"]}', flush=True)
         good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
-        print(message)
+        print(message, flush=True)
         ok += int(good)
         if not good:
             failures.append(source['id'])
     print(f'Fontes: {ok}/{len(sources)} OK')
     if failures:
         print('Falhas:', ', '.join(failures))
-    return 1 if failures and args.required_only else 0
+    strict_failures = []
+    if args.strict:
+        strict_failures = [
+            source['id']
+            for source in sources
+            if source['id'] in failures
+            and source.get('source_role') == 'norma'
+            and not source.get('index_only')
+        ]
+    if failures and args.required_only:
+        return 1
+    if strict_failures:
+        print('Falhas legislativas bloqueantes:', ', '.join(strict_failures))
+        return 1
+    return 0
 
 
 if __name__ == '__main__':
