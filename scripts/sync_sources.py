@@ -529,6 +529,14 @@ def extract_web_article(raw_html, final_url):
     author = author or _first_meta(soup, 'author', 'article:author')
     section = section or _first_meta(soup, 'article:section', 'section')
     keywords = keywords or _first_meta(soup, 'keywords', 'article:tag')
+    if not published:
+        visible = soup.get_text(' ', strip=True)
+        label_match = re.search(
+            r'(?:publicad[oa]|publicação|publicacao|published)(?:\s+em|\s*:)\s+(.{0,80})',
+            visible[:5000],
+            re.I,
+        )
+        published = label_match.group(1) if label_match else visible[:2000]
 
     article_node = _article_text_node(soup)
     body = article_node.get_text('\n', strip=True) if article_node else ''
@@ -671,6 +679,7 @@ def sync_web_articles(session, source, check=False):
     seen = set()
     page_queue = list(source.get('urls', ()))
     visited_pages = set()
+    successful_discoveries = 0
     max_pages = int(source.get('discovery_max_pages', 80))
 
     while page_queue and len(visited_pages) < max_pages:
@@ -713,6 +722,7 @@ def sync_web_articles(session, source, check=False):
                 break
             try:
                 kind, final, raw, text = fetch(session, sitemap_url)
+                successful_discoveries += 1
             except Exception as exc:
                 print(f'  aviso: sitemap {sitemap_url} falhou: {type(exc).__name__}: {exc}')
                 continue
@@ -838,7 +848,6 @@ if __name__ == '__main__':
     accepted = []
     fetched = 0
     seen_articles = set()
-    successful_discoveries = 0
     old_count = 0
     for candidate in candidates:
         if len(accepted) >= target or fetched >= target * 6:
