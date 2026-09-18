@@ -64,7 +64,7 @@ TCU, TCESP, STJ, STF, TCM-SP e TJSP são tratados pelo coletor estruturado de ju
 | TCM-SP | Sim | Sim | Opcional |
 | TJSP | Sim | Sim | Opcional |
 
-O TCU mantém e documenta o webservice oficial de acórdãos usado pelo coletor, com paginação por `inicio`/ `quantidade` e campos para acórdão, DOC e PDF. O portal também publica datasets estáticos; o adaptador usa o webservice documentado para pesquisa paginada. O TCESP mantém pesquisa de jurisprudência com resultados de decisões, súmulas e boletins. O STJ disponibiliza o SCON para pesquisa de jurisprudência. O TCM-SP mantém consulta oficial de julgados e jurisprudência. O TJSP disponibiliza a Consulta Completa do segundo grau, incluindo Pesquisa Livre no inteiro teor dos acórdãos.
+**TCU** usa a API REST pública atual de pesquisa de acórdãos em `pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo`, com `documentosResumidos` para a busca e `documento` para o conteúdo completo. O adaptador não usa mais o endpoint legado de dados abertos, que pode responder sem aplicar os filtros esperados. **TCESP** usa a pesquisa oficial por GET, com os marcadores e caixas booleanas que o portal realmente exige. **STJ** usa o portal oficial de Dados Abertos (`dadosabertos.web.stj.jus.br`) e os espelhos mensais de acórdãos em JSON; isso substitui o scraping do SCON e cobre o período publicado pelo próprio portal. **STF** usa a API oficial da aplicação Angular (`/api/search/search`); como o portal atual aplica AWS WAF, a resolução do desafio é feita pelo Chromium via Playwright, sem desativar a verificação TLS. **TCM-SP** usa a consulta de Julgados no portal atual (`/Acordao/Index`) por automação de navegador porque a interface de pesquisa é dinâmica. **TJSP** usa a Consulta Completa de segundo grau via e-SAJ; quando o tribunal apresenta CAPTCHA/antibot, a coleta falha explicitamente em vez de tratar a página de bloqueio como zero resultados.
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
@@ -145,6 +145,7 @@ O runtime é GPU-only. A instalação oficial do FastEmbed em GPU usa `fastembed
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m playwright install chromium
 cp .env.example .env
 ```
 
@@ -168,7 +169,7 @@ python ingest.py
 python query.py
 ```
 
-O projeto é validado em Python 3.12 no CI. O runtime local exige o perfil GPU do FastEmbed e `CUDAExecutionProvider`; a versão do Python é mantida fixa no CI para reprodutibilidade.
+O projeto é validado em Python 3.12 no CI. O runtime local exige o perfil GPU do FastEmbed e `CUDAExecutionProvider`; os coletores STF/TCM-SP também exigem o Chromium do Playwright, instalado com `python -m playwright install chromium`. A versão do Python é mantida fixa no CI para reprodutibilidade.
 
 ## GitHub Actions
 
