@@ -822,7 +822,16 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
     return text_path
 
 
-def collect(tribunals, query, limit, *, detail=False, with_content=False, output_dir=None) -> list[JurisprudenciaRecord]:
+def collect(
+    tribunals,
+    query,
+    limit,
+    *,
+    detail=False,
+    with_content=False,
+    output_dir=None,
+    persist=True,
+) -> list[JurisprudenciaRecord]:
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     session = make_session()
     source_adapters = adapters(session)
@@ -831,12 +840,18 @@ def collect(tribunals, query, limit, *, detail=False, with_content=False, output
         if tribunal not in source_adapters:
             raise ValueError(f'Tribunal não suportado: {tribunal}')
         try:
-            records = source_adapters[tribunal].search(query, limit, detail=detail, with_content=with_content)
+            records = source_adapters[tribunal].search(
+                query,
+                limit,
+                detail=detail,
+                with_content=with_content,
+            )
         except Exception as exc:
             print(f'FAIL {tribunal}: {type(exc).__name__}: {exc}')
             continue
         for record in records:
-            save_record(record, output_dir)
+            if persist:
+                save_record(record, output_dir)
             output.append(record)
         print(f'OK {tribunal}: {len(records)} registros para {query!r}')
     return output
