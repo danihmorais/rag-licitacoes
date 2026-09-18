@@ -428,106 +428,68 @@ class TCESPAdapter(JurisprudenciaAdapter):
 
     def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
         params = [
-            ('_tipoBuscaTxt', 'on'),
-            ('_tipoDocumento', '1'),
-            ('_relator', '1'),
-            ('_auditor', '1'),
-            ('_materia', '1'),
-            ('acao', 'Executa'),
-            ('offset', '0'),
-            ('dataAutuacaoFim', ''),
-            ('dataAutuacaoInicio', ''),
-            ('exercicio', ''),
-            ('processo', ''),
-            ('quantTrechos', '3'),
-            ('tipoBuscaTxt', 'Documento'),
-            ('txtExp', ''),
-            ('txtNenhPalvs', ''),
-            ('txtNumFim', ''),
-            ('txtNumIni', ''),
-            ('txtQqUma', ''),
-            ('txtTdPalvs', variant),
+            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+            ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
+            ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
+            ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
         ]
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-        table = next(
-            (
-                candidate for candidate in soup.find_all('table')
-                if re.search(r'N[°ºo]\s*Proc\.', clean_text(candidate.get_text(' ', strip=True)), re.I)
-            ),
-            None,
-        )
-        if table is None:
-            form = soup.find('form')
-            form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
-            form_fields = ' '.join(
-                str(field.get('name') or '')
-                for field in form.find_all(['input', 'textarea'])
-            ).casefold() if form is not None else ''
-            if form is not None and ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
-                return []
-            raise RuntimeError(
-                'Estrutura da pesquisa TCESP alterada: tabela de resultados ou formulário oficial não foi encontrado.'
-            )
+        body = soup.find('tbody')
+        rows = soup.find_all('tr') if body is None else body.find_all('tr', recursive=False)
         records: list[JurisprudenciaRecord] = []
-        pending_excerpt = False
-        for row in table.find_all('tr'):
-            cells = [clean_text(cell.get_text(' ', strip=True)) for cell in row.find_all(['th', 'td'])]
-            if not cells:
+        for row in rows:
+            classes = {str(c).casefold() for c in (row.get('class') or [])}
+            if 'borda-superior' not in classes:
                 continue
-            joined = ' | '.join(cells)
-            if 'trechos localizados' in joined.casefold():
-                pending_excerpt = True
+            cells = row.find_all('td', recursive=False)
+            if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', clean_text(cells[2].get_text(' ', strip=True))):
                 continue
-            if pending_excerpt:
-                pending_excerpt = False
-                if records and joined:
-                    records[-1].ementa = joined
+            next_row = row.find_next_sibling('tr')
+            excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
+            main_text = clean_text(row.get_text(' ', strip=True))
+            combined = f'{main_text} {excerpt_text}'
+            if _query_score(variant, combined) <= 0:
                 continue
-            if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
+            process = clean_text(cells[1].get_text(' ', strip=True))
+            if not process or process in seen:
                 continue
-            process = cells[1]
-            if not process or process in seen or _query_score(variant, *cells) <= 0:
-                continue
-            detail_anchor = next(
-                (a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href'])),
-                None,
-            )
+            detail_anchor = next((a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href'])), None)
             detail_url = urljoin(response.url, str(detail_anchor['href'])) if detail_anchor else response.url
+            trecho = excerpt_text
+            if next_row is not None:
+                trecho_items = [clean_text(li.get_text(' ', strip=True)) for li in next_row.find_all('li')]
+                if trecho_items:
+                    trecho = ' '.join(x for x in trecho_items if x)
             record = JurisprudenciaRecord(
-                tribunal='TCESP',
-                numero_processo=process,
-                data_autuacao=cells[2],
-                ementa=cells[6],
-                assunto=_as_list(cells[5], cells[6]),
-                tipo_decisao=cells[0] or 'Jurisprudência',
-                origem='TCESP — Pesquisa de Jurisprudência',
-                url_oficial=detail_url,
-                partes=_as_list(cells[3], cells[4]),
+                tribunal='TCESP', numero_processo=process, data_autuacao=clean_text(cells[2].get_text(' ', strip=True)),
+                ementa=trecho, assunto=_as_list(clean_text(cells[5].get_text(' ', strip=True)), clean_text(cells[6].get_text(' ', strip=True))),
+                tipo_decisao=clean_text(cells[0].get_text(' ', strip=True)) or 'Jurisprudência',
+                origem='TCESP — Pesquisa de Jurisprudência', url_oficial=detail_url,
+                partes=_as_list(clean_text(cells[3].get_text(' ', strip=True)), clean_text(cells[4].get_text(' ', strip=True))),
             )
             if detail or with_content:
                 try:
-                    detail_text, final, content = _detail_enrichment(
-                        self.session,
-                        detail_url,
-                        with_content=with_content,
-                    )
+                    detail_text, final, content = _detail_enrichment(self.session, detail_url, with_content=with_content)
                     record.url_oficial = final
                     record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
-                    record.data_publicacao = _label_value(
-                        detail_text,
-                        ('Data de Publicação', 'Data da Publicação'),
-                    ) or record.data_publicacao
-                    record.ementa = _extract_ementa(content or detail_text) or record.ementa
+                    record.data_publicacao = _label_value(detail_text, ('Data de Publicação', 'Data da Publicação')) or record.data_publicacao
                     if with_content and content:
                         record.inteiro_teor = content
                 except Exception as exc:
                     print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
             seen.add(process)
             records.append(record)
+            if len(records) >= limit:
+                break
+        if not records:
+            form = soup.find('form')
+            form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
+            form_fields = ' '.join(str(field.get('name') or '') for field in form.find_all(['input', 'textarea'])).casefold() if form is not None else ''
+            if form is None or not ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
+                raise RuntimeError('Estrutura da pesquisa TCESP alterada: resultados e formulário oficial não foram encontrados.')
         return records[:limit]
-
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         seen: set[str] = set()
         for variant in _query_variants(query):
