@@ -459,8 +459,16 @@ class TCESPAdapter(JurisprudenciaAdapter):
             None,
         )
         if table is None:
+            form = soup.find('form')
+            form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
+            form_fields = ' '.join(
+                str(field.get('name') or '')
+                for field in form.find_all(['input', 'textarea'])
+            ).casefold() if form is not None else ''
+            if form is not None and ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
+                return []
             raise RuntimeError(
-                'Estrutura da pesquisa TCESP alterada: tabela de resultados com coluna N° Proc./Nº Proc. não foi encontrada.'
+                'Estrutura da pesquisa TCESP alterada: tabela de resultados ou formulário oficial não foi encontrado.'
             )
         records: list[JurisprudenciaRecord] = []
         pending_excerpt = False
@@ -1027,7 +1035,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                 page.wait_for_timeout(1500)
                 if not self._fill_by_label(page, ('Todas estas palavras',), query):
                     raise RuntimeError('TCM-SP: campo "Todas estas palavras" não foi encontrado no portal oficial.')
-                buttons = page.locator('button, input[type="submit"], input[type="button"], a')
+                buttons = page.locator('button:visible, input[type="submit"]:visible, input[type="button"]:visible, a:visible')
                 clicked = False
                 for index in range(buttons.count()):
                     button = buttons.nth(index)
