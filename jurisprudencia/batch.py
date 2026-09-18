@@ -1,11 +1,40 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import config
 from .collector import TRIBUNALS, collect, save_record
 from .queries import DEFAULT_QUERIES, parse_queries
+
+
+DLQ_PATH = config.DB_DIR / 'jurisprudencia_dlq.jsonl'
+
+
+def _write_dlq(*, tribunal, query, stage, error, record=None, path=None):
+    target = Path(path or DLQ_PATH)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'tribunal': tribunal,
+        'query': query,
+        'stage': stage,
+        'error_type': type(error).__name__,
+        'error': str(error),
+    }
+    if record is not None:
+        try:
+            payload['record'] = record.to_dict()
+        except Exception:
+            payload['record'] = {'repr': repr(record)}
+    line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + '\n'
+    with target.open('a', encoding='utf-8') as handle:
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def collect_batch(
@@ -19,6 +48,7 @@ def collect_batch(
     strict=False,
     min_records_per_tribunal=1,
     per_query_limit=25,
+    dlq_path=None,
 ):
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     output = []
@@ -44,27 +74,66 @@ def collect_batch(
             if remaining <= 0:
                 continue
             query_limit = min(per_query_limit, remaining)
-            records = collect(
-                (tribunal,),
-                query,
-                query_limit,
-                detail=detail,
-                with_content=with_content,
-                output_dir=output_dir,
-                persist=False,
-            )
+            try:
+                records = collect(
+                    (tribunal,),
+                    query,
+                    query_limit,
+                    detail=detail,
+                    with_content=with_content,
+                    output_dir=output_dir,
+                    persist=False,
+                )
+            except Exception as exc:
+                failures.add(tribunal)
+                _write_dlq(
+                    tribunal=tribunal,
+                    query=query,
+                    stage='collect',
+                    error=exc,
+                    path=dlq_path,
+                )
+                continue
             for record in records:
                 key = record.document_key
                 if key in seen:
                     continue
                 seen.add(key)
+                try:
+                    record.validate()
+                except Exception as exc:
+                    _write_dlq(
+                        tribunal=tribunal,
+                        query=query,
+                        stage='validate',
+                        error=exc,
+                        record=record,
+                        path=dlq_path,
+                    )
+                    continue
                 output.append(record)
                 tribunal_key = record.tribunal.casefold()
                 if tribunal_key in counts:
                     counts[tribunal_key] += 1
 
+    persisted = []
     for record in output:
-        save_record(record, output_dir)
+        tribunal = record.tribunal.casefold()
+        try:
+            save_record(record, output_dir)
+        except Exception as exc:
+            _write_dlq(
+                tribunal=tribunal,
+                query='<batch-save>',
+                stage='save',
+                error=exc,
+                record=record,
+                path=dlq_path,
+            )
+            counts[tribunal] = max(0, counts.get(tribunal, 0) - 1)
+            continue
+        persisted.append(record)
+    output = persisted
 
     for tribunal in tribunals:
         if counts.get(tribunal, 0) < min_records_per_tribunal:
