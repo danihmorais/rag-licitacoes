@@ -195,9 +195,9 @@ def test_tcesp_falls_back_from_long_query_to_meaningful_term():
 
 
 def test_tcm_sp_parses_current_portal_document_link():
-    html = b'''<html><body>
+    html = '''<html><body>
     <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação e contrato administrativo</a>
-    </body></html>'''
+    </body></html>'''.encode("utf-8")
     records = TCMSPAdapter._parse_records(
         html,
         "https://portal.tcm.sp.gov.br/Acordao",
