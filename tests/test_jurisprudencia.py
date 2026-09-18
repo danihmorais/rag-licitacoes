@@ -104,13 +104,13 @@ def test_stf_adapter_uses_current_search_endpoint_and_result_links():
 
 
 def test_tjsp_adapter_uses_esaj_second_degree_search_and_result_pdf():
-    html = b'''<html><body>
+    html = '''<html><body>
     <form action="/cjsg/resultadoCompleta.do" method="get">
       <label for="pesquisaLivre">Pesquisa Livre</label>
       <input id="pesquisaLivre" name="pesquisaLivre" type="text">
     </form>
     </body></html>'''
-    result = b'''<html><body><table>
+    result = '''<html><body><table>
       <tr><td>Acórdão</td><td>
         <a href="/cjsg/getArquivo.do?cdAcordao=15096525&cdForo=0">Inteiro teor</a>
         1017109-50.2020.8.26.0053
@@ -120,8 +120,8 @@ def test_tjsp_adapter_uses_esaj_second_degree_search_and_result_pdf():
     </table></body></html>'''
     records = TJSPAdapter(
         FakeSession([
-            FakeResponse(html, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
-            FakeResponse(result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+            FakeResponse(html.encode("utf-8"), content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+            FakeResponse(result.encode("utf-8"), content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
         ])
     ).search("licitação contrato administrativo", 1)
     assert len(records) == 1
