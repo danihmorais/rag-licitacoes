@@ -147,7 +147,7 @@ def test_tjsp_save_record_has_state_scope(tmp_path: Path):
 
 
 def test_tcm_sp_uses_current_portal_endpoint():
-    assert TCMSPAdapter.endpoint == "https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"
+    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao"
 
 
 def test_query_matching_requires_all_terms_for_short_queries():
@@ -160,10 +160,10 @@ def test_query_matching_requires_half_terms_for_long_queries():
     assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
 
 
-def test_tcm_sp_missing_search_form_is_reported_as_structure_failure():
+def test_tcm_sp_missing_search_structure_is_reported_as_failure():
     html = "<html><body><p>Portal indisponível.</p></body></html>".encode("utf-8")
-    with pytest.raises(RuntimeError, match="Formulário de pesquisa do TCM-SP"):
-        TCMSPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index")])).search("licitação", 1)
+    with pytest.raises(RuntimeError, match="Pesquisa de jurisprudência do TCM-SP"):
+        TCMSPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://portal.tcm.sp.gov.br/Acordao")])).search("licitação", 1)
 
 
 def test_tcesp_missing_results_table_is_reported_as_structure_failure():
@@ -171,3 +171,62 @@ def test_tcesp_missing_results_table_is_reported_as_structure_failure():
     with pytest.raises(RuntimeError, match="Estrutura da pesquisa TCESP"):
         TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
 
+
+def test_query_terms_preserve_legal_numbers():
+    from jurisprudencia.collector import _query_terms
+    assert _query_terms("Lei 14.133 licitação contrato administrativo") == [
+        "14.133", "licitação", "contrato", "administrativo"
+    ]
+
+
+def test_tcesp_falls_back_from_long_query_to_meaningful_term():
+    empty = '<html><body><table><tr><th>N° Proc.</th><th>Autuação</th></tr></table></body></html>'.encode("utf-8")
+    result = '''<html><body><table>
+    <tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr>
+    <tr><td>Acórdão</td><td>1000/989/26</td><td>17/09/2026</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Lei 14.133 contratação pública</td></tr>
+    </table></body></html>'''.encode("utf-8")
+    records = TCESPAdapter(FakeSession([
+        FakeResponse(empty, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+        FakeResponse(empty, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/"),
+        FakeResponse(result, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+    ])).search("Lei 14.133 licitação contrato administrativo", 1)
+    assert len(records) == 1
+    assert records[0].numero_processo == "1000/989/26"
+
+
+def test_tcm_sp_parses_current_portal_document_link():
+    html = '''<html><body>
+    <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação e contrato administrativo</a>
+    </body></html>'''.encode("utf-8")
+    records = TCMSPAdapter._parse_records(
+        html,
+        "https://portal.tcm.sp.gov.br/Acordao",
+        "licitação",
+    )
+    assert len(records) == 1
+    assert records[0].numero_processo == "TC/002198/2023"
+
+
+def test_tjsp_falls_back_from_long_query():
+    empty_search = b'<html><body><form action="/cjsg/resultadoCompleta.do"><label>Pesquisa Livre</label><input name="pesquisaLivre" type="text"></form></body></html>'
+    empty_result = b'<html><body></body></html>'
+    result = '''<html><body><table>
+      <tr><td>Acórdão</td><td>
+        <a href="/cjsg/getArquivo.do?cdAcordao=15099999&cdForo=0">Inteiro teor</a>
+        1000000-10.2026.8.26.0053
+      </td><td>Órgão julgador: 1ª Câmara de Direito Público</td>
+      <td>Relator: Des. Exemplo</td><td>Data do julgamento: 17/09/2026</td>
+      <td>Lei 14.133 licitação</td></tr>
+    </table></body></html>'''.encode("utf-8")
+    records = TJSPAdapter(FakeSession([
+        FakeResponse(empty_search, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+        FakeResponse(empty_result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+        FakeResponse(empty_search, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+        FakeResponse(result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+    ])).search("Lei 14.133 licitação contrato administrativo", 1)
+    assert len(records) == 1
+    assert records[0].numero_processo == "1000000-10.2026.8.26.0053"
+
+
+def test_stj_adapter_uses_current_process_host():
+    assert STJAdapter.endpoint == "https://processo.stj.jus.br/SCON/pesquisar.jsp"
