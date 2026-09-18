@@ -180,11 +180,11 @@ def test_query_terms_preserve_legal_numbers():
 
 
 def test_tcesp_falls_back_from_long_query_to_meaningful_term():
-    empty = b'<html><body><table><tr><th>N° Proc.</th><th>Autuação</th></tr></table></body></html>'
-    result = b'''<html><body><table>
+    empty = '<html><body><table><tr><th>N° Proc.</th><th>Autuação</th></tr></table></body></html>'.encode("utf-8")
+    result = '''<html><body><table>
     <tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr>
     <tr><td>Acórdão</td><td>1000/989/26</td><td>17/09/2026</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Lei 14.133 contratação pública</td></tr>
-    </table></body></html>'''
+    </table></body></html>'''.encode("utf-8")
     records = TCESPAdapter(FakeSession([
         FakeResponse(empty, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
         FakeResponse(empty, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/"),
@@ -210,14 +210,14 @@ def test_tcm_sp_parses_current_portal_document_link():
 def test_tjsp_falls_back_from_long_query():
     empty_search = b'<html><body><form action="/cjsg/resultadoCompleta.do"><label>Pesquisa Livre</label><input name="pesquisaLivre" type="text"></form></body></html>'
     empty_result = b'<html><body></body></html>'
-    result = b'''<html><body><table>
+    result = '''<html><body><table>
       <tr><td>Acórdão</td><td>
         <a href="/cjsg/getArquivo.do?cdAcordao=15099999&cdForo=0">Inteiro teor</a>
         1000000-10.2026.8.26.0053
       </td><td>Órgão julgador: 1ª Câmara de Direito Público</td>
       <td>Relator: Des. Exemplo</td><td>Data do julgamento: 17/09/2026</td>
       <td>Lei 14.133 licitação</td></tr>
-    </table></body></html>'''
+    </table></body></html>'''.encode("utf-8")
     records = TJSPAdapter(FakeSession([
         FakeResponse(empty_search, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
         FakeResponse(empty_result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
