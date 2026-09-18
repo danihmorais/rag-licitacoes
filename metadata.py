@@ -122,10 +122,10 @@ def _detect_regime(text, source_values):
     title = str(source_values.get('title') or '').casefold()
     haystack = f'{source_id} {title} {text[:40000]}'
     rules = (
-        ('lei_14133', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?14[.\- ]133\s*(?:/\s*)?2021\b', re.I)),
-        ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\s*(?:/\s*)?1993\b', re.I)),
-        ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\s*(?:/\s*)?2002\b', re.I)),
-        ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\s*(?:/\s*)?2011\b', re.I)),
+        ('lei_14133', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?14[.\- ]133\b', re.I)),
+        ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\b', re.I)),
+        ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\b', re.I)),
+        ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\b', re.I)),
     )
     explicit = source_values.get('regime_juridico') or source_values.get('regime')
     if explicit:
