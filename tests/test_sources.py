@@ -113,3 +113,12 @@ def test_validator_accepts_official_guidance_when_marker_is_only_in_link_metadat
         final_url="https://www.gov.br/agu/documentos/00009.pdf",
         document_title="PARECER REFERENCIAL n. 00009/2025/GERTEC/ELIC/PGF/AGU",
     )
+
+
+def test_agu_model_collection_sources_exclude_irrelevant_cartilha():
+    source_ids = {"agu-contratacao-direta", "agu-pregao-concorrencia"}
+    catalog = {item["id"]: item for item in SOURCES}
+    for source_id in source_ids:
+        assert "exclude_patterns" in catalog[source_id]
+        assert any("observatorio_da_democracia" in pattern for pattern in catalog[source_id]["exclude_patterns"])
+        assert any("cartilha" in pattern for pattern in catalog[source_id]["exclude_patterns"])
