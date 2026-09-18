@@ -10,7 +10,7 @@ SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 QDRANT_PATH = DB_DIR / 'qdrant'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
-INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '11')
+INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '12')
 DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
 SPARSE_MODEL = os.getenv('RAG_SPARSE_MODEL', 'Qdrant/bm25')
@@ -26,6 +26,7 @@ FINAL_K = int(os.getenv('RAG_FINAL_K', '8'))
 CONTEXT_NEIGHBORS = int(os.getenv('RAG_CONTEXT_NEIGHBORS', '1'))
 MAX_CONTEXT_CHARS = int(os.getenv('RAG_MAX_CONTEXT_CHARS', '26000'))
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
+EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
 FASTEMBED_PROVIDERS = tuple(x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', 'CUDAExecutionProvider').split(',') if x.strip())
 RAG_SYNC_SOURCES = os.getenv('RAG_SYNC_SOURCES', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_SYNC_JURISPRUDENCIA = os.getenv('RAG_SYNC_JURISPRUDENCIA', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
@@ -43,6 +44,7 @@ LLM_TEMPERATURE = float(os.getenv('RAG_LLM_TEMPERATURE', '0.1'))
 LLM_TIMEOUT = int(os.getenv('RAG_LLM_TIMEOUT', '300'))
 LLM_MAX_TOKENS = int(os.getenv('RAG_LLM_MAX_TOKENS', '0'))
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
+OLLAMA_NUM_CTX = int(os.getenv('RAG_OLLAMA_NUM_CTX', '16384'))
 OPENAI_COMPATIBLE_BASE_URL = os.getenv('RAG_OPENAI_BASE_URL', 'http://127.0.0.1:8080/v1')
 OPENAI_COMPATIBLE_API_KEY = os.getenv('RAG_OPENAI_API_KEY', '')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
@@ -61,6 +63,8 @@ def validate_config() -> None:
         (0 < FINAL_K <= CANDIDATES_K, 'RAG_FINAL_K deve ser maior que zero e não exceder RAG_CANDIDATES_K.'),
         (MAX_CONTEXT_CHARS > 0, 'RAG_MAX_CONTEXT_CHARS deve ser maior que zero.'),
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
+        (0 <= EVIDENCE_TOKEN_OVERLAP <= 1, 'RAG_EVIDENCE_TOKEN_OVERLAP deve estar entre zero e um.'),
+        (OLLAMA_NUM_CTX >= 16384, 'RAG_OLLAMA_NUM_CTX deve ser maior ou igual a 16384.'),
         (FASTEMBED_PROVIDERS == ('CUDAExecutionProvider',), 'RAG_FASTEMBED_PROVIDERS deve ser exclusivamente CUDAExecutionProvider.'),
         (RERANK_SCORE_MODE in {'sigmoid', 'identity'}, "RAG_RERANK_SCORE_MODE deve ser 'sigmoid' ou 'identity'."),
         (RERANK_RELEVANCE_WEIGHT >= 0, 'RAG_RERANK_RELEVANCE_WEIGHT não pode ser negativo.'),
