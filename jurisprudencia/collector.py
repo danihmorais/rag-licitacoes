@@ -129,7 +129,7 @@ def _query_score(query: str, *fields: str) -> int:
     return sum(
         1
         for term in terms
-        if re.search(rf'(?<!\\w){re.escape(term)}', haystack, re.I)
+        if re.search(rf'(?<!\w){re.escape(term)}', haystack, re.I)
     )
 
 
