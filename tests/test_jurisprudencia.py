@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, TJSPAdapter, TRIBUNALS, _discover_form, save_record
+import pytest
+
+from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, TJSPAdapter, TRIBUNALS, _discover_form, _query_matches, save_record
 from jurisprudencia.schema import JurisprudenciaRecord
 
 
@@ -145,4 +147,21 @@ def test_tjsp_save_record_has_state_scope(tmp_path: Path):
 
 
 def test_tcm_sp_uses_current_portal_endpoint():
-    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao"
+    assert TCMSPAdapter.endpoint == "https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"
+
+
+def test_query_matching_requires_all_terms_for_short_queries():
+    assert _query_matches("contrato administrativo", "contrato administrativo")
+    assert not _query_matches("contrato administrativo", "contrato")
+
+
+def test_query_matching_requires_half_terms_for_long_queries():
+    assert _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo financeiro")
+    assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
+
+
+def test_tcesp_missing_results_table_is_reported_as_structure_failure():
+    html = b"<html><body><p>A página do TCESP foi redesenhada.</p></body></html>"
+    with pytest.raises(RuntimeError, match="Estrutura da pesquisa TCESP"):
+        TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
+
