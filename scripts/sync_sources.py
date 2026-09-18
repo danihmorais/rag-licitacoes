@@ -109,9 +109,7 @@ def _decode_response(raw, final, content_type=''):
     )
     if is_pdf:
         return 'pdf', final, raw, pdf_text(raw)
-    text = raw.decode('utf-8', errors='replace')
-    apparent = None
-    return 'html', final, raw, clean_html(text)
+    return 'html', final, raw, clean_html(raw)
 
 
 def _fetch_with_wget(url):
