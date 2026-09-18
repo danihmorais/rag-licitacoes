@@ -27,7 +27,7 @@ import config
 from .schema import JurisprudenciaRecord
 
 DEFAULT_QUERY = 'licitação'
-TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp', 'tjsp')
+TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf', 'tjsp')
 HEADERS = {
     'User-Agent': 'rag-licitacoes-jurisprudencia/2.0 (+https://github.com/danihmorais/rag-licitacoes)',
     'Accept': 'text/html,application/xhtml+xml,application/json,application/pdf;q=0.9,*/*;q=0.8',
@@ -435,52 +435,117 @@ class TCESPAdapter(JurisprudenciaAdapter):
         ]
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
-        raw_html = getattr(response, 'text', None) or response.content.decode(getattr(response, 'encoding', None) or 'utf-8', errors='replace')
-        tbody_start = raw_html.find('<tbody')
-        tbody_end = raw_html.find('</tbody>')
-        if tbody_start < 0 or tbody_end < 0:
-            raise RuntimeError('TCESP não retornou um tbody de resultados no HTML oficial.')
-        body = raw_html[tbody_start:tbody_end + len('</tbody>')]
-        lines = re.split(r'<tr(?=[\s>])', body)[1:]
+        raw_html = getattr(response, 'text', None) or response.content.decode(
+            getattr(response, 'encoding', None) or 'utf-8',
+            errors='replace',
+        )
+        soup = BeautifulSoup(raw_html, 'html.parser')
+        visible_text = clean_text(soup.get_text(' ', strip=True))
+        total_match = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', visible_text, re.I)
+        total = int(total_match.group(1).replace('.', '')) if total_match else None
         records: list[JurisprudenciaRecord] = []
-        for index, line in enumerate(lines):
-            tds = [match.group(1) for match in re.finditer(r'<td[^>]*>([\s\S]*?)(?=</td>|<td|</tr>)', line)]
-            if len(tds) < 7:
+
+        for row in soup.find_all('tr'):
+            cells = row.find_all(['th', 'td'], recursive=False)
+            if len(cells) < 7:
                 continue
-            process = clean_text(re.sub(r'<a[^>]*>|</a>', '', tds[1]))
-            if not re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', process):
+            values = [clean_text(cell.get_text(' ', strip=True)) for cell in cells]
+            process_index = next(
+                (
+                    position for position, value in enumerate(values)
+                    if re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', value)
+                ),
+                None,
+            )
+            if process_index is None:
                 continue
+            process = values[process_index]
             if process in seen:
                 continue
-            date_text = clean_text(tds[2]) if len(tds) > 2 else ''
-            next_line = lines[index + 1] if index + 1 < len(lines) and not re.search(r'<td[^>]*>\s*[^<]*\d+\s*/\s*\d+\s*/\s*\d+\s*</td>', lines[index + 1]) else ''
-            trecho_items = [clean_text(match.group(1)) for match in re.finditer(r'<li>([\s\S]*?)</li>', next_line)]
-            trecho = ' '.join(item for item in trecho_items if item)
-            pdf_match = re.search(r"href=['\"]([^'\"]*\.pdf)['\"]", line, re.I)
-            pdf_url = urljoin(response.url, pdf_match.group(1)) if pdf_match else ''
-            process_url = response.url
-            process_match = re.search(r"href=['\"]([^'\"]*jurisprudencia/exibir[^'\"]*)['\"]", line, re.I)
-            if process_match:
-                process_url = urljoin(response.url, process_match.group(1))
+            date_index = next(
+                (
+                    position for position, value in enumerate(values)
+                    if re.search(r'\d{2}/\d{2}/\d{4}', value)
+                ),
+                None,
+            )
+            if date_index is None:
+                continue
+            date_text = values[date_index]
+
+            next_row = row.find_next_sibling('tr')
+            trecho_items = []
+            if next_row is not None:
+                trecho_items = [
+                    clean_text(item.get_text(' ', strip=True))
+                    for item in next_row.find_all('li')
+                    if clean_text(item.get_text(' ', strip=True))
+                ]
+            trecho = ' '.join(trecho_items)
+            if not trecho:
+                excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
+                if excerpt_text and 'trechos localizados' not in excerpt_text.casefold():
+                    trecho = excerpt_text
+
+            detail_anchor = next(
+                (
+                    anchor for anchor in row.find_all('a', href=True)
+                    if '/jurisprudencia/exibir' in str(anchor.get('href'))
+                ),
+                None,
+            )
+            pdf_anchor = next(
+                (
+                    anchor for anchor in row.find_all('a', href=True)
+                    if urlparse(urljoin(response.url, str(anchor.get('href')))).path.casefold().endswith('.pdf')
+                ),
+                None,
+            )
+            process_url = (
+                urljoin(response.url, str(detail_anchor.get('href')))
+                if detail_anchor is not None
+                else response.url
+            )
+            pdf_url = (
+                urljoin(response.url, str(pdf_anchor.get('href')))
+                if pdf_anchor is not None
+                else ''
+            )
+
+            fallback_ementa = values[6] if len(values) > 6 else ''
             record = JurisprudenciaRecord(
                 tribunal='TCESP',
                 numero_processo=process,
                 data_autuacao=date_text,
-                ementa=trecho,
-                assunto=_as_list(clean_text(tds[5]) if len(tds) > 5 else '', clean_text(tds[6]) if len(tds) > 6 else ''),
-                tipo_decisao=clean_text(tds[0]) or 'Jurisprudência',
+                ementa=trecho or fallback_ementa,
+                assunto=_as_list(
+                    values[5] if len(values) > 5 else '',
+                    values[6] if len(values) > 6 else '',
+                ),
+                tipo_decisao=values[0] or 'Jurisprudência',
                 origem='TCESP — Pesquisa de Jurisprudência',
                 url_oficial=process_url,
-                partes=_as_list(clean_text(tds[3]) if len(tds) > 3 else '', clean_text(tds[4]) if len(tds) > 4 else ''),
+                partes=_as_list(
+                    values[3] if len(values) > 3 else '',
+                    values[4] if len(values) > 4 else '',
+                ),
             )
-            if pdf_url and not record.url_oficial:
+            if pdf_url and record.url_oficial == response.url:
                 record.url_oficial = pdf_url
             if detail or with_content:
                 try:
-                    detail_text, final, content = _detail_enrichment(self.session, process_url, with_content=with_content)
+                    detail_text, final, content = _detail_enrichment(
+                        self.session,
+                        process_url,
+                        with_content=with_content,
+                    )
                     record.url_oficial = final
                     record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
-                    record.data_publicacao = _label_value(detail_text, ('Data de Publicação', 'Data da Publicação')) or record.data_publicacao
+                    record.data_publicacao = _label_value(
+                        detail_text,
+                        ('Data de Publicação', 'Data da Publicação'),
+                    ) or record.data_publicacao
+                    record.ementa = _extract_ementa(content or detail_text) or record.ementa
                     if with_content and content:
                         record.inteiro_teor = content
                 except Exception as exc:
@@ -489,13 +554,22 @@ class TCESPAdapter(JurisprudenciaAdapter):
             records.append(record)
             if len(records) >= limit:
                 return records[:limit]
-        total = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', clean_text(raw_html), re.I)
-        if total and int(total.group(1).replace('.', '')) > 0:
-            raise RuntimeError('TCESP informou registros, mas o parser não encontrou as linhas borda-superior esperadas.')
-        form = BeautifulSoup(raw_html, 'html.parser').find('form')
-        if form is None:
-            raise RuntimeError('Estrutura da pesquisa TCESP alterada: formulário oficial não encontrado.')
-        return []
+
+        if total is not None and total > 0 and not records:
+            raise RuntimeError(
+                f'TCESP informou {total} registros para a consulta {variant!r}, '
+                'mas o parser não encontrou nenhuma linha processável.'
+            )
+        if total is None:
+            form = soup.find('form')
+            form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
+            form_fields = ' '.join(
+                str(field.get('name') or '')
+                for field in form.find_all(['input', 'textarea'])
+            ).casefold() if form is not None else ''
+            if form is None or not ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
+                raise RuntimeError('Estrutura da pesquisa TCESP alterada: resultados e formulário oficial não foram encontrados.')
+        return records[:limit]
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         seen: set[str] = set()
@@ -509,7 +583,10 @@ class TCESPAdapter(JurisprudenciaAdapter):
             )
             if records:
                 return records[:limit]
-        raise RuntimeError(f'TCESP não retornou resultados estruturados para {query!r}; a página oficial pode ter mudado ou a consulta não encontrou registros.')
+        raise RuntimeError(
+            f'TCESP não retornou resultados estruturados para {query!r}; '
+            'a página oficial pode ter mudado ou a consulta não encontrou registros.'
+        )
 
 
 class STJAdapter(JurisprudenciaAdapter):
