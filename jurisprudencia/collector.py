@@ -439,7 +439,102 @@ class TCESPAdapter(JurisprudenciaAdapter):
             ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
         ]
         url = f'{self.endpoint}?{urlencode(params)}'
-        process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+    def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
+        process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled'],
+            )
+            try:
+                page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
+                page.goto(url, wait_until='domcontentloaded', timeout=120000)
+                try:
+                    page.wait_for_function(
+                        "() => document.body && document.body.innerText.includes('Foram encontrados')",
+                        timeout=15000,
+                    )
+                except Exception:
+                    page.wait_for_timeout(2500)
+
+                soup = BeautifulSoup(page.content(), 'html.parser')
+                records: list[JurisprudenciaRecord] = []
+                for process_anchor in soup.find_all('a', href=True):
+                    process = clean_text(process_anchor.get_text(' ', strip=True))
+                    if not process_pattern.fullmatch(process) or process in seen:
+                        continue
+
+                    container = process_anchor.find_parent('tr')
+                    if container is None:
+                        container = process_anchor.find_parent(['li', 'article', 'td', 'div', 'section'])
+                    if container is None:
+                        container = process_anchor.parent
+                    container_text = clean_text(container.get_text(' ', strip=True)) if container is not None else process
+                    date_match = re.search(r'[0-9]{2}/[0-9]{2}/[0-9]{4}', container_text)
+                    if date_match is None and container is not None:
+                        parent = container
+                        for _ in range(4):
+                            parent = parent.parent
+                            if parent is None:
+                                break
+                            candidate = clean_text(parent.get_text(' ', strip=True))
+                            date_match = re.search(r'[0-9]{2}/[0-9]{2}/[0-9]{4}', candidate)
+                            if date_match:
+                                container = parent
+                                container_text = candidate
+                                break
+                    if date_match is None:
+                        continue
+
+                    detail_anchor = next(
+                        (
+                            item for item in container.find_all('a', href=True)
+                            if '/jurisprudencia/exibir' in str(item.get('href'))
+                        ),
+                        None,
+                    )
+                    detail_url = (
+                        urljoin(page.url, str(detail_anchor.get('href')))
+                        if detail_anchor is not None
+                        else urljoin(page.url, str(process_anchor.get('href')))
+                    )
+                    record = JurisprudenciaRecord(
+                        tribunal='TCESP',
+                        numero_processo=process,
+                        data_autuacao=date_match.group(0),
+                        ementa=container_text,
+                        assunto=[],
+                        tipo_decisao='Jurisprudência',
+                        origem='TCESP — Pesquisa de Jurisprudência',
+                        url_oficial=detail_url,
+                    )
+                    if detail or with_content:
+                        try:
+                            detail_text, final, content = _detail_enrichment(
+                                self.session,
+                                detail_url,
+                                with_content=with_content,
+                            )
+                            record.url_oficial = final
+                            record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
+                            record.data_publicacao = _label_value(
+                                detail_text,
+                                ('Data de Publicação', 'Data da Publicação'),
+                            ) or record.data_publicacao
+                            record.ementa = _extract_ementa(content or detail_text) or record.ementa
+                            if with_content and content:
+                                record.inteiro_teor = content
+                        except Exception as exc:
+                            print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
+                    seen.add(process)
+                    records.append(record)
+                    if len(records) >= limit:
+                        return records[:limit]
+                return records[:limit]
+            finally:
+                browser.close()
+
+    def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
         params = [
             ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
             ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
