@@ -82,3 +82,11 @@ def test_validator_rejects_empty_discovery_page():
     source = next(item for item in SOURCES if item["id"] == "pl-discovery-lexml")
     with pytest.raises(RuntimeError, match="conteúdo vazio"):
         validate(source, "   ")
+
+
+def test_index_only_linked_official_table_does_not_require_guidance_marker():
+    source = next(item for item in SOURCES if item["id"] == "sp-compras")
+    content = ("Secretaria de Gestão e Governo Digital\n"
+               "Código UGE Código UASG NOME DA UASG NOME DO ÓRGÃO\n"
+               + ("010030 956534 ESP-FED-ASSEMBLEIA LEGISLATIVA EST.SP. ESP-ASSEMBLEIA LEGISLATIVA\n" * 40))
+    validate(source, content, linked=True, final_url="https://compras.sp.gov.br/wp-content/uploads/2026/06/CorrelacaoUASG-UGE-AUDESP-2026-06-03.pdf")
