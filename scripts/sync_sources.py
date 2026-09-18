@@ -786,7 +786,10 @@ def main():
     ok = 0
     for index, source in enumerate(sources, 1):
         print(f'[{index}/{len(sources)}] {source["id"]}', flush=True)
-        good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
+        if source.get('source_type') == 'web_articles':
+            good, message, _ = sync_web_articles(session, source, check=args.check)
+        else:
+            good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
         print(message, flush=True)
         ok += int(good)
         if not good:
