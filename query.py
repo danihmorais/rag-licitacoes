@@ -52,6 +52,19 @@ NUMERIC_FILTERS = {'ano', 'norm_ano', 'authority_level', 'normative_rank'}
 
 
 def _coerce_filter_value(key, value):
+    if key == 'regime_juridico':
+        normalized = _normalize_query_text(value)
+        regime_aliases = {
+            'lei 14.133/2021': 'lei_14133',
+            'lei 14.133': 'lei_14133',
+            'lei 8.666/1993': 'lei_8666',
+            'lei 8.666': 'lei_8666',
+            'lei 10.520/2002': 'lei_10520',
+            'lei 10.520': 'lei_10520',
+            'jurisprudencia': 'jurisprudencia',
+            'transicao legislativa': 'transicao',
+        }
+        return regime_aliases.get(normalized, str(value).strip())
     if key in NUMERIC_FILTERS:
         try:
             return int(value)
@@ -117,7 +130,8 @@ def _is_transition_query(query):
     ))
 
 
-def qfilter(filters, query=None):
+def qfilter(filters=None, query=None):
+    filters = filters or {}
     if not filters and not query:
         return None
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
