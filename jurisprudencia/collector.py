@@ -419,8 +419,6 @@ class TCESPAdapter(JurisprudenciaAdapter):
                         print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
                 records.append(record)
                 found_on_page += 1
-                if len(records) >= limit:
-                    break
             if found_on_page == 0:
                 break
             offset += page_size
