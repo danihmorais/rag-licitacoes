@@ -192,8 +192,8 @@ AUTHORITY_LEVEL_SCORES = {
     4: 0.20,
 }
 
-EVIDENCE_CITATION_RE = re.compile(r'\\[F(\\d+)\\]')
-EVIDENCE_TOKEN_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}|\\d{2,}')
+EVIDENCE_CITATION_RE = re.compile(r'\[F(\d+)\]')
+EVIDENCE_TOKEN_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}|\d{2,}')
 EVIDENCE_STOPWORDS = {
     'para', 'como', 'essa', 'esse', 'isso', 'esta', 'este', 'sao', 'são',
     'uma', 'uns', 'das', 'dos', 'com', 'sem', 'por', 'que', 'não', 'nao',
@@ -201,9 +201,9 @@ EVIDENCE_STOPWORDS = {
     'deve', 'podera', 'poderá', 'ser', 'nos', 'nas', 'aos', 'ainda',
 }
 LEGAL_IDENTIFIER_RES = (
-    re.compile(r'(?i)\\blei\\s+(?:n[ºo.]*\\s*)?\\d+[.]?\\d*(?:/\\d{4})?'),
-    re.compile(r'(?i)\\bart(?:igo)?[.]?\\s*\\d+[A-Za-z-]*(?:\\s*,?\\s*§\\s*\\d+[ºo]?)?'),
-    re.compile(r'\\b\\d{1,7}[/-]\\d{1,7}(?:[/-]\\d{2,4})?\\b'),
+    re.compile(r'(?i)\blei\s+(?:n[ºo.]*\s*)?\d+[.]?\d*(?:/\d{4})?'),
+    re.compile(r'(?i)\bart(?:igo)?[.]?\s*\d+[A-Za-z-]*(?:\s*,?\s*§\s*\d+[ºo]?)?'),
+    re.compile(r'\b\d{1,7}[/-]\d{1,7}(?:[/-]\d{2,4})?\b'),
 )
 
 
@@ -239,7 +239,7 @@ def validate_generated_answer(answer, sources):
         return True
     if any(index < 1 or index > len(sources) for index in citations):
         raise EvidenceGateError('A resposta contém citação para uma fonte que não está no contexto.')
-    sentences = [part.strip() for part in re.split(r'(?<=[.!?;])\\s+|\\n+', answer) if part.strip()]
+    sentences = [part.strip() for part in re.split(r'(?<=[.!?;])\s+|\n+', answer) if part.strip()]
     for sentence in sentences:
         sentence_citations = _sentence_citations(sentence)
         factual = EVIDENCE_CITATION_RE.sub('', sentence).strip(' .,:;-')
