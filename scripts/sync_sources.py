@@ -436,6 +436,14 @@ def _parse_web_date(value):
             return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
         except ValueError:
             return None
+    match = re.search(r'\b(20\d{2})[-/]([A-Za-zÀ-ÿ]{3,12})[-/](\d{1,2})\b', raw, re.I)
+    if match:
+        month = WEB_MONTHS.get(match.group(2).casefold())
+        if month:
+            try:
+                return date(int(match.group(1)), month, int(match.group(3)))
+            except ValueError:
+                return None
     return None
 
 
@@ -526,6 +534,8 @@ def extract_web_article(raw_html, final_url):
         or _first_meta(soup, 'article:published_time', 'datePublished', 'date', 'pubdate')
         or next((tag.get('datetime') for tag in soup.find_all('time') if tag.get('datetime')), None)
     )
+    if not published:
+        published = final_url
     author = author or _first_meta(soup, 'author', 'article:author')
     section = section or _first_meta(soup, 'article:section', 'section')
     keywords = keywords or _first_meta(soup, 'keywords', 'article:tag')
@@ -566,12 +576,14 @@ def _is_web_article_url(source, url):
         return False
     source_id = source.get('id')
     if source_id == 'web-migalhas':
-        return bool(re.match(r'^/(?:depeso|quentes|colunas)/[^/]+/', low))
+        return bool(re.match(r'^/(?:depeso|quentes|colunas)/[^/]+(?:/|$)', low))
     if source_id == 'web-conjur':
         return bool(re.search(r'/20\d{2}-(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)-\d{2}/', low))
     if source_id == 'web-conlicitacao':
         return low.startswith('/blog/') and not low.startswith('/blog/page/')
-    return path.rstrip('/') not in {'', '/'} and not low.endswith(('.xml', '.rss'))
+    if source_id == 'web-nova-lei-licitacao':
+        return bool(re.search(r'/20\d{2}/\d{1,2}/\d{1,2}/', low))
+    return path.rstrip('/') not in {'', '/'} and not low.endswith(('.xml', '.rss', '.txt'))
 
 
 def _web_link_candidates(raw_html, base_url, source):
