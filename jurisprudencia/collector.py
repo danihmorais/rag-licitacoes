@@ -472,6 +472,8 @@ class TCESPAdapter(JurisprudenciaAdapter):
                         if records and joined:
                             records[-1].ementa = joined
                         continue
+                    if len(records) >= limit:
+                        continue
                     if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
                         continue
                     detail_anchor = next(
@@ -513,8 +515,6 @@ class TCESPAdapter(JurisprudenciaAdapter):
                     records.append(record)
                     found_on_page += 1
                     variant_found = True
-                    if len(records) >= limit:
-                        break
                 if len(records) >= limit:
                     break
                 if found_on_page == 0:
