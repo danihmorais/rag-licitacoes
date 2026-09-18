@@ -556,7 +556,81 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 return records[:limit]
 
         if not records:
-            process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+        if total is None:
+            process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+$')
+            for anchor in soup.find_all('a', href=True):
+                process = clean_text(anchor.get_text(' ', strip=True))
+                if not process_pattern.fullmatch(process) or process in seen:
+                    continue
+
+                container = anchor.find_parent('tr')
+                if container is None:
+                    container = anchor.find_parent(['li', 'article', 'td', 'div', 'section'])
+                if container is None:
+                    container = anchor.parent
+                container_text = clean_text(container.get_text(' ', strip=True)) if container is not None else process
+
+                date_match = re.search(r'\d{2}/\d{2}/\d{4}', container_text)
+                if date_match is None and container is not None:
+                    parent = container
+                    for _ in range(4):
+                        parent = parent.parent
+                        if parent is None:
+                            break
+                        candidate = clean_text(parent.get_text(' ', strip=True))
+                        date_match = re.search(r'\d{2}/\d{2}/\d{4}', candidate)
+                        if date_match:
+                            container = parent
+                            container_text = candidate
+                            break
+                if date_match is None:
+                    continue
+
+                detail_url = urljoin(response.url, str(anchor.get('href') or ''))
+                detail_anchor = next(
+                    (
+                        item for item in container.find_all('a', href=True)
+                        if '/jurisprudencia/exibir' in str(item.get('href'))
+                    ),
+                    None,
+                )
+                if detail_anchor is not None:
+                    detail_url = urljoin(response.url, str(detail_anchor.get('href')))
+
+                date_text = date_match.group(0)
+                trecho = ''
+                excerpt = container.find_next_sibling()
+                if excerpt is not None:
+                    trecho_items = [
+                        clean_text(item.get_text(' ', strip=True))
+                        for item in excerpt.find_all('li')
+                        if clean_text(item.get_text(' ', strip=True))
+                    ]
+                    trecho = ' '.join(trecho_items)
+                if not trecho:
+                    trecho_match = re.search(
+                        r'Trechos localizados no documento:\s*(.+?)(?=\s*(?:\d+\s*/\s*\d+\s*/\s*\d+|$))',
+                        container_text,
+                        re.I,
+                    )
+                    if trecho_match:
+                        trecho = clean_text(trecho_match.group(1))
+
+                record = JurisprudenciaRecord(
+                    tribunal='TCESP',
+                    numero_processo=process,
+                    data_autuacao=date_text,
+                    ementa=trecho or container_text,
+                    assunto=[],
+                    tipo_decisao='Jurisprudência',
+                    origem='TCESP — Pesquisa de Jurisprudência',
+                    url_oficial=detail_url,
+                )
+                seen.add(process)
+                records.append(record)
+                if len(records) >= limit:
+                    return records[:limit]
+
+        if total is None:
             form = soup.find('form')
             form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
             form_fields = ' '.join(
