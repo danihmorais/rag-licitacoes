@@ -211,7 +211,7 @@ def test_query_terms_preserve_legal_numbers():
 
 
 def test_tcesp_falls_back_from_long_query_to_meaningful_term():
-    empty = '<html><body><table><tbody><tr class="borda-superior"><td>Doc.</td><td>N° Proc.</td><td>Autuação</td></tr></tbody></table></body></html>'.encode("utf-8")
+    empty = '<html><body><form><input name="txtTdPalvs"></form><table><tbody><tr><td>Pesquisa de Jurisprudência</td></tr></tbody></table></body></html>'.encode("utf-8")
     result = '''<html><body><table><tbody>
     <tr class="borda-superior"><td>Acórdão</td><td>1000/989/26</td><td>17/09/2026</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Lei 14.133 contratação pública</td><td>2026</td></tr>
     <tr><td colspan="8"><ul><li>licitação Lei 14.133 contratação pública</li></ul></td></tr>
