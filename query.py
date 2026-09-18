@@ -125,9 +125,25 @@ def parse_filters(raw):
 def _is_transition_query(query):
     normalized = _normalize_query_text(query)
     return any(term in normalized for term in (
-        'transicao', 'transicao legislativa', 'regime anterior', 'lei 8.666',
-        'lei 8666', '8.666/1993', 'historico', 'histórico',
+        'transicao', 'transicao legislativa', 'regime anterior',
+        'lei 8.666', 'lei 8666', '8.666/1993',
+        'lei 10.520', 'lei 10520', '10.520/2002',
+        'historico', 'histórico',
     ))
+
+
+def _query_regime(query):
+    normalized = _normalize_query_text(query)
+    rules = (
+        ('lei_14133', ('lei 14.133', 'lei 14133', '14.133/2021')),
+        ('lei_8666', ('lei 8.666', 'lei 8666', '8.666/1993')),
+        ('lei_10520', ('lei 10.520', 'lei 10520', '10.520/2002')),
+        ('lei_12462', ('lei 12.462', 'lei 12462', '12.462/2011')),
+    )
+    for regime, markers in rules:
+        if any(marker in normalized for marker in markers):
+            return regime
+    return None
 
 
 def qfilter(filters=None, query=None):
@@ -154,12 +170,21 @@ def qfilter(filters=None, query=None):
         else:
             conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
     if explicit_regime is None and query and not _is_transition_query(query):
-        must_not.append(
-            models.FieldCondition(
-                key='regime_juridico',
-                match=models.MatchAny(any=['lei_8666']),
+        target_regime = _query_regime(query)
+        if target_regime:
+            conditions.append(
+                models.FieldCondition(
+                    key='regime_juridico',
+                    match=models.MatchValue(value=target_regime),
+                )
             )
-        )
+        else:
+            must_not.append(
+                models.FieldCondition(
+                    key='regime_juridico',
+                    match=models.MatchAny(any=['lei_8666']),
+                )
+            )
     if not conditions and not must_not:
         return None
     return models.Filter(must=conditions, must_not=must_not or None)
