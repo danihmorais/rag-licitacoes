@@ -59,6 +59,8 @@ def sync_jurisprudencia():
         ]
         for query in config.JURISPRUDENCIA_QUERIES:
             command.extend(['--query', query])
+    if config.JURISPRUDENCIA_STRICT:
+        command.append('--strict')
     if config.JURISPRUDENCIA_DETAIL:
         command.append('--detail')
     if config.JURISPRUDENCIA_WITH_CONTENT:
