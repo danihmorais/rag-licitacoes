@@ -116,9 +116,15 @@ def test_validator_accepts_official_guidance_when_marker_is_only_in_link_metadat
 
 
 def test_agu_model_collection_sources_exclude_irrelevant_cartilha():
-    source_ids = {"agu-contratacao-direta", "agu-pregao-concorrencia"}
+    html = (
+        '<main>'
+        '<a href="modelos/edital.pdf">Edital</a>'
+        '<a href="/assuntos-1/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
+        '</main>'
+    )
     catalog = {item["id"]: item for item in SOURCES}
-    for source_id in source_ids:
-        assert "exclude_patterns" in catalog[source_id]
-        assert any("observatorio_da_democracia" in pattern for pattern in catalog[source_id]["exclude_patterns"])
-        assert any("cartilha" in pattern for pattern in catalog[source_id]["exclude_patterns"])
+    for source_id in {"agu-contratacao-direta", "agu-pregao-concorrencia"}:
+        source = catalog[source_id]
+        assert discover_links(html, source["urls"][0], source) == [
+            ("https://www.gov.br/agu/pt-br/composicao/cgu/cgu/modelos/licitacoesecontratos/14133/modelos/edital.pdf", "Edital")
+        ]
