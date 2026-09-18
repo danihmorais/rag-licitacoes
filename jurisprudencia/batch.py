@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 import config
-from .collector import TRIBUNALS, collect
+from .collector import TRIBUNALS, collect, save_record
 from .queries import DEFAULT_QUERIES, parse_queries
 
 
@@ -22,15 +22,10 @@ def collect_batch(tribunals, queries, limit, *, detail=False, with_content=False
             detail=detail,
             with_content=with_content,
             output_dir=output_dir,
+            persist=False,
         )
         for record in records:
-            key = (
-                record.tribunal,
-                record.numero_processo,
-                record.numero_decisao or '',
-                record.tipo_decisao or '',
-                record.version_sha256 or '',
-            )
+            key = record.document_key
             if key in seen:
                 continue
             seen.add(key)
@@ -38,6 +33,9 @@ def collect_batch(tribunals, queries, limit, *, detail=False, with_content=False
             tribunal_key = record.tribunal.casefold()
             if tribunal_key in counts:
                 counts[tribunal_key] += 1
+    for record in output:
+        save_record(record, output_dir)
+
     for tribunal in tribunals:
         if counts.get(tribunal, 0) == 0:
             failures.add(tribunal)
