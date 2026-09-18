@@ -59,6 +59,24 @@ def test_tcesp_adapter_parses_result_table():
     assert records[0].numero_processo == "5600/989/25"
     assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
 
+
+def test_tcesp_adapter_accepts_current_result_rows_without_css_class():
+    html = '''<html><body>
+    <h3>Foram encontrados 191 registros</h3>
+    <table>
+      <tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr>
+      <tr><td>Acórdão</td><td><a href="/jurisprudencia/exibir?codigo=560098925">5600/989/25</a></td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>CONTRATO</td><td>Licitação e qualificação técnica</td><td>2025</td></tr>
+      <tr><td colspan="8"><div>Trechos localizados no documento:</div><ul><li>licitação e qualificação técnica devem ser pertinentes e proporcionais.</li></ul></td></tr>
+    </table>
+    </body></html>'''.encode("utf-8")
+    records = TCESPAdapter(FakeSession([
+        FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")
+    ])).search("licitação", 1)
+    assert len(records) == 1
+    assert records[0].numero_processo == "5600/989/25"
+    assert records[0].url_oficial == "https://www.tce.sp.gov.br/jurisprudencia/exibir?codigo=560098925"
+    assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
+
 def test_tcm_sp_parser_handles_current_official_document_link():
     html = '''<html><body>
     <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação de serviços</a>
@@ -119,7 +137,7 @@ def test_session_id_does_not_create_a_new_document_version():
 
 
 def test_all_required_tribunals_have_adapters():
-    assert TRIBUNALS == ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp', 'tjsp')
+    assert TRIBUNALS == ('tcu', 'tcesp', 'stj', 'stf', 'tjsp')
 
 
 def test_stf_adapter_uses_current_search_api_and_maps_hits(monkeypatch):
