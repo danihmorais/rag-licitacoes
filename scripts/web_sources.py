@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import hashlib
 import html
 import json
 import re
@@ -135,6 +136,8 @@ def _article_text_node(soup):
 def extract_web_article(raw_html, final_url):
     soup = BeautifulSoup(raw_html, "html.parser")
     jsonld = list(_jsonld_objects(soup))
+    time_values = [tag.get("datetime") for tag in soup.find_all("time") if tag.get("datetime")]
+    visible_hint = soup.get_text(" ", strip=True)[:2500]
     for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside", "iframe"]):
         tag.decompose()
     for tag in soup.find_all(
@@ -177,7 +180,7 @@ def extract_web_article(raw_html, final_url):
     published = (
         published
         or _first_meta(soup, "article:published_time", "datePublished", "date", "pubdate")
-        or next((tag.get("datetime") for tag in soup.find_all("time") if tag.get("datetime")), None)
+        or (time_values[0] if time_values else None)
         or final_url
     )
     author = author or _first_meta(soup, "author", "article:author")
@@ -437,6 +440,7 @@ def sync_web_articles(session, source, check=False):
             if key in seen_articles:
                 continue
             seen_articles.add(key)
+            article["_raw"] = raw
             accepted.append(article)
         except Exception as exc:
             print(f"  aviso: matéria {candidate} falhou: {type(exc).__name__}: {exc}")
@@ -447,7 +451,7 @@ def sync_web_articles(session, source, check=False):
     for article in accepted:
         document_id = (
             f"{source['id']}__{slug(article['title'])}__"
-            f"{__import__('hashlib').sha1(article['url'].encode('utf-8')).hexdigest()[:10]}"
+            f"{hashlib.sha1(article['url'].encode('utf-8')).hexdigest()[:10]}"
         )
         kept_ids.add(slug(document_id))
         if not check:
@@ -455,7 +459,7 @@ def sync_web_articles(session, source, check=False):
                 source,
                 article["url"],
                 "web_article",
-                raw,
+                article["_raw"],
                 _article_cache_text(source, article),
                 document_id,
                 article["title"],
