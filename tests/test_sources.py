@@ -65,7 +65,7 @@ def test_validator_accepts_official_guidance_content():
 def test_current_source_endpoints():
     catalog = {item["id"]: item for item in SOURCES}
     assert catalog["pncp"]["urls"][0] == "https://www.gov.br/pncp/pt-br/pncp/legislacao"
-    assert catalog["tcesp-srp"]["urls"][0] == "https://www.tce.sp.gov.br/legislacao/deliberacao/dispoe-sobre-diretrizes-e-procedimentos-serem-observados-pelos-orgaos-e"
+    assert catalog["tcesp-srp"]["urls"][0] == "https://tce.sp.gov.br/sites/default/files/legislacao/SEI_1482508_DELIBERACAO_TCESP.pdf"
     assert catalog["agu-modelos-14133"]["urls"][0].endswith("/modelos/licitacoesecontratos/14133")
     assert catalog["agu-tic"]["urls"][0].endswith("/modelos/licitacoesecontratos/14133/bens-e-servicos-de-tic")
     assert catalog["pl-discovery-camara"]["urls"][0] == "https://www.camara.leg.br/legislacao/busca?geral=&origem=C%C3%A2mara+dos+Deputados"
@@ -128,3 +128,20 @@ def test_agu_model_collection_sources_exclude_irrelevant_cartilha():
         assert discover_links(html, source["urls"][0], source) == [
             ("https://www.gov.br/agu/pt-br/composicao/cgu/cgu/modelos/licitacoesecontratos/14133/modelos/edital.pdf", "Edital")
         ]
+
+
+def test_tcesp_srp_source_accepts_official_deliberation_pdf_content():
+    source = next(item for item in SOURCES if item["id"] == "tcesp-srp")
+    content = "\n".join(
+        [
+            "DELIBERAÇÃO",
+            "(SEI N. 0005763/2025-11)",
+            "Artigo 1º - " + ("Sistema de Registro de Preços e adesão a atas. " * 4),
+            "Artigo 2º - " + ("Cumprimento dos procedimentos pelos órgãos e entidades. " * 4),
+            "I - " + ("estimativa das quantidades demandadas para registro e futura contratação. " * 4),
+            "II - " + ("precisa descrição dos itens pretendidos e dos materiais e serviços. " * 4),
+            "Artigo 3º - " + ("Processo administrativo específico para adesão e demonstração da vantajosidade. " * 4),
+            "Artigo 5º - " + ("Regras para adesões no Estado e nos Municípios paulistas. " * 4),
+        ]
+    )
+    validate(source, content)
