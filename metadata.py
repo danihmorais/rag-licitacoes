@@ -112,6 +112,7 @@ REGIME_CANONICAL = {
     'lei_10520': 'Lei 10.520/2002',
     'lei_12462': 'Lei 12.462/2011',
     'jurisprudencia': 'Jurisprudência',
+    'transicao': 'Transição legislativa',
     'nao_especificado': 'Não especificado',
 }
 
@@ -133,9 +134,12 @@ def _detect_regime(text, source_values):
             if explicit_norm in {key, label.casefold()}:
                 return key, label
         return str(explicit).strip(), str(explicit).strip()
-    for key, pattern in rules:
-        if pattern.search(haystack):
-            return key, REGIME_CANONICAL[key]
+    detected = [key for key, pattern in rules if pattern.search(haystack)]
+    if len(detected) > 1:
+        return 'transicao', REGIME_CANONICAL['transicao']
+    if detected:
+        key = detected[0]
+        return key, REGIME_CANONICAL[key]
     if source_values.get('tipo_documento') == 'jurisprudencia' or source_values.get('source_role') in {'jurisprudencia', 'jurisprudencia_controle'}:
         return 'jurisprudencia', REGIME_CANONICAL['jurisprudencia']
     return 'nao_especificado', REGIME_CANONICAL['nao_especificado']
