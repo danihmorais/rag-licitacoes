@@ -67,6 +67,11 @@ def sync_jurisprudencia():
         command.append('--with-content')
     result = subprocess.run(command, check=False)
     if result.returncode != 0:
+        if config.JURISPRUDENCIA_STRICT:
+            raise RuntimeError(
+                'Sincronização de jurisprudência incompleta. Corrija as fontes jurisprudenciais antes de indexar; '
+                'o cache anterior foi preservado onde aplicável.'
+            )
         print('Aviso: coleta de jurisprudência terminou sem novos registros; cache anterior será preservado.')
 
 
@@ -160,7 +165,8 @@ def build_chunks(document, pages):
 
 
 def embedding_kwargs():
-    return {'providers': config.FASTEMBED_PROVIDERS} if config.FASTEMBED_PROVIDERS else {}
+    config.validate_gpu_runtime()
+    return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
 def ensure_collection(client):
