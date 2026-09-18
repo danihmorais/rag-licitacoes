@@ -2,8 +2,8 @@ from datetime import date
 import json
 
 from scripts.sources import SOURCES
-from scripts.sync_sources import _is_web_article_url
 from scripts.web_sources import (
+    _is_web_article_url,
     _parse_web_date,
     _web_link_candidates,
     _web_topic_matches,
