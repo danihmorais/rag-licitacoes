@@ -32,7 +32,7 @@ jobs:
 
       - name: Sincronizar legislação e corpus disponível
         run: |
-          python scripts/sync_sources.py --strict --no-follow-links
+          python scripts/sync_sources.py --legislation-only --strict --no-follow-links
 
       - name: Indexar legislação no Qdrant
         env:
