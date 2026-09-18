@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
+import pytest
+
 import config
-from query import rerank
+from query import EvidenceGateError, rerank, validate_generated_answer
 
 
 def make_point(source, unit_id, text):
@@ -35,3 +37,23 @@ def test_min_evidence_score_filters_each_candidate(monkeypatch):
 
     assert [point.payload['_evidence_score'] for point in result] == [0.95, 0.85]
     assert all(point.payload['_evidence_score'] >= config.MIN_EVIDENCE_SCORE for point in result)
+
+
+def test_evidence_gate_accepts_claim_supported_by_cited_source():
+    source = make_point("lei14133", "artigo:1", "Lei 14.133/2021. Art. 1º A licitação observará a legalidade e a eficiência.")
+    assert validate_generated_answer(
+        "O Art. 1º da Lei 14.133/2021 determina a observância da legalidade e da eficiência. [F1]",
+        [source],
+    )
+
+
+def test_evidence_gate_rejects_unknown_citation():
+    source = make_point("lei14133", "artigo:1", "A licitação observará a legalidade.")
+    with pytest.raises(EvidenceGateError, match="fonte"):
+        validate_generated_answer("A regra é esta. [F2]", [source])
+
+
+def test_evidence_gate_rejects_unsupported_legal_identifier():
+    source = make_point("lei14133", "artigo:1", "Art. 1º A licitação observará a legalidade.")
+    with pytest.raises(EvidenceGateError, match="Identificador jurídico"):
+        validate_generated_answer("O Art. 8º da Lei 14.133/2021 determina outra regra. [F1]", [source])
