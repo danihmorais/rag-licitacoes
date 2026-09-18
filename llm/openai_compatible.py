@@ -26,6 +26,7 @@ class OpenAICompatibleProvider(LLMProvider):
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if self.api_key:
             headers['Authorization'] = f'Bearer {self.api_key}'
+        response = None
         try:
             response = requests.post(
                 f'{self.base_url}/chat/completions',
