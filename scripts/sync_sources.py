@@ -34,7 +34,7 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
 }
 LEGAL_RE = re.compile(
-    r'\b(?:Art\.?|Artigo|CAPÍTULO|TÍTULO|SEÇÃO|SUBSEÇÃO|ANEXO|S[ÚU]MULA|LEI|DECRETO|RESOLUÇÃO|PORTARIA)\b',
+    r'\b(?:Art\.?|Artigo|CAPÍTULO|TÍTULO|SEÇÃO|SUBSEÇÃO|ANEXO|S[ÚU]MULA|LEI|DECRETO|DECRETO-LEI|RESOLUÇÃO|PORTARIA|INSTRUÇÃO\s+NORMATIVA|CONSTITUIÇÃO)\b',
     re.I,
 )
 NOISE = {'[Input]', '[Button: Pesquisar]', 'expand_more', 'collapse'}
@@ -117,9 +117,16 @@ def _compact(value):
 
 
 def _expected_normative_number(source):
+    if source.get('tipo_documento') in {'constituicao', 'constituicao_estadual'}:
+        return None
     title = str(source.get('title') or '')
     match = re.search(r'\b(?:n[ºo]?\s*)?((?:\d{1,4}\.)*\d{1,4})(?:/\d{2,4})?\b', title)
     return match.group(1) if match else None
+
+
+def _source_urls(source):
+    urls = [*source.get('urls', ()), *source.get('fallback_urls', ())]
+    return list(dict.fromkeys(str(url).strip() for url in urls if str(url).strip()))
 
 
 def _substantive_lines(text):
@@ -290,7 +297,7 @@ def purge_retired_source_cache():
 
 def sync_one(session, source, check=False, follow_links=True):
     last = ''
-    for url in source.get('urls', []):
+    for url in _source_urls(source):
         try:
             kind, final, raw, text = fetch(session, url)
             validate(source, text, linked=False)
@@ -333,9 +340,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--required-only', action='store_true')
+    parser.add_argument('--legislation-only', action='store_true')
+    parser.add_argument('--strict', action='store_true')
     parser.add_argument('--no-follow-links', action='store_true')
     args = parser.parse_args()
-    sources = [s for s in SOURCES if not args.required_only or s.get('required')]
+    sources = [
+        s for s in SOURCES
+        if (not args.required_only or s.get('required'))
+        and (
+            not args.legislation_only
+            or (s.get('source_role') == 'norma' and not s.get('index_only'))
+        )
+    ]
     session = make_session()
     if not args.check:
         removed_retired = purge_retired_source_cache()
@@ -352,7 +368,21 @@ def main():
     print(f'Fontes: {ok}/{len(sources)} OK')
     if failures:
         print('Falhas:', ', '.join(failures))
-    return 1 if failures and args.required_only else 0
+    strict_failures = []
+    if args.strict:
+        strict_failures = [
+            source['id']
+            for source in sources
+            if source['id'] in failures
+            and source.get('source_role') == 'norma'
+            and not source.get('index_only')
+        ]
+    if failures and args.required_only:
+        return 1
+    if strict_failures:
+        print('Falhas legislativas bloqueantes:', ', '.join(strict_failures))
+        return 1
+    return 0
 
 
 if __name__ == '__main__':
