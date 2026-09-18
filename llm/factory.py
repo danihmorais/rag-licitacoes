@@ -15,6 +15,7 @@ def get_llm_provider() -> LLMProvider:
             model=config.LLM_MODEL,
             temperature=config.LLM_TEMPERATURE,
             timeout=config.LLM_TIMEOUT,
+            num_ctx=config.OLLAMA_NUM_CTX,
         )
 
     if provider in {'openai_compatible', 'openai-compatible', 'openrouter'}:

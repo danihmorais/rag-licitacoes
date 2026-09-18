@@ -108,3 +108,10 @@ def test_web_next_link_detects_textual_pagination():
     )
     assert candidates == []
     assert next_urls == ["https://licitacoespublicas.blog.br/page/2/"]
+
+
+def test_extract_web_article_rejects_spa_shell():
+    shell = '<html><body><div id="root"></div><script src="/assets/app.js"></script></body></html>'
+    import pytest
+    with pytest.raises(RuntimeError, match="casca de portal/SPA"):
+        extract_web_article(shell.encode("utf-8"), "https://example.com/")

@@ -13,7 +13,7 @@ from qdrant_client import QdrantClient, models
 
 import config
 from index_manifest import read_manifest, write_manifest
-from metadata import extract_metadata
+from metadata import embedding_metadata_prefix, extract_metadata
 from chunking import build_structural_chunks
 
 PAGE_BREAK = '\f'
@@ -143,18 +143,38 @@ def _page(offset, starts):
     return number
 
 
+def document_id_for(document, metadata=None):
+    metadata = metadata or extract_metadata('', document)
+    explicit = metadata.get('document_id')
+    if explicit:
+        return str(explicit)
+    source_id = str(metadata.get('source_id') or 'local')
+    return f'{source_id}::{document.stem}'
+
+
 def build_chunks(document, pages):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
+    doc_id = document_id_for(document, meta)
     starts = _starts(pages)
+    prefix = embedding_metadata_prefix(meta)
     output = []
     for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP):
         if not chunk['text'].strip():
             continue
         start = chunk['start']
         end = start + len(chunk['text'])
+        hierarchy = chunk.get('hierarchy_path') or []
+        hierarchy_label = ' > '.join(str(item) for item in hierarchy)
+        page_content = prefix
+        if hierarchy_label:
+            page_content += f' [HIERARQUIA: {hierarchy_label}]'
+        page_content += '\\n' + chunk.get('page_content', chunk['text'])
         output.append({
             **chunk,
+            'text': chunk['text'],
+            'page_content': page_content,
+            'doc_id': doc_id,
             'source': document.name,
             'source_id': meta.get('source_id') or document.stem,
             'page': _page(start, starts),
@@ -180,34 +200,51 @@ def ensure_collection(client):
         )
 
 
-def delete_doc(client, name):
-    client.delete(
-        collection_name=config.COLLECTION_NAME,
-        points_selector=models.FilterSelector(
-            filter=models.Filter(
-                must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))]
-            )
-        ),
-        wait=True,
+def _filter_for_doc_id(doc_id):
+    return models.Filter(
+        must=[models.FieldCondition(key='doc_id', match=models.MatchValue(value=doc_id))]
     )
 
 
-def source_point_ids(client, name):
+def _point_ids_for_filter(client, filters):
     ids = set()
     offset = None
-    source_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=name))])
     while True:
         points, offset = client.scroll(
             collection_name=config.COLLECTION_NAME,
-            scroll_filter=source_filter,
+            scroll_filter=filters,
             limit=256,
             offset=offset,
             with_payload=False,
             with_vectors=False,
         )
-        ids.update(point.id for point in points)
+        for point in points:
+            ids.update(
+                value for value in (
+                    getattr(point, 'id', None),
+                    (point.payload or {}).get('source') if getattr(point, 'payload', None) else None,
+                )
+                if value is not None
+            )
         if offset is None:
             break
+    return ids
+
+
+def source_point_ids(client, doc_id, legacy_source=None):
+    ids = _point_ids_for_filter(client, _filter_for_doc_id(doc_id))
+    if legacy_source and str(legacy_source) != str(doc_id):
+        ids.update(
+            _point_ids_for_filter(
+                client,
+                models.Filter(
+                    must=[models.FieldCondition(
+                        key='source',
+                        match=models.MatchValue(value=str(legacy_source)),
+                    )]
+                ),
+            )
+        )
     return ids
 
 
@@ -222,31 +259,90 @@ def delete_point_ids(client, point_ids):
     )
 
 
-def prune_stale_documents(client, active_names):
+def delete_doc(client, doc_id, legacy_source=None):
+    delete_point_ids(client, source_point_ids(client, doc_id, legacy_source=legacy_source))
+
+
+def _restore_points(client, points):
+    if not points:
+        return
+    restored = [
+        models.PointStruct(id=point.id, vector=point.vector, payload=point.payload or {})
+        for point in points
+    ]
+    client.upsert(collection_name=config.COLLECTION_NAME, points=restored, wait=True)
+
+
+def replace_document_points(client, doc_id, new_points, legacy_source=None):
+    if not new_points:
+        raise ValueError(f'Nenhum chunk produzido para {doc_id}.')
+    old_points = []
+    seen_ids = set()
+    filters = [_filter_for_doc_id(doc_id)]
+    if legacy_source and str(legacy_source) != str(doc_id):
+        filters.append(models.Filter(
+            must=[models.FieldCondition(key='source', match=models.MatchValue(value=str(legacy_source)))]
+        ))
+    for point_filter in filters:
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=config.COLLECTION_NAME,
+                scroll_filter=point_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+            for point in points:
+                if point.id not in seen_ids:
+                    seen_ids.add(point.id)
+                    old_points.append(point)
+            if offset is None:
+                break
+    old_ids = {point.id for point in old_points}
+    try:
+        delete_point_ids(client, old_ids)
+        client.upsert(collection_name=config.COLLECTION_NAME, points=new_points, wait=True)
+    except Exception as exc:
+        try:
+            delete_point_ids(client, {point.id for point in new_points})
+            _restore_points(client, old_points)
+        except Exception as rollback_exc:
+            raise RuntimeError(
+                f'Falha na substituição de {doc_id} e rollback também falhou: {rollback_exc}'
+            ) from exc
+        raise RuntimeError(f'Falha na substituição de {doc_id}; versão anterior restaurada.') from exc
+    return old_ids
+
+
+def prune_stale_documents(client, active_names, *, delete=True, return_ids=False):
     if not config.RAG_PRUNE_STALE:
-        return 0
+        return [] if return_ids else 0
     if not client.collection_exists(config.COLLECTION_NAME):
-        return 0
-    indexed_names = set()
+        return [] if return_ids else 0
+    indexed_ids = set()
     offset = None
     while True:
         points, offset = client.scroll(
             collection_name=config.COLLECTION_NAME,
             limit=256,
             offset=offset,
-            with_payload=['source'],
+            with_payload=True,
             with_vectors=False,
         )
         for point in points:
-            source = point.payload.get('source') if point.payload else None
-            if source:
-                indexed_names.add(str(source))
+            payload = point.payload or {}
+            doc_id = payload.get('doc_id') or payload.get('source')
+            if doc_id:
+                indexed_ids.add(str(doc_id))
         if offset is None:
             break
-    stale = sorted(indexed_names - active_names)
-    for name in stale:
-        delete_doc(client, name)
-    return len(stale)
+    stale = sorted(indexed_ids - {str(item) for item in active_names})
+    if delete:
+        for doc_id in stale:
+            delete_doc(client, doc_id)
+    return stale if return_ids else len(stale)
 
 
 def validate_dense_vectors(vectors, expected):
@@ -276,15 +372,18 @@ def main():
     dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
-    active_names = {document.name for document in files}
-    stale_removed = prune_stale_documents(client, active_names)
+    active_names = {document_id_for(document) for document in files}
+    stale_removed = prune_stale_documents(client, active_names, delete=False, return_ids=True)
+    deleted_manifest = []
     cache, errors, skipped = read_cache(), [], 0
+    document_manifest = {}
+    revocations = []
 
     for document in files:
         digest = file_hash(document)
-        count_filter = models.Filter(
-            must=[models.FieldCondition(key='source', match=models.MatchValue(value=document.name))]
-        )
+        document_meta = extract_metadata('', document)
+        doc_id = document_id_for(document, document_meta)
+        count_filter = _filter_for_doc_id(doc_id)
         entry = cache.get(document.name)
         indexed_count = client.count(
             config.COLLECTION_NAME,
@@ -298,6 +397,16 @@ def main():
             and indexed_count > 0
         ):
             skipped += 1
+            document_manifest[doc_id] = {
+                'sha256': digest,
+                'chunks': indexed_count,
+                'source': document.name,
+                'source_id': document_meta.get('source_id'),
+                'regime_juridico': document_meta.get('regime_juridico'),
+                'status': document_meta.get('status'),
+            }
+            if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
+                revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
             continue
         try:
             pages = extract_pages(document)
@@ -306,10 +415,9 @@ def main():
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
                 continue
-            old_ids = source_point_ids(client, document.name)
-            dense_vectors = list(dense.embed(['passage: ' + item['text'] for item in chunks]))
+            dense_vectors = list(dense.embed([item['page_content'] for item in chunks]))
             validate_dense_vectors(dense_vectors, len(chunks))
-            sparse_vectors = list(sparse.embed([item['text'] for item in chunks]))
+            sparse_vectors = list(sparse.embed([item['page_content'] for item in chunks]))
             if len(sparse_vectors) != len(chunks):
                 raise RuntimeError(
                     f'quantidade de embeddings esparsas inválida: {len(sparse_vectors)} != {len(chunks)}'
@@ -319,7 +427,7 @@ def main():
                 point_id = str(
                     uuid.uuid5(
                         uuid.NAMESPACE_URL,
-                        f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}",
+                        f"{doc_id}|{item['unit_id']}|{item['chunk_index']}|{item['page_content']}",
                     )
                 )
                 points.append(
@@ -335,10 +443,18 @@ def main():
                         payload=item,
                     )
                 )
-            new_ids = {point.id for point in points}
-            client.upsert(collection_name=config.COLLECTION_NAME, points=points, wait=True)
-            delete_point_ids(client, old_ids - new_ids)
-            cache[document.name] = {'sha256': digest, 'chunks': len(points)}
+            replace_document_points(client, doc_id, points, legacy_source=document.name)
+            cache[document.name] = {'sha256': digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
+            document_manifest[doc_id] = {
+                'sha256': digest,
+                'chunks': len(points),
+                'source': document.name,
+                'source_id': document_meta.get('source_id'),
+                'regime_juridico': document_meta.get('regime_juridico'),
+                'status': document_meta.get('status'),
+            }
+            if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
+                revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
             write_cache(cache)
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
@@ -352,7 +468,21 @@ def main():
         print('Arquivos com erro (não indexados):', ', '.join(errors))
         print('Manifesto não atualizado porque a indexação terminou parcialmente; execute novamente após corrigir as fontes.')
         return 1
-    write_manifest()
+    for name, entry in cache.items():
+        if isinstance(entry, dict) and entry.get('doc_id') and name in {document.name for document in files}:
+            document_manifest.setdefault(str(entry['doc_id']), {**entry, 'source': name})
+    for doc_id in stale_removed:
+        delete_doc(client, doc_id)
+        deleted_manifest.append({
+            'doc_id': doc_id,
+            'reason': 'stale',
+            'timestamp': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+        })
+    write_manifest(
+        documents=document_manifest,
+        deletions=deleted_manifest,
+        revocations=revocations,
+    )
     return 0
 
 

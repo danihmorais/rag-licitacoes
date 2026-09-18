@@ -1,6 +1,6 @@
 import requests
 
-from .base import LLMError, LLMProvider
+from .base import LLMProvider, LLMProviderError, raise_provider_error
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -26,6 +26,7 @@ class OpenAICompatibleProvider(LLMProvider):
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if self.api_key:
             headers['Authorization'] = f'Bearer {self.api_key}'
+        response = None
         try:
             response = requests.post(
                 f'{self.base_url}/chat/completions',
@@ -35,20 +36,14 @@ class OpenAICompatibleProvider(LLMProvider):
             )
             response.raise_for_status()
             data = response.json()
-        except requests.HTTPError as exc:
-            detail = response.text[:500].strip() if response.text else ''
-            suffix = f' — {detail}' if detail else ''
-            raise LLMError(
-                f'Falha HTTP no provedor OpenAI-compatible ({response.status_code}): {exc}{suffix}'
-            ) from exc
         except requests.RequestException as exc:
-            raise LLMError(f'Falha no provedor OpenAI-compatible ({self.base_url}): {exc}') from exc
+            raise_provider_error(exc, f'OpenAI-compatible {self.base_url}', response)
         except ValueError as exc:
-            raise LLMError('O provedor retornou uma resposta JSON inválida.') from exc
+            raise LLMProviderError('O provedor retornou uma resposta JSON inválida.') from exc
         try:
             answer = data['choices'][0]['message']['content']
         except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError('Resposta inesperada do provedor OpenAI-compatible.') from exc
+            raise LLMProviderError('Resposta inesperada do provedor OpenAI-compatible.') from exc
         if isinstance(answer, list):
             fragments = []
             for part in answer:
@@ -61,5 +56,5 @@ class OpenAICompatibleProvider(LLMProvider):
                     fragments.append(str(text))
             answer = ''.join(fragments)
         if not isinstance(answer, str) or not answer.strip():
-            raise LLMError('O provedor não retornou conteúdo textual na resposta.')
+            raise LLMProviderError('O provedor não retornou conteúdo textual na resposta.')
         return answer.strip()
