@@ -433,7 +433,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
             raise RuntimeError('TCESP exige Playwright para o fallback da pesquisa renderizada.') from exc
 
         params = [
-            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('tipoDocumento', '2'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
             ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
             ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
             ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
@@ -562,7 +562,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
 
     def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
         params = [
-            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('tipoDocumento', '2'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
             ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
             ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
             ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
