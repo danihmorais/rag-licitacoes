@@ -33,6 +33,24 @@ WEB_ADMIN_EXCLUDE = (
 )
 
 
+def _looks_like_spa_shell(soup):
+    body_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
+    app_nodes = soup.find_all(id=re.compile(r"^(root|app|__next|application)$", re.I))
+    scripts = soup.find_all("script")
+    return len(body_text) < 300 and bool(app_nodes) and bool(scripts)
+
+
+def _text_density(text):
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    substantive = [line for line in str(text or "").splitlines() if len(line.strip()) >= 40]
+    return len(value), len(substantive)
+
+
+def _valid_article_text(text):
+    chars, substantive = _text_density(text)
+    return chars >= 800 and substantive >= 6
+
+
 def _parse_web_date(value):
     if not value:
         return None
@@ -135,6 +153,8 @@ def _article_text_node(soup):
 
 def extract_web_article(raw_html, final_url):
     soup = BeautifulSoup(raw_html, "html.parser")
+    if _looks_like_spa_shell(soup):
+        raise RuntimeError("casca de portal/SPA sem conteúdo textual")
     jsonld = list(_jsonld_objects(soup))
     time_values = [tag.get("datetime") for tag in soup.find_all("time") if tag.get("datetime")]
     visible_hint = soup.get_text(" ", strip=True)[:2500]
@@ -431,7 +451,7 @@ def sync_web_articles(session, source, check=False):
         try:
             _, final, raw, _ = fetch(session, candidate)
             article = extract_web_article(raw, final)
-            if not article["title"] or len(article["texto"]) < 800 or not article["date_publicacao"]:
+            if not article["title"] or not _valid_article_text(article["texto"]) or not article["date_publicacao"]:
                 continue
             if article["date_publicacao"] < min_date:
                 continue
