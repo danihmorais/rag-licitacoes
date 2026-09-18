@@ -33,7 +33,9 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m playwright install --with-deps chromium
       - name: Testar jurisprudência oficial em tempo real
-        run: python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "licitação" --limit 1 --strict
+        run: |
+          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "licitação" --limit 1 --strict
+          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "Lei 14.133 licitação contrato administrativo" --limit 1 --strict
       - name: Publicar cache da coleta quando houver falha
         if: failure()
         uses: actions/upload-artifact@v6
