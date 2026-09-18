@@ -460,10 +460,9 @@ class TCESPAdapter(JurisprudenciaAdapter):
             None,
         )
         if table is None:
-            total = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', soup.get_text(' ', strip=True), re.I)
-            if total and int(total.group(1).replace('.', '')) > 0:
-                raise RuntimeError('TCESP informou registros mas a tabela de resultados não está no HTML esperado.')
-            return []
+            raise RuntimeError(
+                'Estrutura da pesquisa TCESP alterada: tabela de resultados com coluna N° Proc./Nº Proc. não foi encontrada.'
+            )
         records: list[JurisprudenciaRecord] = []
         pending_excerpt = False
         for row in table.find_all('tr'):
@@ -520,9 +519,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
                     print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
             seen.add(process)
             records.append(record)
-            if len(records) >= limit:
-                break
-        return records
+        return records[:limit]
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         seen: set[str] = set()
