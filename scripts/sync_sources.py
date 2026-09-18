@@ -601,7 +601,14 @@ def _web_link_candidates(raw_html, base_url, source):
             continue
         label = anchor.get_text(' ', strip=True)
         rel = ' '.join(anchor.get('rel', [])) if anchor.get('rel') else ''
-        if rel.casefold() == 'next' or re.search(r'\b(?:próxima|proxima|seguinte|next|mais)\s+p(?:á|a)gina\b', label, re.I):
+        label_norm = re.sub(r'\s+', ' ', label).strip().casefold()
+        is_next = (
+            rel.casefold() == 'next'
+            or bool(re.search(r'\b(?:próxima|proxima|seguinte|next)\s+p(?:á|a)gina\b', label, re.I))
+            or label_norm in {'próxima', 'proxima', 'seguinte', 'next', 'older posts', 'older', 'mais antigas'}
+            or bool(re.search(r'(?:/page/\d+/?$|[?&]pagina=\d+\b|/pagina/\d+/?$)', urlparse(absolute).path + ('?' + urlparse(absolute).query if urlparse(absolute).query else ''), re.I))
+        )
+        if is_next:
             next_urls.append(absolute)
             continue
         if _is_web_article_url(source, absolute) and absolute not in seen:
@@ -871,9 +878,6 @@ if __name__ == '__main__':
             if not article['title'] or len(article['texto']) < 800 or not article['date_publicacao']:
                 continue
             if article['date_publicacao'] < min_date:
-                old_count += 1
-                if old_count >= 20:
-                    break
                 continue
             if not _web_topic_matches(source, article):
                 continue
