@@ -50,11 +50,14 @@ def test_tcu_adapter_uses_current_public_rest_contract():
     assert records[0].url_oficial.endswith("/4802024")
 
 def test_tcesp_adapter_parses_result_table():
-    html = '''<html><body><table><tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr><tr><td>Relatório / Voto</td><td>5600/989/25</td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Exame de edital</td><td>2025</td></tr><tr><td colspan="8">Trechos localizados no documento:</td></tr><tr><td colspan="8">A exigência de qualificação técnica deve ser pertinente e proporcional.</td></tr></table></body></html>'''.encode("utf-8")
+    html = '''<html><body><table><tbody>
+    <tr class="borda-superior"><td>Relatório / Voto</td><td>5600/989/25</td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Exame de edital</td><td>2025</td></tr>
+    <tr><td colspan="8"><ul><li>licitação e qualificação técnica devem ser pertinentes e proporcionais.</li></ul></td></tr>
+    </tbody></table></body></html>'''.encode("utf-8")
     records = TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
-    assert len(records) == 1 and records[0].numero_processo == "5600/989/25" and records[0].ementa == "A exigência de qualificação técnica deve ser pertinente e proporcional."
-
-
+    assert len(records) == 1
+    assert records[0].numero_processo == "5600/989/25"
+    assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
 
 def test_tcm_sp_parser_handles_current_official_document_link():
     html = '''<html><body>
@@ -208,11 +211,11 @@ def test_query_terms_preserve_legal_numbers():
 
 
 def test_tcesp_falls_back_from_long_query_to_meaningful_term():
-    empty = '<html><body><table><tr><th>N° Proc.</th><th>Autuação</th></tr></table></body></html>'.encode("utf-8")
-    result = '''<html><body><table>
-    <tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr>
-    <tr><td>Acórdão</td><td>1000/989/26</td><td>17/09/2026</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Lei 14.133 contratação pública</td></tr>
-    </table></body></html>'''.encode("utf-8")
+    empty = '<html><body><table><tbody><tr class="borda-superior"><td>Doc.</td><td>N° Proc.</td><td>Autuação</td></tr></tbody></table></body></html>'.encode("utf-8")
+    result = '''<html><body><table><tbody>
+    <tr class="borda-superior"><td>Acórdão</td><td>1000/989/26</td><td>17/09/2026</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Lei 14.133 contratação pública</td><td>2026</td></tr>
+    <tr><td colspan="8"><ul><li>licitação Lei 14.133 contratação pública</li></ul></td></tr>
+    </tbody></table></body></html>'''.encode("utf-8")
     records = TCESPAdapter(FakeSession([
         FakeResponse(empty, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
         FakeResponse(empty, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/"),
@@ -220,7 +223,6 @@ def test_tcesp_falls_back_from_long_query_to_meaningful_term():
     ])).search("Lei 14.133 licitação contrato administrativo", 1)
     assert len(records) == 1
     assert records[0].numero_processo == "1000/989/26"
-
 
 def test_tcm_sp_parses_current_portal_document_link():
     html = '''<html><body>
