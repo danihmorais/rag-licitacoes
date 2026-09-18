@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from jurisprudencia.collector import STJAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, _discover_form, save_record
+from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, TJSPAdapter, TRIBUNALS, _discover_form, save_record
 from jurisprudencia.schema import JurisprudenciaRecord
 
 
@@ -81,3 +81,68 @@ def test_session_id_does_not_create_a_new_document_version():
     a = JurisprudenciaRecord(tribunal="TCESP", numero_processo="1/989/26", url_oficial="https://www.tce.sp.gov.br/jurisprudencia/pesquisar;jsessionid=ABC123?acao=Executa")
     b = JurisprudenciaRecord(tribunal="TCESP", numero_processo="1/989/26", url_oficial="https://www.tce.sp.gov.br/jurisprudencia/pesquisar;jsessionid=XYZ987?acao=Executa")
     assert a.calculate_version_sha256() == b.calculate_version_sha256()
+
+
+def test_all_required_tribunals_have_adapters():
+    assert TRIBUNALS == ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp', 'tjsp')
+
+
+def test_stf_adapter_uses_current_search_endpoint_and_result_links():
+    html = b'<html><body><a href="/pages/search/sjur524003/false">RE 1.234.567/SP - Direito Administrativo</a></body></html>'
+    records = STFAdapter(
+        FakeSession([
+            FakeResponse(
+                html,
+                content_type="text/html",
+                url="https://jurisprudencia.stf.jus.br/pages/search?base=acordaos",
+            )
+        ])
+    ).search("direito administrativo", 1)
+    assert len(records) == 1
+    assert records[0].tribunal == "STF"
+    assert records[0].numero_processo == "1.234.567/SP"
+
+
+def test_tjsp_adapter_uses_esaj_second_degree_search_and_result_pdf():
+    html = b'''<html><body>
+    <form action="/cjsg/resultadoCompleta.do" method="get">
+      <label for="pesquisaLivre">Pesquisa Livre</label>
+      <input id="pesquisaLivre" name="pesquisaLivre" type="text">
+    </form>
+    </body></html>'''
+    result = b'''<html><body><table>
+      <tr><td>Acórdão</td><td>
+        <a href="/cjsg/getArquivo.do?cdAcordao=15096525&cdForo=0">Inteiro teor</a>
+        1017109-50.2020.8.26.0053
+      </td><td>Órgão julgador: 5ª Câmara de Direito Público</td>
+      <td>Relator: Des. Exemplo</td><td>Data do julgamento: 07/12/2023</td>
+      <td>Licitação e contrato administrativo</td></tr>
+    </table></body></html>'''
+    records = TJSPAdapter(
+        FakeSession([
+            FakeResponse(html, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+            FakeResponse(result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+        ])
+    ).search("licitação contrato administrativo", 1)
+    assert len(records) == 1
+    assert records[0].tribunal == "TJSP"
+    assert records[0].numero_processo == "1017109-50.2020.8.26.0053"
+    assert records[0].url_oficial.endswith("cdForo=0")
+
+
+def test_tjsp_save_record_has_state_scope(tmp_path: Path):
+    record = JurisprudenciaRecord(
+        tribunal="TJSP",
+        numero_processo="1017109-50.2020.8.26.0053",
+        ementa="Licitação e contrato administrativo.",
+        url_oficial="https://esaj.tjsp.jus.br/cjsg/getArquivo.do?cdAcordao=15096525&cdForo=0",
+    )
+    path = save_record(record, tmp_path)
+    data = path.with_suffix(".json").read_text(encoding="utf-8")
+    assert '"jurisdicao": "estadual_sp"' in data
+    assert '"esfera": "estadual"' in data
+    assert '"tribunal": "TJSP"' in data
+
+
+def test_tcm_sp_uses_current_portal_endpoint():
+    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao"
