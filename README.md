@@ -53,7 +53,18 @@ Constituição Estadual; Lei 10.177/1998; LC 709/1993; Lei 6.544/1989; regulamen
 
 ### Controle, orientação e jurisprudência
 
-TCU, TCESP, STJ, STF e TCM-SP são tratados exclusivamente pelo coletor estruturado de jurisprudência. PNCP, Compras.gov.br, Compras SP e PGE-SP usam o sincronizador apenas para localizar documentos; páginas-índice são index_only=True e não entram como evidência. No caso da PGE-SP, o portal funciona como índice de descoberta: pareceres/PDFs efetivamente localizados são armazenados como documentos vinculados e podem entrar como evidência. Jurisprudência, parecer, manual, guia e orientação nunca são tratados como texto legal.
+TCU, TCESP, STJ, STF, TCM-SP e TJSP são tratados pelo coletor estruturado de jurisprudência. As pesquisas usam as bases oficiais de cada órgão e salvam registros individuais como documentos indexáveis; páginas genéricas de pesquisa não entram no índice como evidência. O inteiro teor é opcional: com `--with-content`, o coletor tenta recuperar o documento integral quando a própria fonte oferece PDF ou página de detalhe. Jurisprudência, parecer, manual, guia e orientação nunca são tratados como texto legal.
+
+| Fonte | Coletor | Indexação | Inteiro teor |
+|---|---|---|---|
+| TCU | Sim | Sim | Opcional |
+| TCESP | Sim | Sim | Opcional |
+| STJ | Sim | Sim | Opcional |
+| STF | Sim | Sim | Opcional |
+| TCM-SP | Sim | Sim | Opcional |
+| TJSP | Sim | Sim | Opcional |
+
+O TCU possui webservice oficial de acórdãos com URL de texto, DOC e PDF. O TCESP mantém pesquisa de jurisprudência com resultados de decisões, súmulas e boletins. O STJ disponibiliza o SCON para pesquisa de jurisprudência. O TCM-SP mantém consulta oficial de julgados e jurisprudência. O TJSP disponibiliza a Consulta Completa do segundo grau, incluindo Pesquisa Livre no inteiro teor dos acórdãos.
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
@@ -73,15 +84,16 @@ O TCU é coletado pela interface oficial de dados abertos de acórdãos, o TCESP
 
 ```bash
 python -m jurisprudencia.collector --query "licitação" --limit 25
-python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tcm-sp --query "contrato administrativo" --limit 50 --detail
+python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tcm-sp,tjsp --query "contrato administrativo" --limit 50 --detail --with-content --strict
 ```
 
-Na execução normal de `ingest.py`, a coleta pode ocorrer automaticamente. Configure:
+Na execução normal de `ingest.py`, a coleta pode ocorrer automaticamente. Com `RAG_JURISPRUDENCIA_STRICT=1`, a ingestão falha se algum dos tribunais solicitados não produzir nenhum registro na coleta temática.
 
 ```text
 RAG_SYNC_JURISPRUDENCIA=1
 RAG_JURISPRUDENCIA_QUERY=licitação
 RAG_JURISPRUDENCIA_LIMIT=25
+RAG_JURISPRUDENCIA_STRICT=1
 ```
 
 Cada registro recebe `version_sha256`, de modo que uma alteração do conteúdo não apaga silenciosamente a versão anterior.
