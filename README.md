@@ -168,7 +168,7 @@ python ingest.py
 python query.py
 ```
 
-O projeto é validado em Python 3.12 no CI. Essa escolha é intencional para o `fastembed 0.8.0`; há relatos de falha no `SparseTextEmbedding` com Python 3.14.2 em Linux.
+O projeto é validado em Python 3.12 no CI. O runtime local exige o perfil GPU do FastEmbed e `CUDAExecutionProvider`; a versão do Python é mantida fixa no CI para reprodutibilidade.
 
 ## GitHub Actions
 
