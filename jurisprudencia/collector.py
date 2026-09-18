@@ -436,35 +436,27 @@ class TCESPAdapter(JurisprudenciaAdapter):
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-        body = soup.find('tbody')
-        rows = soup.find_all('tr') if body is None else body.find_all('tr', recursive=False)
         records: list[JurisprudenciaRecord] = []
+        rows = soup.find_all('tr', class_=re.compile(r'(^|\s)borda-superior(\s|$)', re.I))
         for row in rows:
-            classes = {str(c).casefold() for c in (row.get('class') or [])}
-            if 'borda-superior' not in classes:
+            cells = row.find_all('td')
+            if len(cells) < 7:
                 continue
-            cells = row.find_all('td', recursive=False)
-            if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', clean_text(cells[2].get_text(' ', strip=True))):
-                continue
-            next_row = row.find_next_sibling('tr')
-            excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
-            main_text = clean_text(row.get_text(' ', strip=True))
-            combined = f'{main_text} {excerpt_text}'
-            if _query_score(variant, combined) <= 0:
+            date_text = clean_text(cells[2].get_text(' ', strip=True))
+            if not re.search(r'\d{2}/\d{2}/\d{4}', date_text):
                 continue
             process = clean_text(cells[1].get_text(' ', strip=True))
             if not process or process in seen:
                 continue
-            detail_anchor = next((a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href'])), None)
+            next_row = row.find_next_sibling('tr')
+            trecho_items = [] if next_row is None else [clean_text(li.get_text(' ', strip=True)) for li in next_row.find_all('li')]
+            trecho_items = [item for item in trecho_items if item]
+            trecho = ' '.join(trecho_items) if trecho_items else ''
+            detail_anchor = next((a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href']).casefold()), None)
             detail_url = urljoin(response.url, str(detail_anchor['href'])) if detail_anchor else response.url
-            trecho = excerpt_text
-            if next_row is not None:
-                trecho_items = [clean_text(li.get_text(' ', strip=True)) for li in next_row.find_all('li')]
-                if trecho_items:
-                    trecho = ' '.join(x for x in trecho_items if x)
             record = JurisprudenciaRecord(
-                tribunal='TCESP', numero_processo=process, data_autuacao=clean_text(cells[2].get_text(' ', strip=True)),
-                ementa=trecho, assunto=_as_list(clean_text(cells[5].get_text(' ', strip=True)), clean_text(cells[6].get_text(' ', strip=True))),
+                tribunal='TCESP', numero_processo=process, data_autuacao=date_text, ementa=trecho,
+                assunto=_as_list(clean_text(cells[5].get_text(' ', strip=True)), clean_text(cells[6].get_text(' ', strip=True))),
                 tipo_decisao=clean_text(cells[0].get_text(' ', strip=True)) or 'Jurisprudência',
                 origem='TCESP — Pesquisa de Jurisprudência', url_oficial=detail_url,
                 partes=_as_list(clean_text(cells[3].get_text(' ', strip=True)), clean_text(cells[4].get_text(' ', strip=True))),
@@ -488,7 +480,9 @@ class TCESPAdapter(JurisprudenciaAdapter):
             form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
             form_fields = ' '.join(str(field.get('name') or '') for field in form.find_all(['input', 'textarea'])).casefold() if form is not None else ''
             if form is None or not ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
-                raise RuntimeError('Estrutura da pesquisa TCESP alterada: resultados e formulário oficial não foram encontrados.')
+                title = clean_text(soup.title.get_text(' ', strip=True)) if soup.title else ''
+                preview = clean_text(soup.get_text(' ', strip=True))[:1000]
+                raise RuntimeError(f'Estrutura da pesquisa TCESP alterada: resultados e formulário oficial não foram encontrados (title={title!r}, preview={preview!r}).')
         return records[:limit]
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         seen: set[str] = set()
@@ -978,6 +972,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
             raise RuntimeError('TCM-SP usa a consulta jurisprudencial dinâmica do portal atual; instale playwright e o Chromium.') from exc
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+            requests_seen: list[str] = []
             try:
                 page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
                 navigation_error = None
@@ -994,6 +989,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                             page.wait_for_timeout(2500 * (attempt + 1))
                 if navigation_error is not None:
                     raise RuntimeError(f'TCM-SP: falha de conexão no portal oficial após 3 tentativas: {navigation_error}')
+                page.on('request', lambda request: requests_seen.append(request.url) if request.resource_type in {'xhr', 'fetch'} else None)
                 page.wait_for_timeout(1500)
                 if not self._fill_by_label(page, ('Todas estas palavras',), query):
                     raise RuntimeError('TCM-SP: campo "Todas estas palavras" não foi encontrado no portal oficial.')
@@ -1001,25 +997,31 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                 clicked = False
                 for index in range(buttons.count()):
                     button = buttons.nth(index)
-                    label = clean_text(
-                        str(button.inner_text() or '') + ' ' +
-                        str(button.get_attribute('value') or '') + ' ' +
-                        str(button.get_attribute('aria-label') or '')
-                    ).casefold()
-                    if 'pesquis' in label or 'buscar' in label:
-                        button.click()
+                    label = clean_text(str(button.inner_text() or '') + ' ' + str(button.get_attribute('value') or '') + ' ' + str(button.get_attribute('aria-label') or '')).casefold()
+                    if 'buscar' in label or 'pesquis' in label:
+                        button.click(timeout=15000)
                         clicked = True
                         break
                 if not clicked:
-                    raise RuntimeError('TCM-SP: botão de pesquisa não foi encontrado no portal oficial.')
+                    raise RuntimeError('TCM-SP: botão Buscar/Pesquisar não foi encontrado no portal oficial.')
                 try:
-                    page.wait_for_selector('a[href*="/Management/AcordaoItem/Documento/"]', timeout=10000)
+                    page.wait_for_load_state('networkidle', timeout=30000)
                 except PlaywrightTimeoutError:
-                    page.wait_for_timeout(2500)
-                return self._parse_records(page.content().encode('utf-8'), page.url, query)[:limit]
+                    pass
+                page.wait_for_timeout(3000)
+                parsed = self._parse_records(page.content().encode('utf-8'), page.url, query)[:limit]
+                if parsed:
+                    return parsed
+                resources = page.evaluate("""() => performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes(location.origin)).slice(-40)""")
+                visible = clean_text(page.locator('body').inner_text())[:2000]
+                links = page.evaluate("""() => Array.from(document.querySelectorAll('a[href]')).map(a => ({href:a.href,text:(a.innerText||'').trim()})).filter(x => x.href.includes('/Acordao') || x.href.toLowerCase().includes('documento')).slice(0,50)""")
+                hrefs = [str(item.get('href') or '') for item in links if isinstance(item, dict)]
+                raise RuntimeError(
+                    f'TCM-SP consulta concluiu sem registros. AJAX={requests_seen[-40:]!r}; resources={resources!r}; '
+                    f'links={hrefs!r}; body={visible!r}'
+                )
             finally:
                 browser.close()
-
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         records: list[JurisprudenciaRecord] = []
         for variant in _query_variants(query):
