@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 import requests
 try:
@@ -27,7 +27,7 @@ import config
 from .schema import JurisprudenciaRecord
 
 DEFAULT_QUERY = 'licitação'
-TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp', 'tjsp')
+TRIBUNALS = ('tcu', 'tcesp', 'stj', 'stf', 'tjsp')
 HEADERS = {
     'User-Agent': 'rag-licitacoes-jurisprudencia/2.0 (+https://github.com/danihmorais/rag-licitacoes)',
     'Accept': 'text/html,application/xhtml+xml,application/json,application/pdf;q=0.9,*/*;q=0.8',
@@ -426,61 +426,260 @@ class TCESPAdapter(JurisprudenciaAdapter):
     tribunal = 'TCESP'
     endpoint = 'https://www.tce.sp.gov.br/jurisprudencia/pesquisar'
 
+    def _browser_records(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError('TCESP exige Playwright para o fallback da pesquisa renderizada.') from exc
+
+        params = [
+            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('tipoDocumento', '2'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+            ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
+            ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
+            ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
+        ]
+        url = f'{self.endpoint}?{urlencode(params)}'
+        process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled'],
+            )
+            try:
+                page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
+                relevant_requests: list[str] = []
+                page._rag_relevant_requests = relevant_requests
+                def capture_request(request):
+                    target = request.url.casefold()
+                    if any(token in target for token in ('jurisprud', 'pesquis', 'resultado', 'acord', '.json', 'api/')):
+                        relevant_requests.append(f'{request.method} {request.url}')
+                page.on('request', capture_request)
+                page.on(
+                    'response',
+                    lambda response: relevant_requests.append(
+                        f'RESPONSE {response.status} {response.url}'
+                    ) if any(
+                        token in response.url.casefold()
+                        for token in ('jurisprud', 'pesquis', 'resultado', 'acord', '.json', 'api/')
+                    ) else None,
+                )
+                page.goto(url, wait_until='domcontentloaded', timeout=120000)
+                try:
+                    page.wait_for_function(
+                        "() => document.body && document.body.innerText.includes('Foram encontrados')",
+                        timeout=15000,
+                    )
+                except Exception:
+                    page.wait_for_timeout(2500)
+
+                soup = BeautifulSoup(page.content(), 'html.parser')
+                records: list[JurisprudenciaRecord] = []
+                for process_anchor in soup.find_all('a', href=True):
+                    process = clean_text(process_anchor.get_text(' ', strip=True))
+                    if not process_pattern.fullmatch(process) or process in seen:
+                        continue
+
+                    container = process_anchor.find_parent('tr')
+                    if container is None:
+                        container = process_anchor.find_parent(['li', 'article', 'td', 'div', 'section'])
+                    if container is None:
+                        container = process_anchor.parent
+                    container_text = clean_text(container.get_text(' ', strip=True)) if container is not None else process
+                    date_match = re.search(r'[0-9]{2}/[0-9]{2}/[0-9]{4}', container_text)
+                    if date_match is None and container is not None:
+                        parent = container
+                        for _ in range(4):
+                            parent = parent.parent
+                            if parent is None:
+                                break
+                            candidate = clean_text(parent.get_text(' ', strip=True))
+                            date_match = re.search(r'[0-9]{2}/[0-9]{2}/[0-9]{4}', candidate)
+                            if date_match:
+                                container = parent
+                                container_text = candidate
+                                break
+                    if date_match is None:
+                        continue
+
+                    detail_anchor = next(
+                        (
+                            item for item in container.find_all('a', href=True)
+                            if '/jurisprudencia/exibir' in str(item.get('href'))
+                        ),
+                        None,
+                    )
+                    detail_url = (
+                        urljoin(page.url, str(detail_anchor.get('href')))
+                        if detail_anchor is not None
+                        else urljoin(page.url, str(process_anchor.get('href')))
+                    )
+                    record = JurisprudenciaRecord(
+                        tribunal='TCESP',
+                        numero_processo=process,
+                        data_autuacao=date_match.group(0),
+                        ementa=container_text,
+                        assunto=[],
+                        tipo_decisao='Jurisprudência',
+                        origem='TCESP — Pesquisa de Jurisprudência',
+                        url_oficial=detail_url,
+                    )
+                    if detail or with_content:
+                        try:
+                            detail_text, final, content = _detail_enrichment(
+                                self.session,
+                                detail_url,
+                                with_content=with_content,
+                            )
+                            record.url_oficial = final
+                            record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
+                            record.data_publicacao = _label_value(
+                                detail_text,
+                                ('Data de Publicação', 'Data da Publicação'),
+                            ) or record.data_publicacao
+                            record.ementa = _extract_ementa(content or detail_text) or record.ementa
+                            if with_content and content:
+                                record.inteiro_teor = content
+                        except Exception as exc:
+                            print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
+                    seen.add(process)
+                    records.append(record)
+                    if len(records) >= limit:
+                        return records[:limit]
+                if not records:
+                    print('TCESP browser diagnostic: nenhum processo localizado no DOM.')
+                    print('TCESP browser diagnostic: título:', clean_text(page.title()))
+                    print(
+                        'TCESP browser diagnostic: URLs relevantes:',
+                        ' | '.join(
+                            str(item)
+                            for item in getattr(page, '_rag_relevant_requests', [])[-40:]
+                        ),
+                    )
+                return records[:limit]
+            finally:
+                browser.close()
+
     def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
         params = [
-            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('tipoDocumento', '2'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
             ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
             ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
             ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
         ]
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
-        raw_html = getattr(response, 'text', None) or response.content.decode(getattr(response, 'encoding', None) or 'utf-8', errors='replace')
-        tbody_start = raw_html.find('<tbody')
-        tbody_end = raw_html.find('</tbody>')
-        if tbody_start < 0 or tbody_end < 0:
-            raise RuntimeError('TCESP não retornou um tbody de resultados no HTML oficial.')
-        body = raw_html[tbody_start:tbody_end + len('</tbody>')]
-        lines = re.split(r'<tr(?=[\s>])', body)[1:]
+        raw_html = getattr(response, 'text', None) or response.content.decode(
+            getattr(response, 'encoding', None) or 'utf-8',
+            errors='replace',
+        )
+        soup = BeautifulSoup(raw_html, 'html.parser')
+        visible_text = clean_text(soup.get_text(' ', strip=True))
+        total_match = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', visible_text, re.I)
+        total = int(total_match.group(1).replace('.', '')) if total_match else None
         records: list[JurisprudenciaRecord] = []
-        for index, line in enumerate(lines):
-            tds = [match.group(1) for match in re.finditer(r'<td[^>]*>([\s\S]*?)(?=</td>|<td|</tr>)', line)]
-            if len(tds) < 7:
+
+        for row in soup.find_all('tr'):
+            cells = row.find_all(['th', 'td'], recursive=False)
+            if len(cells) < 7:
                 continue
-            process = clean_text(re.sub(r'<a[^>]*>|</a>', '', tds[1]))
-            if not process or re.fullmatch(r'N[º°]?\s*Proc\.?', process, re.I):
+            values = [clean_text(cell.get_text(' ', strip=True)) for cell in cells]
+            process_index = next(
+                (
+                    position for position, value in enumerate(values)
+                    if re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', value)
+                ),
+                None,
+            )
+            if process_index is None:
                 continue
+            process = values[process_index]
             if process in seen:
                 continue
-            date_text = clean_text(tds[2]) if len(tds) > 2 else ''
-            next_line = lines[index + 1] if index + 1 < len(lines) else ''
-            trecho_items = [clean_text(match.group(1)) for match in re.finditer(r'<li>([\s\S]*?)</li>', next_line)]
-            trecho = ' '.join(item for item in trecho_items if item)
-            pdf_match = re.search(r"href=['\"]([^'\"]*\.pdf)['\"]", line, re.I)
-            pdf_url = urljoin(response.url, pdf_match.group(1)) if pdf_match else ''
-            process_url = response.url
-            process_match = re.search(r"href=['\"]([^'\"]*jurisprudencia/exibir[^'\"]*)['\"]", line, re.I)
-            if process_match:
-                process_url = urljoin(response.url, process_match.group(1))
+            date_index = next(
+                (
+                    position for position, value in enumerate(values)
+                    if re.search(r'\d{2}/\d{2}/\d{4}', value)
+                ),
+                None,
+            )
+            if date_index is None:
+                continue
+            date_text = values[date_index]
+
+            next_row = row.find_next_sibling('tr')
+            trecho_items = []
+            if next_row is not None:
+                trecho_items = [
+                    clean_text(item.get_text(' ', strip=True))
+                    for item in next_row.find_all('li')
+                    if clean_text(item.get_text(' ', strip=True))
+                ]
+            trecho = ' '.join(trecho_items)
+            if not trecho:
+                excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
+                if excerpt_text and 'trechos localizados' not in excerpt_text.casefold():
+                    trecho = excerpt_text
+
+            detail_anchor = next(
+                (
+                    anchor for anchor in row.find_all('a', href=True)
+                    if '/jurisprudencia/exibir' in str(anchor.get('href'))
+                ),
+                None,
+            )
+            pdf_anchor = next(
+                (
+                    anchor for anchor in row.find_all('a', href=True)
+                    if urlparse(urljoin(response.url, str(anchor.get('href')))).path.casefold().endswith('.pdf')
+                ),
+                None,
+            )
+            process_url = (
+                urljoin(response.url, str(detail_anchor.get('href')))
+                if detail_anchor is not None
+                else response.url
+            )
+            pdf_url = (
+                urljoin(response.url, str(pdf_anchor.get('href')))
+                if pdf_anchor is not None
+                else ''
+            )
+
+            fallback_ementa = values[6] if len(values) > 6 else ''
             record = JurisprudenciaRecord(
                 tribunal='TCESP',
                 numero_processo=process,
                 data_autuacao=date_text,
-                ementa=trecho,
-                assunto=_as_list(clean_text(tds[5]) if len(tds) > 5 else '', clean_text(tds[6]) if len(tds) > 6 else ''),
-                tipo_decisao=clean_text(tds[0]) or 'Jurisprudência',
+                ementa=trecho or fallback_ementa,
+                assunto=_as_list(
+                    values[5] if len(values) > 5 else '',
+                    values[6] if len(values) > 6 else '',
+                ),
+                tipo_decisao=values[0] or 'Jurisprudência',
                 origem='TCESP — Pesquisa de Jurisprudência',
                 url_oficial=process_url,
-                partes=_as_list(clean_text(tds[3]) if len(tds) > 3 else '', clean_text(tds[4]) if len(tds) > 4 else ''),
+                partes=_as_list(
+                    values[3] if len(values) > 3 else '',
+                    values[4] if len(values) > 4 else '',
+                ),
             )
-            if pdf_url and not record.url_oficial:
+            if pdf_url and record.url_oficial == response.url:
                 record.url_oficial = pdf_url
             if detail or with_content:
                 try:
-                    detail_text, final, content = _detail_enrichment(self.session, process_url, with_content=with_content)
+                    detail_text, final, content = _detail_enrichment(
+                        self.session,
+                        process_url,
+                        with_content=with_content,
+                    )
                     record.url_oficial = final
                     record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
-                    record.data_publicacao = _label_value(detail_text, ('Data de Publicação', 'Data da Publicação')) or record.data_publicacao
+                    record.data_publicacao = _label_value(
+                        detail_text,
+                        ('Data de Publicação', 'Data da Publicação'),
+                    ) or record.data_publicacao
+                    record.ementa = _extract_ementa(content or detail_text) or record.ementa
                     if with_content and content:
                         record.inteiro_teor = content
                 except Exception as exc:
@@ -489,17 +688,118 @@ class TCESPAdapter(JurisprudenciaAdapter):
             records.append(record)
             if len(records) >= limit:
                 return records[:limit]
-        total = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', clean_text(raw_html), re.I)
-        if total and int(total.group(1).replace('.', '')) > 0:
-            sample = [clean_text(re.sub(r'<[^>]+>', ' ', item))[:500] for item in lines[:8] if '<td' in item]
-            raise RuntimeError(
-                f'TCESP informou {total.group(1)} registros, mas o parser não encontrou linhas documentais estruturadas. '
-                f'Amostra: {sample!r}'
+
+        if not records:
+            process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+$')
+            for anchor in soup.find_all('a', href=True):
+                process = clean_text(anchor.get_text(' ', strip=True))
+                if not process_pattern.fullmatch(process) or process in seen:
+                    continue
+
+                container = anchor.find_parent('tr')
+                if container is None:
+                    container = anchor.find_parent(['li', 'article', 'td', 'div', 'section'])
+                if container is None:
+                    container = anchor.parent
+                container_text = clean_text(container.get_text(' ', strip=True)) if container is not None else process
+
+                date_match = re.search(r'\d{2}/\d{2}/\d{4}', container_text)
+                if date_match is None and container is not None:
+                    parent = container
+                    for _ in range(4):
+                        parent = parent.parent
+                        if parent is None:
+                            break
+                        candidate = clean_text(parent.get_text(' ', strip=True))
+                        date_match = re.search(r'\d{2}/\d{2}/\d{4}', candidate)
+                        if date_match:
+                            container = parent
+                            container_text = candidate
+                            break
+                if date_match is None:
+                    continue
+
+                detail_url = urljoin(response.url, str(anchor.get('href') or ''))
+                detail_anchor = next(
+                    (
+                        item for item in container.find_all('a', href=True)
+                        if '/jurisprudencia/exibir' in str(item.get('href'))
+                    ),
+                    None,
+                )
+                if detail_anchor is not None:
+                    detail_url = urljoin(response.url, str(detail_anchor.get('href')))
+
+                date_text = date_match.group(0)
+                trecho = ''
+                excerpt = container.find_next_sibling()
+                if excerpt is not None:
+                    trecho_items = [
+                        clean_text(item.get_text(' ', strip=True))
+                        for item in excerpt.find_all('li')
+                        if clean_text(item.get_text(' ', strip=True))
+                    ]
+                    trecho = ' '.join(trecho_items)
+                if not trecho:
+                    trecho_match = re.search(
+                        r'Trechos localizados no documento:\s*(.+?)(?=\s*(?:\d+\s*/\s*\d+\s*/\s*\d+|$))',
+                        container_text,
+                        re.I,
+                    )
+                    if trecho_match:
+                        trecho = clean_text(trecho_match.group(1))
+
+                record = JurisprudenciaRecord(
+                    tribunal='TCESP',
+                    numero_processo=process,
+                    data_autuacao=date_text,
+                    ementa=trecho or container_text,
+                    assunto=[],
+                    tipo_decisao='Jurisprudência',
+                    origem='TCESP — Pesquisa de Jurisprudência',
+                    url_oficial=detail_url,
+                )
+                seen.add(process)
+                records.append(record)
+                if len(records) >= limit:
+                    return records[:limit]
+
+        browser_error = None
+        if total is not None and total > 0 and not records:
+            try:
+                browser_records = self._browser_records(
+                    variant,
+                    limit,
+                    detail=detail,
+                    with_content=with_content,
+                    seen=seen,
+                )
+            except Exception as exc:
+                browser_error = exc
+                browser_records = []
+            if browser_records:
+                return browser_records[:limit]
+            detail_message = (
+                f'; fallback Playwright falhou: {type(browser_error).__name__}: {browser_error}'
+                if browser_error
+                else '; fallback Playwright não encontrou links de processos'
             )
-        form = BeautifulSoup(raw_html, 'html.parser').find('form')
-        if form is None:
-            raise RuntimeError('Estrutura da pesquisa TCESP alterada: formulário oficial não encontrado.')
-        return []
+            raise RuntimeError(
+                f'TCESP informou {total} registros para a consulta {variant!r}, '
+                'mas não foi possível localizar uma linha de resultado processável'
+                f'{detail_message}.'
+            )
+
+        if total is None:
+            form = soup.find('form')
+            form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
+            form_fields = ' '.join(
+                str(field.get('name') or '')
+                for field in form.find_all(['input', 'textarea'])
+            ).casefold() if form is not None else ''
+            if form is None or not ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
+                raise RuntimeError('Estrutura da pesquisa TCESP alterada: resultados e formulário oficial não foram encontrados.')
+        return records[:limit]
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         seen: set[str] = set()
@@ -513,7 +813,10 @@ class TCESPAdapter(JurisprudenciaAdapter):
             )
             if records:
                 return records[:limit]
-        raise RuntimeError(f'TCESP não retornou resultados estruturados para {query!r}; a página oficial pode ter mudado ou a consulta não encontrou registros.')
+        raise RuntimeError(
+            f'TCESP não retornou resultados estruturados para {query!r}; '
+            'a página oficial pode ter mudado ou a consulta não encontrou registros.'
+        )
 
 
 class STJAdapter(JurisprudenciaAdapter):
@@ -794,24 +1097,46 @@ class STFAdapter(JurisprudenciaAdapter):
                 if not token:
                     raise RuntimeError('STF não emitiu aws-waf-token após abrir o portal; desafio do AWS WAF alterado ou indisponível.')
                 for attempt in range(2):
-                    result = page.evaluate(
-                        """async ({url, body}) => {
-                            const response = await fetch(url, {
-                                method: 'POST',
-                                headers: {
-                                    'content-type': 'application/json',
-                                    'accept': 'application/json, text/plain, */*'
-                                },
-                                body: JSON.stringify(body)
-                            });
-                            return {
-                                status: response.status,
-                                waf: response.headers.get('x-amzn-waf-action'),
-                                text: await response.text()
-                            };
-                        }""",
-                        {'url': self.endpoint, 'body': body},
-                    )
+                    result = None
+                    for evaluate_attempt in range(4):
+                        try:
+                            result = page.evaluate(
+                                """async ({url, body}) => {
+                                    const response = await fetch(url, {
+                                        method: 'POST',
+                                        headers: {
+                                            'content-type': 'application/json',
+                                            'accept': 'application/json, text/plain, */*'
+                                        },
+                                        body: JSON.stringify(body)
+                                    });
+                                    return {
+                                        status: response.status,
+                                        waf: response.headers.get('x-amzn-waf-action'),
+                                        text: await response.text()
+                                    };
+                                }""",
+                                {'url': self.endpoint, 'body': body},
+                            )
+                            break
+                        except Exception as exc:
+                            if 'Execution context was destroyed' not in str(exc):
+                                raise
+                            page.wait_for_timeout(500)
+                            if evaluate_attempt == 3:
+                                page.reload(wait_until='domcontentloaded', timeout=120000)
+                                page.wait_for_timeout(1000)
+                                for _ in range(60):
+                                    token = next(
+                                        (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
+                                        None,
+                                    )
+                                    if token:
+                                        break
+                                    page.wait_for_timeout(500)
+                                if not token:
+                                    raise RuntimeError('STF não recuperou aws-waf-token após navegação durante a consulta.')
+                            continue
                     if int(result.get('status') or 0) in {202, 403, 405}:
                         if attempt == 0:
                             page.reload(wait_until='domcontentloaded', timeout=120000)

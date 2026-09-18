@@ -8,7 +8,7 @@ from .collector import TRIBUNALS, collect, save_record
 from .queries import DEFAULT_QUERIES, parse_queries
 
 
-def collect_batch(tribunals, queries, limit, *, detail=False, with_content=False, output_dir=None, strict=False):
+def collect_batch(tribunals, queries, limit, *, detail=False, with_content=False, output_dir=None, strict=False, min_records_per_tribunal=1):
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     output = []
     seen = set()
@@ -37,12 +37,18 @@ def collect_batch(tribunals, queries, limit, *, detail=False, with_content=False
         save_record(record, output_dir)
 
     for tribunal in tribunals:
-        if counts.get(tribunal, 0) == 0:
+        if counts.get(tribunal, 0) < min_records_per_tribunal:
             failures.add(tribunal)
     if strict and failures:
-        raise RuntimeError(
-            'Tribunais sem registros na coleta completa: ' + ', '.join(sorted(failures))
+        details = ', '.join(
+            f'{tribunal}={counts.get(tribunal, 0)}' for tribunal in sorted(failures)
         )
+        raise RuntimeError(
+            f'Tribunais abaixo do mínimo de {min_records_per_tribunal} registros: {details}'
+        )
+    print('Registros por tribunal: ' + ', '.join(
+        f'{tribunal}={counts.get(tribunal, 0)}' for tribunal in tribunals
+    ))
     return output
 
 
@@ -53,9 +59,12 @@ def main() -> int:
     parser.add_argument('--limit', type=int, default=config.JURISPRUDENCIA_LIMIT)
     parser.add_argument('--detail', action='store_true')
     parser.add_argument('--with-content', action='store_true')
-    parser.add_argument('--strict', action='store_true', help='Falha se algum tribunal solicitado não produzir registros na coleta.')
+    parser.add_argument('--strict', action='store_true', help='Falha se algum tribunal solicitado ficar abaixo do mínimo de registros.')
+    parser.add_argument('--min-records-per-tribunal', type=int, default=1)
     parser.add_argument('--output-dir', type=Path, default=None)
     args = parser.parse_args()
+    if args.min_records_per_tribunal < 1:
+        parser.error('--min-records-per-tribunal deve ser >= 1')
     tribunals = tuple(item.strip().lower() for item in args.tribunais.split(',') if item.strip())
     unknown = [item for item in tribunals if item not in TRIBUNALS]
     if unknown:
@@ -70,6 +79,7 @@ def main() -> int:
         with_content=args.with_content,
         output_dir=args.output_dir,
         strict=args.strict,
+        min_records_per_tribunal=args.min_records_per_tribunal,
     )
     print(f'Consultas: {len(queries)} | Registros únicos: {len(records)}')
     return 0 if records else 1

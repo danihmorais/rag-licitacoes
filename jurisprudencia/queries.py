@@ -52,8 +52,6 @@ DEFAULT_QUERIES = (
     "São Paulo processo administrativo Lei 10.177/1998 administração estadual",
     "São Paulo Município Prefeitura licitação contrato administrativo Decreto 62.100 Lei 14.133",
     "São Paulo Tribunal de Contas controle externo licitação contrato administrativo",
-    "TCM-SP Tribunal de Contas do Município de São Paulo licitação contrato fiscalização",
-    "TCM-SP súmulas jurisprudência contratos administrativos",
     "TJSP Tribunal de Justiça de São Paulo licitação contrato administrativo Lei 14.133",
     "TJSP licitação edital habilitação contratação pública",
     "TJSP contrato administrativo equilíbrio econômico financeiro sanção",
