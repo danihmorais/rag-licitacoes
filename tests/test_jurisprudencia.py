@@ -199,7 +199,7 @@ def test_tcm_sp_missing_browser_results_are_reported_as_failure(monkeypatch):
 
 def test_tcesp_missing_results_table_is_reported_as_structure_failure():
     html = "<html><body><p>A página do TCESP foi redesenhada.</p></body></html>".encode("utf-8")
-    with pytest.raises(RuntimeError, match="Estrutura da pesquisa TCESP|TCESP não retornou resultados estruturados"):
+    with pytest.raises(RuntimeError, match="Estrutura da pesquisa TCESP|TCESP não retornou registros|tbody de resultados"):
         TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
 
 

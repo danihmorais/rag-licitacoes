@@ -448,12 +448,12 @@ class TCESPAdapter(JurisprudenciaAdapter):
             if len(tds) < 7:
                 continue
             process = clean_text(re.sub(r'<a[^>]*>|</a>', '', tds[1]))
-            if not re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', process):
+            if not process or re.fullmatch(r'N[º°]?\s*Proc\.?', process, re.I):
                 continue
             if process in seen:
                 continue
             date_text = clean_text(tds[2]) if len(tds) > 2 else ''
-            next_line = lines[index + 1] if index + 1 < len(lines) and not re.search(r'<td[^>]*>\s*[^<]*\d+\s*/\s*\d+\s*/\s*\d+\s*</td>', lines[index + 1]) else ''
+            next_line = lines[index + 1] if index + 1 < len(lines) else ''
             trecho_items = [clean_text(match.group(1)) for match in re.finditer(r'<li>([\s\S]*?)</li>', next_line)]
             trecho = ' '.join(item for item in trecho_items if item)
             pdf_match = re.search(r"href=['\"]([^'\"]*\.pdf)['\"]", line, re.I)
@@ -491,7 +491,11 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 return records[:limit]
         total = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', clean_text(raw_html), re.I)
         if total and int(total.group(1).replace('.', '')) > 0:
-            raise RuntimeError('TCESP informou registros, mas o parser não encontrou as linhas borda-superior esperadas.')
+            sample = [clean_text(re.sub(r'<[^>]+>', ' ', item))[:500] for item in lines[:8] if '<td' in item]
+            raise RuntimeError(
+                f'TCESP informou {total.group(1)} registros, mas o parser não encontrou linhas documentais estruturadas. '
+                f'Amostra: {sample!r}'
+            )
         form = BeautifulSoup(raw_html, 'html.parser').find('form')
         if form is None:
             raise RuntimeError('Estrutura da pesquisa TCESP alterada: formulário oficial não encontrado.')
