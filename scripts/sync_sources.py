@@ -489,11 +489,11 @@ def _article_text_node(soup):
 
 def extract_web_article(raw_html, final_url):
     soup = BeautifulSoup(raw_html, 'html.parser')
+    jsonld = list(_jsonld_objects(soup))
     for tag in soup(['script', 'style', 'noscript', 'nav', 'header', 'footer', 'form', 'aside', 'iframe']):
         tag.decompose()
     for tag in soup.find_all(class_=re.compile(r'(share|social|related|coment|comment|advert|banner|cookie|newsletter|menu|breadcrumb|sidebar)', re.I)):
         tag.decompose()
-    jsonld = list(_jsonld_objects(soup))
     title = None
     body_from_jsonld = None
     published = None
@@ -680,6 +680,7 @@ def sync_web_articles(session, source, check=False):
         visited_pages.add(page_url)
         try:
             kind, final, raw, text = fetch(session, page_url)
+            successful_discoveries += 1
         except Exception as exc:
             print(f'  aviso: descoberta {page_url} falhou: {type(exc).__name__}: {exc}')
             continue
@@ -834,6 +835,7 @@ if __name__ == '__main__':
     accepted = []
     fetched = 0
     seen_articles = set()
+    successful_discoveries = 0
     old_count = 0
     for candidate in candidates:
         if len(accepted) >= target or fetched >= target * 6:
@@ -873,7 +875,7 @@ if __name__ == '__main__':
                 source,
                 article['url'],
                 'web_article',
-                article['texto'].encode('utf-8'),
+                raw,
                 _article_cache_text(source, article),
                 document_id,
                 article['title'],
@@ -889,6 +891,8 @@ if __name__ == '__main__':
             )
 
     removed = cleanup_source_cache(source['id'], kept_ids) if not check else 0
+    if successful_discoveries == 0:
+        return False, f'FAIL {source["id"]}: nenhuma página de descoberta acessível', kept_ids
     return True, (
         f'OK {source["id"]}: {len(accepted)} matérias aceitas '
         f'(>= {min_date.isoformat()}, limite {target}, candidatas {len(candidates)}, '
