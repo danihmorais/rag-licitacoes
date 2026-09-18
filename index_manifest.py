@@ -16,7 +16,14 @@ def chunking_algorithm_sha256():
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def current_manifest():
+COMPATIBILITY_KEYS = (
+    'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
+    'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
+    'context_neighbors', 'max_context_chars', 'chunking_algorithm_sha256', 'schema',
+)
+
+
+def current_manifest(documents=None, deletions=None, revocations=None):
     return {
         'index_version': config.INDEX_VERSION,
         'collection_name': config.COLLECTION_NAME,
@@ -31,7 +38,11 @@ def current_manifest():
         'context_neighbors': config.CONTEXT_NEIGHBORS,
         'max_context_chars': config.MAX_CONTEXT_CHARS,
         'chunking_algorithm_sha256': chunking_algorithm_sha256(),
-        'schema': 'unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash',
+        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/page_content',
+        'manifest_schema_version': 2,
+        'documents': documents or {},
+        'deletions': deletions or [],
+        'revocations': revocations or [],
     }
 
 
@@ -61,8 +72,11 @@ def _atomic_write_json(path, value):
             os.unlink(temp_name)
 
 
-def write_manifest():
-    _atomic_write_json(config.INDEX_MANIFEST_PATH, current_manifest())
+def write_manifest(documents=None, deletions=None, revocations=None):
+    _atomic_write_json(
+        config.INDEX_MANIFEST_PATH,
+        current_manifest(documents=documents, deletions=deletions, revocations=revocations),
+    )
 
 
 def validate_manifest():
@@ -70,7 +84,7 @@ def validate_manifest():
     if stored is None:
         raise IndexCompatibilityError('O índice existe, mas não há index_manifest.json. Reindexe o banco.')
     expected = current_manifest()
-    differences = {key: (stored.get(key), value) for key, value in expected.items() if stored.get(key) != value}
+    differences = {key: (stored.get(key), expected.get(key)) for key in COMPATIBILITY_KEYS if stored.get(key) != expected.get(key)}
     if differences:
         details = ', '.join(f'{key}: índice={old!r}, configuração={new!r}' for key, (old, new) in differences.items())
         raise IndexCompatibilityError('Configuração incompatível com o índice: ' + details + '. Reindexe o banco.')
