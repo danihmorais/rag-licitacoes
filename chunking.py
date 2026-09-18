@@ -215,49 +215,32 @@ def build_structural_chunks(full_text, max_size, overlap):
                 position = max(found + len(piece) - overlap, found + 1)
             continue
 
-        caput_piece = caput
+        caput_chunks = _split_text(caput, max_size, overlap)
         caput_index = 0
-        prefix = caput_piece.strip()
-        caput_chunks = _split_text(unit['text'][:len(unit['text'])], max_size, overlap) if len(prefix) > max_size else [unit['text']]
-        if len(prefix) <= max_size:
+        caput_position = 0
+        for piece in caput_chunks:
+            found = caput.find(piece, max(0, caput_position - overlap))
+            uncertain = found < 0
+            found = caput_position if uncertain else found
             output.append({
-                'text': caput_piece,
-                'full_unit_text': caput_piece,
-                'page_content': caput_piece,
+                'text': piece,
+                'full_unit_text': caput if len(caput) <= max_size else None,
+                'page_content': piece,
                 'unit_kind': 'artigo',
                 'unit_ref': ref,
                 'unit_id': unit_id,
                 'chunk_index': caput_index,
                 'unit_length': len(unit['text']),
-                'start': unit['start'],
-                'page_uncertain': False,
+                'start': unit['start'] + found,
+                'page_uncertain': uncertain,
                 'hierarchy_headers': headers,
                 'hierarchy_path': article_header + ['CAPUT'],
                 'parent_caput': caput,
                 'segment_kind': 'caput',
                 'segment_ref': None,
             })
-        else:
-            for piece in caput_chunks:
-                found = unit['text'].find(piece)
-                output.append({
-                    'text': piece,
-                    'full_unit_text': None,
-                    'page_content': piece,
-                    'unit_kind': 'artigo',
-                    'unit_ref': ref,
-                    'unit_id': unit_id,
-                    'chunk_index': caput_index,
-                    'unit_length': len(unit['text']),
-                    'start': unit['start'] + (found if found >= 0 else 0),
-                    'page_uncertain': found < 0,
-                    'hierarchy_headers': headers,
-                    'hierarchy_path': article_header + ['CAPUT'],
-                    'parent_caput': caput,
-                    'segment_kind': 'caput',
-                    'segment_ref': None,
-                })
-                caput_index += 1
+            caput_position = max(found + len(piece) - overlap, found + 1)
+            caput_index += 1
 
         next_index = max(1, caput_index)
         for child_index, (kind, child_ref, child_text, child_start) in enumerate(children):
