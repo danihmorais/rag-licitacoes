@@ -206,10 +206,9 @@ def _filter_for_doc_id(doc_id):
     )
 
 
-def source_point_ids(client, doc_id):
+def _point_ids_for_filter(client, filters):
     ids = set()
     offset = None
-    filters = _filter_for_doc_id(doc_id)
     while True:
         points, offset = client.scroll(
             collection_name=config.COLLECTION_NAME,
@@ -225,6 +224,23 @@ def source_point_ids(client, doc_id):
     return ids
 
 
+def source_point_ids(client, doc_id, legacy_source=None):
+    ids = _point_ids_for_filter(client, _filter_for_doc_id(doc_id))
+    if legacy_source and str(legacy_source) != str(doc_id):
+        ids.update(
+            _point_ids_for_filter(
+                client,
+                models.Filter(
+                    must=[models.FieldCondition(
+                        key='source',
+                        match=models.MatchValue(value=str(legacy_source)),
+                    )]
+                ),
+            )
+        )
+    return ids
+
+
 def delete_point_ids(client, point_ids):
     point_ids = list(point_ids)
     if not point_ids:
@@ -236,8 +252,8 @@ def delete_point_ids(client, point_ids):
     )
 
 
-def delete_doc(client, doc_id):
-    delete_point_ids(client, source_point_ids(client, doc_id))
+def delete_doc(client, doc_id, legacy_source=None):
+    delete_point_ids(client, source_point_ids(client, doc_id, legacy_source=legacy_source))
 
 
 def _restore_points(client, points):
@@ -250,24 +266,33 @@ def _restore_points(client, points):
     client.upsert(collection_name=config.COLLECTION_NAME, points=restored, wait=True)
 
 
-def replace_document_points(client, doc_id, new_points):
+def replace_document_points(client, doc_id, new_points, legacy_source=None):
     if not new_points:
         raise ValueError(f'Nenhum chunk produzido para {doc_id}.')
     old_points = []
-    offset = None
-    filters = _filter_for_doc_id(doc_id)
-    while True:
-        points, offset = client.scroll(
-            collection_name=config.COLLECTION_NAME,
-            scroll_filter=filters,
-            limit=256,
-            offset=offset,
-            with_payload=True,
-            with_vectors=True,
-        )
-        old_points.extend(points)
-        if offset is None:
-            break
+    seen_ids = set()
+    filters = [_filter_for_doc_id(doc_id)]
+    if legacy_source and str(legacy_source) != str(doc_id):
+        filters.append(models.Filter(
+            must=[models.FieldCondition(key='source', match=models.MatchValue(value=str(legacy_source)))]
+        ))
+    for point_filter in filters:
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=config.COLLECTION_NAME,
+                scroll_filter=point_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+            for point in points:
+                if point.id not in seen_ids:
+                    seen_ids.add(point.id)
+                    old_points.append(point)
+            if offset is None:
+                break
     old_ids = {point.id for point in old_points}
     try:
         delete_point_ids(client, old_ids)
@@ -411,7 +436,7 @@ def main():
                         payload=item,
                     )
                 )
-            replace_document_points(client, doc_id, points)
+            replace_document_points(client, doc_id, points, legacy_source=document.name)
             cache[document.name] = {'sha256': digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
             document_manifest[doc_id] = {
                 'sha256': digest,
