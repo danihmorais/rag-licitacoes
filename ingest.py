@@ -316,7 +316,7 @@ def replace_document_points(client, doc_id, new_points, legacy_source=None):
     return old_ids
 
 
-def prune_stale_documents(client, active_names, *, delete=True):
+def prune_stale_documents(client, active_names, *, delete=True, return_ids=False):
     if not config.RAG_PRUNE_STALE:
         return []
     if not client.collection_exists(config.COLLECTION_NAME):
@@ -373,7 +373,7 @@ def main():
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
     active_names = {document_id_for(document) for document in files}
-    stale_removed = prune_stale_documents(client, active_names, delete=False)
+    stale_removed = prune_stale_documents(client, active_names, delete=False, return_ids=True)
     deleted_manifest = []
     cache, errors, skipped = read_cache(), [], 0
     document_manifest = {}
