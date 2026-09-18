@@ -23,7 +23,7 @@ HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 CHILD_RE = re.compile(
-    r"^\s*(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)-–—]|[a-z]\s*[.)-–—]|\d+\s*[.)-–—])\s*",
+    r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)-–—]|[a-z]\s*[.)-–—]|\d+\s*[.)-–—])[ \t]*",
     re.IGNORECASE,
 )
 
