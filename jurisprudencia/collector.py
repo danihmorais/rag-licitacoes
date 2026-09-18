@@ -755,6 +755,10 @@ def _find_query_form(soup: BeautifulSoup, keywords: tuple[str, ...]):
     return candidates[0] if candidates else None
 
 
+def _discover_form(soup: BeautifulSoup):
+    return _find_query_form(soup, ('jurisprud', 'pesquisa'))
+
+
 def adapters(session):
     return {
         'tcu': TCUAdapter(session),
