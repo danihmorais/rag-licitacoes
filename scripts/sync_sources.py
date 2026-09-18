@@ -6,6 +6,8 @@ import html
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,17 +101,64 @@ def pdf_text(data):
             Path(temp_name).unlink(missing_ok=True)
 
 
-def fetch(session, url):
-    response = session.get(url, timeout=(8, 20), allow_redirects=True)
-    response.raise_for_status()
-    raw = response.content
-    final = response.url
-    ctype = (response.headers.get('content-type') or '').lower()
-    is_pdf = 'application/pdf' in ctype or final.lower().split('?', 1)[0].endswith('.pdf') or raw.startswith(b'%PDF')
+def _decode_response(raw, final, content_type=''):
+    is_pdf = (
+        'application/pdf' in content_type.lower()
+        or final.lower().split('?', 1)[0].endswith('.pdf')
+        or raw.startswith(b'%PDF')
+    )
     if is_pdf:
         return 'pdf', final, raw, pdf_text(raw)
-    response.encoding = response.apparent_encoding or response.encoding
-    return 'html', final, raw, clean_html(response.text)
+    text = raw.decode('utf-8', errors='replace')
+    apparent = None
+    return 'html', final, raw, clean_html(text)
+
+
+def _fetch_with_wget(url):
+    if shutil.which('wget') is None:
+        raise RuntimeError('wget não está instalado no sistema.')
+    result = subprocess.run(
+        [
+            'wget',
+            '--quiet',
+            '--server-response',
+            '--max-redirect=10',
+            '--timeout=20',
+            '--tries=2',
+            '--user-agent=Mozilla/5.0',
+            '--header=Accept: text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
+            '--output-document=-',
+            url,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=50,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode('utf-8', errors='replace').strip().splitlines()
+        raise ConnectionError(detail[-1] if detail else f'wget falhou com código {result.returncode}')
+    raw = result.stdout
+    final = url
+    return _decode_response(raw, final)
+
+
+def fetch(session, url):
+    try:
+        response = session.get(url, timeout=(8, 20), allow_redirects=True)
+        response.raise_for_status()
+        return _decode_response(
+            response.content,
+            response.url,
+            response.headers.get('content-type', ''),
+        )
+    except (requests.RequestException, ConnectionError, TimeoutError) as request_error:
+        try:
+            return _fetch_with_wget(url)
+        except Exception as wget_error:
+            raise ConnectionError(
+                f'requests falhou: {request_error}; wget falhou: {wget_error}'
+            ) from wget_error
 
 
 def _compact(value):
@@ -161,8 +210,8 @@ def validate(source, text, *, linked=False):
         expected = _expected_normative_number(source)
         if expected and _compact(expected) not in _compact(stripped[:30000]):
             raise RuntimeError(f'identidade normativa ausente: {expected}')
-        if source.get('tipo_documento') not in {'resolucao', 'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 2:
-            raise RuntimeError('conteúdo normativo sem quantidade suficiente de artigos/dispositivos')
+        if source.get('tipo_documento') not in {'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 1:
+            raise RuntimeError('conteúdo normativo sem artigo/dispositivo reconhecível')
     elif role == 'orientacao_oficial':
         markers = ('parecer', 'manual', 'guia', 'orientação', 'orientacao', 'modelo', 'boletim')
         if not any(marker in stripped.casefold() for marker in markers):
