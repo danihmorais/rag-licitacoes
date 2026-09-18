@@ -61,3 +61,24 @@ def test_validator_accepts_structured_normative_content():
 def test_validator_accepts_official_guidance_content():
     guidance = (ROOT / "tests" / "fixtures" / "pge_guidance.txt").read_text(encoding="utf-8")
     validate(next(item for item in SOURCES if item["id"] == "sp-pge-pareceres"), guidance, linked=True)
+
+def test_current_source_endpoints():
+    catalog = {item["id"]: item for item in SOURCES}
+    assert catalog["pncp"]["urls"][0] == "https://www.gov.br/pncp/pt-br/pncp/legislacao"
+    assert catalog["tcesp-srp"]["urls"][0] == "https://www.tce.sp.gov.br/legislacao/deliberacao/dispoe-sobre-diretrizes-e-procedimentos-serem-observados-pelos-orgaos-e"
+    assert catalog["agu-modelos-14133"]["urls"][0].endswith("/modelos/licitacoesecontratos/14133")
+    assert catalog["agu-tic"]["urls"][0].endswith("/modelos/licitacoesecontratos/14133/bens-e-servicos-de-tic")
+    assert catalog["pl-discovery-camara"]["urls"][0] == "https://www.camara.leg.br/legislacao/busca?geral=&origem=C%C3%A2mara+dos+Deputados"
+    assert catalog["pl-discovery-leis-2026"]["urls"][0].endswith("/_leis2026.htm")
+    assert catalog["pl-discovery-lc-atualizadas"]["urls"][0].endswith("/quadro_lcp.htm")
+
+
+def test_validator_accepts_short_discovery_page():
+    source = next(item for item in SOURCES if item["id"] == "pl-discovery-lexml")
+    validate(source, "LexML\nTudo\nLegislação\nJurisprudência\nProposições Legislativas")
+
+
+def test_validator_rejects_empty_discovery_page():
+    source = next(item for item in SOURCES if item["id"] == "pl-discovery-lexml")
+    with pytest.raises(RuntimeError, match="conteúdo vazio"):
+        validate(source, "   ")

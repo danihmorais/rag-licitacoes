@@ -191,6 +191,12 @@ def _looks_like_shell(text):
 
 def validate(source, text, *, linked=False, final_url=None):
     stripped = text.strip()
+    if source.get('index_only') and not linked:
+        if not stripped:
+            raise RuntimeError('conteúdo vazio')
+        if _looks_like_shell(stripped):
+            raise RuntimeError('conteúdo aparenta ser apenas casca de portal/SPA')
+        return
     if len(stripped) < 800:
         raise RuntimeError(f'conteúdo insuficiente: {len(stripped)} caracteres')
     substantive = _substantive_lines(stripped)
@@ -198,8 +204,6 @@ def validate(source, text, *, linked=False, final_url=None):
         raise RuntimeError(f'conteúdo sem densidade substantiva suficiente: {len(substantive)} linhas')
     if _looks_like_shell(stripped):
         raise RuntimeError('conteúdo aparenta ser apenas casca de portal/SPA')
-    if source.get('index_only') and not linked:
-        return
 
     role = source.get('source_role')
     if role == 'norma':
