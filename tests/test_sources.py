@@ -113,3 +113,18 @@ def test_validator_accepts_official_guidance_when_marker_is_only_in_link_metadat
         final_url="https://www.gov.br/agu/documentos/00009.pdf",
         document_title="PARECER REFERENCIAL n. 00009/2025/GERTEC/ELIC/PGF/AGU",
     )
+
+
+def test_agu_model_collection_sources_exclude_irrelevant_cartilha():
+    html = (
+        '<main>'
+        '<a href="modelos/edital.pdf">Edital</a>'
+        '<a href="/assuntos-1/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
+        '</main>'
+    )
+    catalog = {item["id"]: item for item in SOURCES}
+    for source_id in {"agu-contratacao-direta", "agu-pregao-concorrencia"}:
+        source = catalog[source_id]
+        assert discover_links(html, source["urls"][0], source) == [
+            ("https://www.gov.br/agu/pt-br/composicao/cgu/cgu/modelos/licitacoesecontratos/14133/modelos/edital.pdf", "Edital")
+        ]
