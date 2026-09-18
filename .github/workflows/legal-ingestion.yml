@@ -1,8 +1,6 @@
 name: Ingestão completa da legislação
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:
