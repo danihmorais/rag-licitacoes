@@ -428,99 +428,68 @@ class TCESPAdapter(JurisprudenciaAdapter):
 
     def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
         params = [
-            ('_tipoBuscaTxt', 'on'),
-            ('_tipoDocumento', '1'),
-            ('_relator', '1'),
-            ('_auditor', '1'),
-            ('_materia', '1'),
-            ('acao', 'Executa'),
-            ('offset', '0'),
-            ('dataAutuacaoFim', ''),
-            ('dataAutuacaoInicio', ''),
-            ('exercicio', ''),
-            ('processo', ''),
-            ('quantTrechos', '3'),
-            ('tipoBuscaTxt', 'Documento'),
-            ('txtExp', ''),
-            ('txtNenhPalvs', ''),
-            ('txtNumFim', ''),
-            ('txtNumIni', ''),
-            ('txtQqUma', ''),
-            ('txtTdPalvs', variant),
-            ('tipoDocumento', ''),
+            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+            ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
+            ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
+            ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
         ]
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-        table = next(
-            (
-                candidate for candidate in soup.find_all('table')
-                if re.search(r'N[°ºo]\s*Proc\.', clean_text(candidate.get_text(' ', strip=True)), re.I)
-            ),
-            None,
-        )
-        if table is None:
-            raise RuntimeError(
-                'Estrutura da pesquisa TCESP alterada: tabela de resultados com coluna N° Proc./Nº Proc. não foi encontrada.'
-            )
+        body = soup.find('tbody')
+        rows = soup.find_all('tr') if body is None else body.find_all('tr', recursive=False)
         records: list[JurisprudenciaRecord] = []
-        pending_excerpt = False
-        for row in table.find_all('tr'):
-            cells = [clean_text(cell.get_text(' ', strip=True)) for cell in row.find_all(['th', 'td'])]
-            if not cells:
+        for row in rows:
+            classes = {str(c).casefold() for c in (row.get('class') or [])}
+            if 'borda-superior' not in classes:
                 continue
-            joined = ' | '.join(cells)
-            if 'trechos localizados' in joined.casefold():
-                pending_excerpt = True
+            cells = row.find_all('td', recursive=False)
+            if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', clean_text(cells[2].get_text(' ', strip=True))):
                 continue
-            if pending_excerpt:
-                pending_excerpt = False
-                if records and joined:
-                    records[-1].ementa = joined
+            next_row = row.find_next_sibling('tr')
+            excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
+            main_text = clean_text(row.get_text(' ', strip=True))
+            combined = f'{main_text} {excerpt_text}'
+            if _query_score(variant, combined) <= 0:
                 continue
-            if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
+            process = clean_text(cells[1].get_text(' ', strip=True))
+            if not process or process in seen:
                 continue
-            process = cells[1]
-            if not process or process in seen or _query_score(variant, *cells) <= 0:
-                continue
-            detail_anchor = next(
-                (a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href'])),
-                None,
-            )
+            detail_anchor = next((a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href'])), None)
             detail_url = urljoin(response.url, str(detail_anchor['href'])) if detail_anchor else response.url
+            trecho = excerpt_text
+            if next_row is not None:
+                trecho_items = [clean_text(li.get_text(' ', strip=True)) for li in next_row.find_all('li')]
+                if trecho_items:
+                    trecho = ' '.join(x for x in trecho_items if x)
             record = JurisprudenciaRecord(
-                tribunal='TCESP',
-                numero_processo=process,
-                data_autuacao=cells[2],
-                ementa=cells[6],
-                assunto=_as_list(cells[5], cells[6]),
-                tipo_decisao=cells[0] or 'Jurisprudência',
-                origem='TCESP — Pesquisa de Jurisprudência',
-                url_oficial=detail_url,
-                partes=_as_list(cells[3], cells[4]),
+                tribunal='TCESP', numero_processo=process, data_autuacao=clean_text(cells[2].get_text(' ', strip=True)),
+                ementa=trecho, assunto=_as_list(clean_text(cells[5].get_text(' ', strip=True)), clean_text(cells[6].get_text(' ', strip=True))),
+                tipo_decisao=clean_text(cells[0].get_text(' ', strip=True)) or 'Jurisprudência',
+                origem='TCESP — Pesquisa de Jurisprudência', url_oficial=detail_url,
+                partes=_as_list(clean_text(cells[3].get_text(' ', strip=True)), clean_text(cells[4].get_text(' ', strip=True))),
             )
             if detail or with_content:
                 try:
-                    detail_text, final, content = _detail_enrichment(
-                        self.session,
-                        detail_url,
-                        with_content=with_content,
-                    )
+                    detail_text, final, content = _detail_enrichment(self.session, detail_url, with_content=with_content)
                     record.url_oficial = final
                     record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
-                    record.data_publicacao = _label_value(
-                        detail_text,
-                        ('Data de Publicação', 'Data da Publicação'),
-                    ) or record.data_publicacao
-                    record.ementa = _extract_ementa(content or detail_text) or record.ementa
+                    record.data_publicacao = _label_value(detail_text, ('Data de Publicação', 'Data da Publicação')) or record.data_publicacao
                     if with_content and content:
                         record.inteiro_teor = content
                 except Exception as exc:
                     print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
             seen.add(process)
             records.append(record)
+            if len(records) >= limit:
+                break
+        if not records:
+            form = soup.find('form')
+            form_text = clean_text(form.get_text(' ', strip=True)).casefold() if form is not None else ''
+            form_fields = ' '.join(str(field.get('name') or '') for field in form.find_all(['input', 'textarea'])).casefold() if form is not None else ''
+            if form is None or not ('jurisprudência' in form_text or 'pesquisa' in form_text or 'txttdpalvs' in form_fields):
+                raise RuntimeError('Estrutura da pesquisa TCESP alterada: resultados e formulário oficial não foram encontrados.')
         return records[:limit]
-
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         seen: set[str] = set()
         for variant in _query_variants(query):
@@ -796,6 +765,7 @@ class STFAdapter(JurisprudenciaAdapter):
             )
             try:
                 context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     locale='pt-BR',
                     viewport={'width': 1440, 'height': 1100},
                 )
@@ -1010,11 +980,24 @@ class TCMSPAdapter(JurisprudenciaAdapter):
             browser = playwright.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
             try:
                 page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
-                page.goto(self.endpoint, wait_until='domcontentloaded', timeout=120000)
+                navigation_error = None
+                for attempt in range(3):
+                    try:
+                        page.goto(self.endpoint, wait_until='domcontentloaded', timeout=120000)
+                        navigation_error = None
+                        break
+                    except Exception as exc:
+                        navigation_error = exc
+                        if attempt < 2:
+                            page.close()
+                            page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
+                            page.wait_for_timeout(2500 * (attempt + 1))
+                if navigation_error is not None:
+                    raise RuntimeError(f'TCM-SP: falha de conexão no portal oficial após 3 tentativas: {navigation_error}')
                 page.wait_for_timeout(1500)
                 if not self._fill_by_label(page, ('Todas estas palavras',), query):
                     raise RuntimeError('TCM-SP: campo "Todas estas palavras" não foi encontrado no portal oficial.')
-                buttons = page.locator('button, input[type="submit"], input[type="button"], a')
+                buttons = page.locator('button:visible, input[type="submit"]:visible, input[type="button"]:visible, a:visible')
                 clicked = False
                 for index in range(buttons.count()):
                     button = buttons.nth(index)
@@ -1090,108 +1073,86 @@ class TJSPAdapter(JurisprudenciaAdapter):
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         records: list[JurisprudenciaRecord] = []
         seen: set[tuple[str, str]] = set()
+        template = {
+            'dados.buscaInteiroTeor': '', 'dados.pesquisarComSinonimos': 'S', 'dados.buscaEmenta': '',
+            'dados.nuProcOrigem': '', 'dados.nuRegistro': '', 'agenteSelectedEntitiesList': '',
+            'contadoragente': '0', 'contadorMaioragente': '0', 'codigoCr': '', 'codigoTr': '', 'nmAgente': '',
+            'juizProlatorSelectedEntitiesList': '', 'contadorjuizProlator': '0', 'contadorMaiorjuizProlator': '0',
+            'codigoJuizCr': '', 'codigoJuizTr': '', 'nmJuiz': '', 'classesTreeSelection.values': '',
+            'classesTreeSelection.text': '', 'assuntosTreeSelection.values': '', 'assuntosTreeSelection.text': '',
+            'comarcaSelectedEntitiesList': '', 'contadorcomarca': '1', 'contadorMaiorcomarca': '1',
+            'cdComarca': '', 'nmComarca': '', 'secoesTreeSelection.values': '', 'secoesTreeSelection.text': '',
+            'dados.dtJulgamentoInicio': '', 'dados.dtJulgamentoFim': '', 'dados.dtRegistroInicio': '',
+            'dados.dtRegistroFim': '', 'dados.ordenacao': 'dtPublicacao', 'dados.origensSelecionadas': 'T',
+            'tipoDecisaoSelecionados': 'A',
+        }
         for variant in _query_variants(query):
             kind, final, raw = fetch(self.session, self.endpoint)
-            if kind != 'html':
-                raise RuntimeError('Consulta Completa do TJSP retornou uma resposta não HTML esperada.')
+            if kind != 'html': raise RuntimeError('Consulta Completa do TJSP retornou resposta não HTML.')
             self._check_access_block(raw)
-            soup = BeautifulSoup(raw, 'html.parser')
-            form = _find_query_form(soup, ('pesquisa livre', 'pesquisa', 'livre'))
-            if form is None:
-                raise RuntimeError('formulário de Pesquisa Livre do TJSP não foi encontrado')
-            payload = _form_data(form, variant, ('pesquisa livre', 'livre', 'pesquisa'))
-            if payload is None:
-                raise RuntimeError('campo Pesquisa Livre do TJSP não foi encontrado')
-            action, method, data = payload
-            action = urljoin(final, action or self.result_endpoint)
-            kind, result_url, result_raw = fetch(
-                self.session,
-                action,
-                method='POST' if method == 'post' else 'GET',
-                data=data if method == 'post' else None,
-                params=data if method != 'post' else None,
-            )
-            if kind != 'html':
-                raise RuntimeError('Pesquisa do TJSP retornou uma resposta não HTML inesperada.')
+            body = dict(template)
+            body['dados.buscaInteiroTeor'] = variant
+            kind, post_url, post_raw = fetch(self.session, self.result_endpoint, method='POST', data=body)
+            if kind != 'html': raise RuntimeError('POST da pesquisa CJSG do TJSP retornou resposta não HTML.')
+            self._check_access_block(post_raw)
+            post_soup = BeautifulSoup(post_raw, 'html.parser')
+            conversation = post_soup.find('input', {'name': 'conversationId'})
+            params = {'tipoDeDecisao': 'A', 'pagina': '1'}
+            if conversation is not None and conversation.get('value'): params['conversationId'] = str(conversation.get('value'))
+            kind, result_url, result_raw = fetch(self.session, 'https://esaj.tjsp.jus.br/cjsg/trocaDePagina.do', params=params, headers={'Referer': self.result_endpoint})
+            if kind != 'html': raise RuntimeError('GET inicial da paginação CJSG do TJSP retornou resposta não HTML.')
             self._check_access_block(result_raw)
             soup = BeautifulSoup(result_raw, 'html.parser')
-            for row in soup.find_all(['tr', 'article', 'li']):
-                row_text = clean_text(row.get_text(' ', strip=True))
-                if len(row_text) < 30:
-                    continue
-                anchors = row.find_all('a', href=True)
-                pdf_url = next(
-                    (
-                        urljoin(result_url, str(anchor['href']).strip())
-                        for anchor in anchors
-                        if 'getarquivo.do' in str(anchor['href']).casefold()
-                    ),
-                    '',
-                )
-                detail_url = next(
-                    (
-                        urljoin(result_url, str(anchor['href']).strip())
-                        for anchor in anchors
-                        if '/cjsg/' in str(anchor['href']).casefold()
-                        and 'consultaCompleta.do' not in str(anchor['href']).casefold()
-                        and 'resultadoCompleta.do' not in str(anchor['href']).casefold()
-                        and 'getarquivo.do' not in str(anchor['href']).casefold()
-                    ),
-                    '',
-                )
-                target = pdf_url or detail_url or result_url
-                process = _extract_process(row_text, target)
-                if not process:
-                    continue
-                key = (process, pdf_url or detail_url)
-                if key in seen:
-                    continue
-                seen.add(key)
-                ementa = _extract_ementa(row_text) or row_text[:4000]
-                relator = _label_value(row_text, ('Relator', 'Relator(a)'))
-                data = _label_value(row_text, ('Data do julgamento', 'Data do Julgamento', 'Data de julgamento'))
-                orgao = _label_value(row_text, ('Órgão julgador', 'Órgão Julgador', 'Orgão julgador'))
-                inteiro_teor = None
-                official_url = detail_url or pdf_url or result_url
-                if detail or with_content:
+            rows = soup.find_all('tr', class_='fundocinza1')
+            if not rows:
+                visible = clean_text(soup.get_text(' ', strip=True)).casefold()
+                if any(marker in visible for marker in ('nenhum resultado', 'não foram encontrados', 'sem resultados')): continue
+                if soup.find('form', id=re.compile(r'form|consulta', re.I)):
+                    raise RuntimeError('TJSP permaneceu na página de consulta após o POST; o contrato CJSG pode ter mudado.')
+                continue
+            for row in rows:
+                cells = row.find_all('td')
+                if len(cells) < 2: continue
+                details_table = cells[1].find('table')
+                if details_table is None: continue
+                process_link = details_table.find('a', class_=re.compile(r'esajLinkLogin.*downloadEmenta', re.I))
+                if process_link is None: continue
+                process = clean_text(process_link.get_text(' ', strip=True))
+                cd_acordao = str(process_link.get('cdacordao') or '').strip()
+                if not process or not cd_acordao: continue
+                data = {}; ementa = ''
+                for detail_row in details_table.find_all('tr', class_='ementaClass2'):
+                    strong = detail_row.find('strong')
+                    if strong is None: continue
+                    label = clean_text(strong.get_text(' ', strip=True))
+                    value_text = clean_text(detail_row.get_text(' ', strip=True))
+                    if 'ementa:' in label.casefold():
+                        ementa = clean_text(re.sub(r'^ementa:\s*', '', value_text, flags=re.I)); continue
+                    value = value_text.split(':', 1)[1].strip() if ':' in value_text else value_text
+                    key = label.casefold()
+                    if 'data de publicação' in key: data['data_publicacao'] = value
+                    elif 'órgão julgador' in key or 'orgão julgador' in key: data['orgao_julgador'] = value
+                    elif 'relator' in key: data['relator'] = value
+                key = (process, cd_acordao)
+                if key in seen: continue
+                pdf_url = f'https://esaj.tjsp.jus.br/cjsg/getArquivo.do?cdAcordao={cd_acordao}&cdForo=0'
+                inteiro = None
+                official_url = pdf_url
+                if with_content:
                     try:
-                        if pdf_url and with_content:
-                            pdf_kind, pdf_final, pdf_raw = fetch(self.session, pdf_url)
-                            if pdf_kind == 'pdf':
-                                inteiro_teor = pdf_text(pdf_raw)
-                                official_url = pdf_final
-                                ementa = _extract_ementa(inteiro_teor) or ementa
-                        elif detail_url:
-                            detail_text, detail_final, content = _detail_enrichment(
-                                self.session,
-                                detail_url,
-                                with_content=with_content,
-                            )
-                            official_url = detail_final
-                            relator = _label_value(detail_text, ('RELATOR', 'Relator', 'Relator(a)')) or relator
-                            data = _label_value(detail_text, ('DATA DO JULGAMENTO', 'Data do julgamento')) or data
-                            orgao = _label_value(detail_text, ('ÓRGÃO julgador', 'Órgão julgador')) or orgao
-                            ementa = _extract_ementa(content or detail_text) or ementa
-                            inteiro_teor = content or None
+                        pdf_kind, pdf_final, pdf_raw = fetch(self.session, pdf_url)
+                        if pdf_kind == 'pdf': inteiro = pdf_text(pdf_raw); official_url = pdf_final; ementa = _extract_ementa(inteiro) or ementa
                     except Exception as exc:
-                        print(f'aviso: detalhe TJSP indisponível para {process}: {type(exc).__name__}: {exc}')
-                records.append(
-                    JurisprudenciaRecord(
-                        tribunal='TJSP',
-                        numero_processo=process,
-                        orgao_julgador=orgao,
-                        relator=relator,
-                        data=data,
-                        ementa=ementa,
-                        url_oficial=official_url,
-                        tipo_decisao='Acórdão',
-                        origem='TJSP — e-SAJ Jurisprudência',
-                        inteiro_teor=inteiro_teor,
-                    )
-                )
-                if len(records) >= limit:
-                    return records[:limit]
-        raise RuntimeError(f'TJSP não retornou registros estruturados para {query!r}.') 
+                        print(f'aviso: inteiro teor TJSP indisponível para {process}: {type(exc).__name__}: {exc}')
+                seen.add(key)
+                records.append(JurisprudenciaRecord(
+                    tribunal='TJSP', numero_processo=process, orgao_julgador=data.get('orgao_julgador', ''),
+                    relator=data.get('relator', ''), data_publicacao=data.get('data_publicacao', ''),
+                    ementa=ementa or clean_text(row.get_text(' ', strip=True))[:4000], url_oficial=official_url,
+                    tipo_decisao='Acórdão', origem='TJSP — e-SAJ CJSG oficial', inteiro_teor=inteiro,
+                ))
+                if len(records) >= limit: return records[:limit]
+        raise RuntimeError(f'TJSP não retornou registros estruturados para {query!r}.')
 
 def _find_query_form(soup: BeautifulSoup, keywords: tuple[str, ...]):
     candidates = []
