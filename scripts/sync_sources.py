@@ -54,11 +54,11 @@ RETIRED_SOURCE_IDS = {
 def make_session():
     session = requests.Session()
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        status=3,
-        backoff_factor=1.0,
+        total=2,
+        connect=2,
+        read=2,
+        status=2,
+        backoff_factor=0.8,
         status_forcelist=(408, 429, 500, 502, 503, 504),
         allowed_methods=frozenset({'GET', 'HEAD'}),
         respect_retry_after_header=True,
@@ -100,7 +100,7 @@ def pdf_text(data):
 
 
 def fetch(session, url):
-    response = session.get(url, timeout=(15, 45), allow_redirects=True)
+    response = session.get(url, timeout=(8, 20), allow_redirects=True)
     response.raise_for_status()
     raw = response.content
     final = response.url
@@ -359,9 +359,10 @@ def main():
             print(f'Fontes jurisprudenciais legadas removidas do cache: {removed_retired}')
     failures = []
     ok = 0
-    for source in sources:
+    for index, source in enumerate(sources, 1):
+        print(f'[{index}/{len(sources)}] {source["id"]}', flush=True)
         good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
-        print(message)
+        print(message, flush=True)
         ok += int(good)
         if not good:
             failures.append(source['id'])
