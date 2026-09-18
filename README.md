@@ -87,14 +87,17 @@ python -m jurisprudencia.collector --query "licitação" --limit 25
 python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tcm-sp,tjsp --query "contrato administrativo" --limit 50 --detail --with-content --strict
 ```
 
-Na execução normal de `ingest.py`, a coleta pode ocorrer automaticamente. Com `RAG_JURISPRUDENCIA_STRICT=1`, a ingestão falha se algum dos tribunais solicitados não produzir nenhum registro na coleta temática.
+Na execução normal de `ingest.py`, a coleta temática ocorre automaticamente. O limite é tratado como **alvo total por tribunal**, e não como limite independente para cada consulta. As consultas são percorridas em lotes de até 25 resultados por tribunal para ampliar a diversidade do corpus e evitar a coleta de centenas de registros de uma única consulta. Por padrão, o projeto tenta chegar a **200 registros por tribunal** e, em modo estrito, exige pelo menos **150 registros por tribunal**. Com os cinco tribunais padrão (TCU, TCESP, STJ, STF e TJSP), o alvo é de até 1.000 registros estruturados. Registros repetidos entre consultas são eliminados pelo `document_key`.
 
 ```text
 RAG_SYNC_JURISPRUDENCIA=1
-RAG_JURISPRUDENCIA_QUERY=licitação
-RAG_JURISPRUDENCIA_LIMIT=25
+RAG_JURISPRUDENCIA_QUERY=
+RAG_JURISPRUDENCIA_LIMIT=200
+RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL=150
 RAG_JURISPRUDENCIA_STRICT=1
 ```
+
+Para uma coleta focada em uma única consulta, `RAG_JURISPRUDENCIA_QUERY` continua disponível; nesse modo o limite é aplicado diretamente pelo coletor de cada tribunal.
 
 Cada registro recebe `version_sha256`, de modo que uma alteração do conteúdo não apaga silenciosamente a versão anterior.
 
