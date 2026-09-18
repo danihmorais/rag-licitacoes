@@ -54,11 +54,11 @@ RETIRED_SOURCE_IDS = {
 def make_session():
     session = requests.Session()
     retry = Retry(
-        total=5,
-        connect=5,
-        read=5,
-        status=5,
-        backoff_factor=1.5,
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=1.0,
         status_forcelist=(408, 429, 500, 502, 503, 504),
         allowed_methods=frozenset({'GET', 'HEAD'}),
         respect_retry_after_header=True,
@@ -100,7 +100,7 @@ def pdf_text(data):
 
 
 def fetch(session, url):
-    response = session.get(url, timeout=(20, 90), allow_redirects=True)
+    response = session.get(url, timeout=(15, 45), allow_redirects=True)
     response.raise_for_status()
     raw = response.content
     final = response.url
