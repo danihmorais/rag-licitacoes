@@ -459,7 +459,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
             pdf_match = re.search(r"href=['\"]([^'\"]*\.pdf)['\"]", line, re.I)
             pdf_url = urljoin(response.url, pdf_match.group(1)) if pdf_match else ''
             process_url = response.url
-            process_match = re.search(r'href=['\"]([^'\"]*jurisprudencia/exibir[^'\"]*)['\"]', line, re.I)
+            process_match = re.search(r"href=['\"]([^'\"]*jurisprudencia/exibir[^'\"]*)['\"]", line, re.I)
             if process_match:
                 process_url = urljoin(response.url, process_match.group(1))
             record = JurisprudenciaRecord(
