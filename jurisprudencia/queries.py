@@ -54,6 +54,10 @@ DEFAULT_QUERIES = (
     "São Paulo Tribunal de Contas controle externo licitação contrato administrativo",
     "TCM-SP Tribunal de Contas do Município de São Paulo licitação contrato fiscalização",
     "TCM-SP súmulas jurisprudência contratos administrativos",
+    "TJSP Tribunal de Justiça de São Paulo licitação contrato administrativo Lei 14.133",
+    "TJSP licitação edital habilitação contratação pública",
+    "TJSP contrato administrativo equilíbrio econômico financeiro sanção",
+    "TJSP servidor público processo administrativo responsabilidade do Estado",
 )
 
 
