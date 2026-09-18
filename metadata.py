@@ -167,7 +167,7 @@ def extract_metadata(text, pdf_path):
         'norma_alteradora': None, 'norm_numero': None, 'norm_ano': None,
         'effective_from': None, 'effective_to': None, 'retrieved_at': None,
         'ramo_direito': None, 'fonte_host': None,
-        'regime_juridico': 'nao_especificado', 'norma_canonica': REGIME_CANONICAL['nao_especificado'],
+        'regime_juridico': None, 'norma_canonica': None,
         **source_values,
     }
     tribunal = _header_value(sample, 'TRIBUNAL')
