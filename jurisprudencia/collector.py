@@ -126,7 +126,11 @@ def _query_score(query: str, *fields: str) -> int:
     if not terms:
         return 0
     haystack = clean_text(' '.join(fields)).casefold()
-    return sum(term in haystack for term in terms)
+    return sum(
+        1
+        for term in terms
+        if re.search(rf'(?<!\\w){re.escape(term)}', haystack, re.I)
+    )
 
 
 def _query_matches(query: str, *fields: str) -> bool:
