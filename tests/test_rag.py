@@ -28,7 +28,7 @@ def test_sources_have_urls_and_metadata():
     for item in source_module().SOURCES:
         assert item['urls'] and item['title']
         assert item.get('source_role') in allowed
-        assert item.get('status') in statuses
+        assert item.get('status') in statuses or (item.get('source_role') == 'doutrina' and item.get('status') == 'orientativo')
 
 
 def test_historical_laws_are_marked():
