@@ -20,6 +20,7 @@ COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
     'context_neighbors', 'max_context_chars', 'chunking_algorithm_sha256', 'schema',
+    'manifest_schema_version',
 )
 
 
@@ -73,9 +74,21 @@ def _atomic_write_json(path, value):
 
 
 def write_manifest(documents=None, deletions=None, revocations=None):
+    existing = read_manifest() or {}
+    merged_documents = documents if documents is not None else existing.get('documents', {})
+    if not isinstance(merged_documents, dict):
+        merged_documents = {}
+    old_deletions = existing.get('deletions') if isinstance(existing.get('deletions'), list) else []
+    old_revocations = existing.get('revocations') if isinstance(existing.get('revocations'), list) else []
+    merged_deletions = list(old_deletions) + list(deletions or [])
+    merged_revocations = list(old_revocations) + list(revocations or [])
     _atomic_write_json(
         config.INDEX_MANIFEST_PATH,
-        current_manifest(documents=documents, deletions=deletions, revocations=revocations),
+        current_manifest(
+            documents=merged_documents,
+            deletions=merged_deletions[-2000:],
+            revocations=merged_revocations[-2000:],
+        ),
     )
 
 
