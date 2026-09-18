@@ -23,12 +23,12 @@ def test_core_official_sources_exist():
 
 
 def test_sources_have_urls_and_metadata():
-    allowed = {'norma','jurisprudencia','jurisprudencia_controle','orientacao_oficial','taxonomia','descoberta_legislativa','controle_estadual'}
+    allowed = {'norma','jurisprudencia','jurisprudencia_controle','orientacao_oficial','doutrina','taxonomia','descoberta_legislativa','controle_estadual'}
     statuses = {'vigente','revogado','historico','vacatio_legis'}
     for item in source_module().SOURCES:
         assert item['urls'] and item['title']
         assert item.get('source_role') in allowed
-        assert item.get('status') in statuses
+        assert item.get('status') in statuses or (item.get('source_role') == 'doutrina' and item.get('status') == 'orientativo')
 
 
 def test_historical_laws_are_marked():

@@ -281,7 +281,7 @@ def _atomic_write_json(path, value):
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
 
-def write_cache(source, final, kind, raw, text, document_id, title):
+def write_cache(source, final, kind, raw, text, document_id, title, extra_meta=None):
     CACHE.mkdir(parents=True, exist_ok=True)
     base = slug(document_id)
     _atomic_write_text(CACHE / f'{base}.txt', text.strip() + '\n')
@@ -306,13 +306,16 @@ def write_cache(source, final, kind, raw, text, document_id, title):
         'effective_from': source.get('effective_from'),
         'effective_to': source.get('effective_to'),
         'norma_alteradora': source.get('norma_alteradora'),
-        'fonte_oficial': final,
+        'fonte_oficial': final if source.get('is_official', True) else None,
+        'fonte_url': final,
         'fonte_host': urlparse(final).netloc,
         'retrieved_at': datetime.now(timezone.utc).isoformat(),
         'data_versao': source.get('data_versao'),
         'source_kind': kind,
         'sha256': hashlib.sha256(raw).hexdigest(),
     }
+    if extra_meta:
+        meta.update({key: value for key, value in extra_meta.items() if value not in (None, '')})
     _atomic_write_json(CACHE / f'{base}.json', meta)
 
 
@@ -401,6 +404,7 @@ def main():
     parser.add_argument('--legislation-only', action='store_true')
     parser.add_argument('--strict', action='store_true')
     parser.add_argument('--no-follow-links', action='store_true')
+    parser.add_argument('--web-only', action='store_true')
     args = parser.parse_args()
     sources = [
         s for s in SOURCES
@@ -408,6 +412,10 @@ def main():
         and (
             not args.legislation_only
             or (s.get('source_role') == 'norma' and not s.get('index_only'))
+        )
+        and (
+            not args.web_only
+            or s.get('source_type') == 'web_articles'
         )
     ]
     session = make_session()
@@ -417,9 +425,16 @@ def main():
             print(f'Fontes jurisprudenciais legadas removidas do cache: {removed_retired}')
     failures = []
     ok = 0
+    web_sync = None
     for index, source in enumerate(sources, 1):
         print(f'[{index}/{len(sources)}] {source["id"]}', flush=True)
-        good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
+        if source.get('source_type') == 'web_articles':
+            if web_sync is None:
+                from scripts.web_sources import sync_web_articles
+                web_sync = sync_web_articles
+            good, message, _ = web_sync(session, source, check=args.check)
+        else:
+            good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
         print(message, flush=True)
         ok += int(good)
         if not good:
@@ -433,13 +448,15 @@ def main():
             source['id']
             for source in sources
             if source['id'] in failures
-            and source.get('source_role') == 'norma'
-            and not source.get('index_only')
+            and (
+                (source.get('source_role') == 'norma' and not source.get('index_only'))
+                or source.get('source_type') == 'web_articles'
+            )
         ]
     if failures and args.required_only:
         return 1
     if strict_failures:
-        print('Falhas legislativas bloqueantes:', ', '.join(strict_failures))
+        print('Falhas bloqueantes de fontes:', ', '.join(strict_failures))
         return 1
     return 0
 
