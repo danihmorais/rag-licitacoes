@@ -448,6 +448,22 @@ class TCESPAdapter(JurisprudenciaAdapter):
             )
             try:
                 page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
+                relevant_requests: list[str] = []
+                page._rag_relevant_requests = relevant_requests
+                def capture_request(request):
+                    target = request.url.casefold()
+                    if any(token in target for token in ('jurisprud', 'pesquis', 'resultado', 'acord', '.json', 'api/')):
+                        relevant_requests.append(f'{request.method} {request.url}')
+                page.on('request', capture_request)
+                page.on(
+                    'response',
+                    lambda response: relevant_requests.append(
+                        f'RESPONSE {response.status} {response.url}'
+                    ) if any(
+                        token in response.url.casefold()
+                        for token in ('jurisprud', 'pesquis', 'resultado', 'acord', '.json', 'api/')
+                    ) else None,
+                )
                 page.goto(url, wait_until='domcontentloaded', timeout=120000)
                 try:
                     page.wait_for_function(
@@ -530,6 +546,16 @@ class TCESPAdapter(JurisprudenciaAdapter):
                     records.append(record)
                     if len(records) >= limit:
                         return records[:limit]
+                if not records:
+                    print('TCESP browser diagnostic: nenhum processo localizado no DOM.')
+                    print('TCESP browser diagnostic: título:', clean_text(page.title()))
+                    print(
+                        'TCESP browser diagnostic: URLs relevantes:',
+                        ' | '.join(
+                            str(item)
+                            for item in getattr(page, '_rag_relevant_requests', [])[-40:]
+                        ),
+                    )
                 return records[:limit]
             finally:
                 browser.close()
