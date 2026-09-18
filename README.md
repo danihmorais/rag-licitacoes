@@ -139,7 +139,22 @@ O histórico de alterações é controlado por hash dos documentos. A ingestão 
 
 ## RTX 5060 Ti 16 GB
 
-Recuperação e LLM permanecem desacoplados. FastEmbed pode usar `RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider`, reservando VRAM para o modelo de geração. Trocar o gerador local não exige reindexação, salvo quando mudar o modelo de embedding ou sua dimensão.
+Recuperação e LLM permanecem desacoplados. Para gerar embeddings na GPU, use o perfil `requirements-gpu.txt` em um ambiente novo. O FastEmbed oficial exige `fastembed-gpu` para execução em GPU; `fastembed` e `fastembed-gpu` não devem coexistir no mesmo ambiente. citeturn742825view0turn859935search5
+
+```bash
+python -m venv .venv-gpu
+source .venv-gpu/bin/activate
+pip install -r requirements-gpu.txt
+cp .env.example .env
+```
+
+No `.env`, habilite:
+
+```text
+RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
+```
+
+A implementação usa a mesma coleção Qdrant para CPU e GPU; mudar apenas o provedor de execução não altera os vetores. Trocar o modelo de embedding, porém, exige reindexação e atualização do manifesto.
 
 ## Instalação
 
