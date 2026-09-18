@@ -160,6 +160,12 @@ def test_query_matching_requires_half_terms_for_long_queries():
     assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
 
 
+def test_tcm_sp_missing_search_form_is_reported_as_structure_failure():
+    html = b"<html><body><p>Portal indisponível.</p></body></html>"
+    with pytest.raises(RuntimeError, match="Formulário de pesquisa do TCM-SP"):
+        TCMSPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index")])).search("licitação", 1)
+
+
 def test_tcesp_missing_results_table_is_reported_as_structure_failure():
     html = b"<html><body><p>A página do TCESP foi redesenhada.</p></body></html>"
     with pytest.raises(RuntimeError, match="Estrutura da pesquisa TCESP"):
