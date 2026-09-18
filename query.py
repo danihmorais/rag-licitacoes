@@ -239,7 +239,7 @@ def validate_generated_answer(answer, sources):
         return True
     if any(index < 1 or index > len(sources) for index in citations):
         raise EvidenceGateError('A resposta contém citação para uma fonte que não está no contexto.')
-    sentences = [part.strip() for part in re.split(r'(?<=[.!?;])\s+|\n+', answer) if part.strip()]
+    sentences = [part.strip() for part in re.split(r'\n+', answer) if part.strip()]
     for sentence in sentences:
         sentence_citations = _sentence_citations(sentence)
         factual = EVIDENCE_CITATION_RE.sub('', sentence).strip(' .,:;-')
