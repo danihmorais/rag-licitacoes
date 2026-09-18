@@ -846,11 +846,13 @@ def collect(
     with_content=False,
     output_dir=None,
     persist=True,
+    strict=False,
 ) -> list[JurisprudenciaRecord]:
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     session = make_session()
     source_adapters = adapters(session)
     output = []
+    failures = []
     for tribunal in tribunals:
         if tribunal not in source_adapters:
             raise ValueError(f'Tribunal não suportado: {tribunal}')
@@ -862,13 +864,18 @@ def collect(
                 with_content=with_content,
             )
         except Exception as exc:
-            print(f'FAIL {tribunal}: {type(exc).__name__}: {exc}')
+            message = f'{type(exc).__name__}: {exc}'
+            print(f'FAIL {tribunal}: {message}')
+            failures.append((tribunal, message))
             continue
         for record in records:
             if persist:
                 save_record(record, output_dir)
             output.append(record)
         print(f'OK {tribunal}: {len(records)} registros para {query!r}')
+    if strict and failures:
+        details = '; '.join(f'{tribunal}: {message}' for tribunal, message in failures)
+        raise RuntimeError('Falhas de coleta jurisprudencial: ' + details)
     return output
 
 
