@@ -81,7 +81,7 @@ A coleta extrai título, data de publicação, autor, seção, palavras-chave, U
 
 Essas matérias recebem source_role=doutrina e authority_level=4. Portanto, não são tratadas como fonte oficial nem como norma vigente. A sincronização usa apenas conteúdo publicamente acessível e não tenta contornar login, paywall ou mecanismos de controle de acesso.
 
-A atualização ocorre junto de python scripts/sync_sources.py e, por consequência, de python ingest.py.
+Para testar somente essas seis fontes, use `python scripts/sync_sources.py --web-only --strict`. A atualização ocorre junto de `python scripts/sync_sources.py` e, por consequência, de `python ingest.py`.
 
 
 ## Política de autoridade e jurisdição
