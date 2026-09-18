@@ -2,9 +2,10 @@ from datetime import date
 import json
 
 from scripts.sources import SOURCES
-from scripts.sync_sources import (
-    _is_web_article_url,
+from scripts.sync_sources import _is_web_article_url
+from scripts.web_sources import (
     _parse_web_date,
+    _web_link_candidates,
     _web_topic_matches,
     extract_web_article,
 )
@@ -93,3 +94,17 @@ def test_web_sources_have_date_floor_and_bounded_corpus():
         assert item["max_documents"] in {250, 300}
         assert item["source_role"] == "doutrina"
         assert item["authority_level"] == 4
+        assert item["source_type"] == "web_articles"
+        assert item["is_official"] is False
+
+
+def test_web_next_link_detects_textual_pagination():
+    source = next(item for item in SOURCES if item["id"] == "web-licitacoes-publicas-blog")
+    html = '<html><body><a href="/page/2/">Seguinte</a></body></html>'
+    candidates, next_urls = _web_link_candidates(
+        html.encode("utf-8"),
+        "https://licitacoespublicas.blog.br/",
+        source,
+    )
+    assert candidates == []
+    assert next_urls == ["https://licitacoespublicas.blog.br/page/2/"]
