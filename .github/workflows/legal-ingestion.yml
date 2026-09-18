@@ -30,10 +30,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt pytest
 
-      - name: Validar catálogo e fontes legislativas
-        run: |
-          python scripts/sync_sources.py --check --legislation-only --strict --no-follow-links
-
       - name: Sincronizar legislação e corpus disponível
         run: |
           python scripts/sync_sources.py --strict --no-follow-links
