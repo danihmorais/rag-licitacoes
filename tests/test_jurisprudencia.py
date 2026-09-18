@@ -85,11 +85,28 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
     assert path.exists() and '"source_role": "jurisprudencia_controle"' in data and '"version_sha256":' in data
 
 
-def test_stj_adapter_finds_official_acordao_links():
-    html = '<html><body><h1>Pesquisa de Jurisprudência</h1><a href="/SCON/jurisprudencia/doc.jsp?livre=123456">REsp 1.234.567/SP</a></body></html>'.encode("utf-8")
-    records = STJAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://scon.stj.jus.br/SCON/pesquisar.jsp?livre=licitação")])).search("licitação", 1)
-    assert len(records) == 1 and records[0].tribunal == "STJ" and "1.234.567/SP" in records[0].numero_processo
-
+def test_stj_adapter_uses_official_open_data_snapshot():
+    session = FakeSession([
+        FakeResponse({"success": True, "result": {"resources": [{
+            "name": "20260915.json", "format": "JSON",
+            "url": "https://dadosabertos.web.stj.jus.br/dataset/espelhos/raw/20260915.json"
+        }]}}),
+        FakeResponse([{
+            "id": "956702", "numeroProcesso": "2238193", "numeroRegistro": "202503517440",
+            "siglaClasse": "REsp", "descricaoClasse": "RECURSO ESPECIAL",
+            "nomeOrgaoJulgador": "TERCEIRA SEÇÃO", "ministroRelator": "Ministro X",
+            "dataPublicacao": "DJEN DATA:05/05/2026",
+            "ementa": "DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS PÚBLICOS.",
+            "tipoDeDecisao": "ACÓRDÃO", "dataDecisao": "20260428",
+            "decisao": "Recurso conhecido e provido."
+        }])
+    ])
+    records = STJAdapter(session).search("licitação", 1)
+    assert len(records) == 1
+    assert records[0].tribunal == "STJ"
+    assert records[0].numero_processo == "2238193"
+    assert records[0].relator == "Ministro X"
+    assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
 
 def test_stf_form_is_discovered_without_hardcoding_input_name():
     from bs4 import BeautifulSoup
