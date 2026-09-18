@@ -9,9 +9,10 @@ import re
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+import xml.etree.ElementTree as ET
+from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -281,7 +282,7 @@ def _atomic_write_json(path, value):
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
 
-def write_cache(source, final, kind, raw, text, document_id, title):
+def write_cache(source, final, kind, raw, text, document_id, title, extra_meta=None):
     CACHE.mkdir(parents=True, exist_ok=True)
     base = slug(document_id)
     _atomic_write_text(CACHE / f'{base}.txt', text.strip() + '\n')
@@ -313,6 +314,8 @@ def write_cache(source, final, kind, raw, text, document_id, title):
         'source_kind': kind,
         'sha256': hashlib.sha256(raw).hexdigest(),
     }
+    if extra_meta:
+        meta.update({key: value for key, value in extra_meta.items() if value not in (None, '')})
     _atomic_write_json(CACHE / f'{base}.json', meta)
 
 
@@ -352,6 +355,545 @@ def purge_retired_source_cache():
     return removed
 
 
+
+
+WEB_MONTHS = {
+    'janeiro': 1, 'fevereiro': 2, 'março': 3, 'marco': 3, 'abril': 4,
+    'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9,
+    'outubro': 10, 'novembro': 11, 'dezembro': 12,
+    'jan': 1, 'fev': 2, 'mar': 3, 'abr': 4, 'mai': 5, 'jun': 6,
+    'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12,
+}
+
+WEB_EXCLUDED_PATH_PARTS = (
+    '/page/', '/category/', '/tag/', '/autor/', '/author/', '/feed',
+    '/wp-json/', '/wp-admin/', '/wp-content/', '/comments/', '/comment-page-',
+    '/buscar', '/search', '/login', '/cadastro', '/sobre', '/contato',
+    '/politica-de-privacidade', '/termos', '/caderno/',
+)
+
+WEB_ADMIN_POSITIVE = (
+    'direito administrativo', 'direito público', 'direito publico',
+    'licitação', 'licitações', 'licitação pública', 'licitações públicas',
+    'contrato administrativo', 'contratos administrativos',
+    'contratação pública', 'contratações públicas',
+    'administração pública', 'poder público', 'serviço público',
+    'processo administrativo', 'ato administrativo',
+    'improbidade administrativa', 'responsabilidade do estado',
+    'compras públicas', 'pregão', 'edital', 'inexigibilidade',
+    'dispensa de licitação', 'lei 14.133', 'lei 13.303',
+    'tribunal de contas', 'tcu', 'tcesp', 'controladoria',
+    'transparência pública', 'concessão', 'concessões',
+    'parceria público-privada', 'parcerias público-privadas', 'ppp',
+    'regulação', 'regulação pública', 'licitações e contratos',
+)
+
+WEB_ADMIN_EXCLUDE = (
+    'direito de família', 'divórcio', 'direito trabalhista',
+    'direito do trabalho', 'direito previdenciário', 'direito penal',
+    'direito empresarial', 'direito societário', 'direito do consumidor',
+    'propriedade intelectual',
+)
+
+def _parse_web_date(value):
+    if not value:
+        return None
+    raw = html.unescape(str(value)).strip()
+    raw = re.sub(r'\s+', ' ', raw)
+    iso = raw.replace('Z', '+00:00')
+    try:
+        return datetime.fromisoformat(iso).date()
+    except ValueError:
+        pass
+    match = re.search(r'\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b', raw)
+    if match:
+        try:
+            return date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            return None
+    match = re.search(
+        r'\b(\d{1,2})\s*(?:de\s*)?([A-Za-zÀ-ÿ]+)\s*(?:de\s*)?(20\d{2})\b',
+        raw, re.I,
+    )
+    if match:
+        month = WEB_MONTHS.get(match.group(2).casefold())
+        if month:
+            try:
+                return date(int(match.group(3)), month, int(match.group(1)))
+            except ValueError:
+                return None
+    match = re.search(r'\b(\d{1,2})[./-]([A-Za-z]{3})[./-](20\d{2})\b', raw, re.I)
+    if match:
+        month = WEB_MONTHS.get(match.group(2).casefold())
+        if month:
+            try:
+                return date(int(match.group(3)), month, int(match.group(1)))
+            except ValueError:
+                return None
+    match = re.search(r'\b(20\d{2})[/-](\d{1,2})[/-](\d{1,2})\b', raw)
+    if match:
+        try:
+            return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def _jsonld_objects(soup):
+    def walk(value):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+    for script in soup.find_all('script', type=lambda value: value and 'ld+json' in value):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        yield from walk(parsed)
+
+
+def _first_meta(soup, *names):
+    wanted = {name.casefold() for name in names}
+    for tag in soup.find_all('meta'):
+        key = str(tag.get('property') or tag.get('name') or tag.get('itemprop') or '').casefold()
+        if key in wanted and tag.get('content'):
+            return str(tag.get('content')).strip()
+    return None
+
+
+def _article_text_node(soup):
+    for selector in (
+        '[itemprop="articleBody"]',
+        'article',
+        '.entry-content',
+        '.post-content',
+        '.article-content',
+        '.article-body',
+        '.post__content',
+        'main',
+    ):
+        node = soup.select_one(selector)
+        if node:
+            text = node.get_text('\n', strip=True)
+            if len(text) >= 800:
+                return node
+    return soup.body or soup
+
+
+def extract_web_article(raw_html, final_url):
+    soup = BeautifulSoup(raw_html, 'html.parser')
+    for tag in soup(['script', 'style', 'noscript', 'nav', 'header', 'footer', 'form', 'aside', 'iframe']):
+        tag.decompose()
+    for tag in soup.find_all(class_=re.compile(r'(share|social|related|coment|comment|advert|banner|cookie|newsletter|menu|breadcrumb|sidebar)', re.I)):
+        tag.decompose()
+    jsonld = list(_jsonld_objects(soup))
+    title = None
+    body_from_jsonld = None
+    published = None
+    author = None
+    section = None
+    keywords = None
+    for item in jsonld:
+        title = title or item.get('headline') or item.get('name')
+        body_from_jsonld = body_from_jsonld or item.get('articleBody')
+        published = published or item.get('datePublished') or item.get('dateCreated')
+        author_value = item.get('author')
+        if isinstance(author_value, dict):
+            author_value = author_value.get('name')
+        elif isinstance(author_value, list):
+            author_value = ', '.join(
+                str(value.get('name') if isinstance(value, dict) else value)
+                for value in author_value
+                if value
+            )
+        author = author or author_value
+        section = section or item.get('articleSection')
+        keyword_value = item.get('keywords')
+        if isinstance(keyword_value, list):
+            keyword_value = ', '.join(str(value) for value in keyword_value)
+        keywords = keywords or keyword_value
+
+    title = title or _first_meta(soup, 'og:title', 'twitter:title') or (soup.find('h1').get_text(' ', strip=True) if soup.find('h1') else None)
+    published = (
+        published
+        or _first_meta(soup, 'article:published_time', 'datePublished', 'date', 'pubdate')
+        or next((tag.get('datetime') for tag in soup.find_all('time') if tag.get('datetime')), None)
+    )
+    author = author or _first_meta(soup, 'author', 'article:author')
+    section = section or _first_meta(soup, 'article:section', 'section')
+    keywords = keywords or _first_meta(soup, 'keywords', 'article:tag')
+
+    article_node = _article_text_node(soup)
+    body = article_node.get_text('\n', strip=True) if article_node else ''
+    if len(body) < 800 and body_from_jsonld:
+        body = str(body_from_jsonld).strip()
+    if title and title.casefold() not in body.casefold():
+        body = f'{title}\n\n{body}'
+    published_date = _parse_web_date(published)
+    return {
+        'title': html.unescape(str(title or '').strip()),
+        'date_publicacao': published_date,
+        'autor': html.unescape(str(author or '').strip()),
+        'secao': html.unescape(str(section or '').strip()),
+        'palavras_chave': html.unescape(str(keywords or '').strip()),
+        'texto': body.strip(),
+        'url': final_url,
+    }
+
+
+def _is_web_article_url(source, url):
+    parsed = urlparse(url)
+    path = unquote(parsed.path or '/')
+    low = path.casefold()
+    if parsed.scheme not in {'http', 'https'}:
+        return False
+    if any(part in low for part in WEB_EXCLUDED_PATH_PARTS):
+        return False
+    source_id = source.get('id')
+    if source_id == 'web-migalhas':
+        return bool(re.match(r'^/(?:depeso|quentes|colunas)/[^/]+/', low))
+    if source_id == 'web-conjur':
+        return bool(re.search(r'/20\d{2}-(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)-\d{2}/', low))
+    if source_id == 'web-conlicitacao':
+        return low.startswith('/blog/') and not low.startswith('/blog/page/')
+    return path.rstrip('/') not in {'', '/'} and not low.endswith(('.xml', '.rss'))
+
+
+def _web_link_candidates(raw_html, base_url, source):
+    soup = BeautifulSoup(raw_html, 'html.parser')
+    base_host = urlparse(base_url).netloc.lower().removeprefix('www.')
+    candidates = []
+    next_urls = []
+    seen = set()
+    for anchor in soup.find_all('a', href=True):
+        absolute = urljoin(base_url, str(anchor['href']).strip()).split('#', 1)[0]
+        parsed = urlparse(absolute)
+        if parsed.scheme not in {'http', 'https'}:
+            continue
+        if parsed.netloc.lower().removeprefix('www.') != base_host:
+            continue
+        label = anchor.get_text(' ', strip=True)
+        rel = ' '.join(anchor.get('rel', [])) if anchor.get('rel') else ''
+        if rel.casefold() == 'next' or re.search(r'\b(?:próxima|proxima|seguinte|next|mais)\s+p(?:á|a)gina\b', label, re.I):
+            next_urls.append(absolute)
+            continue
+        if _is_web_article_url(source, absolute) and absolute not in seen:
+            seen.add(absolute)
+            candidates.append(absolute)
+    return candidates, next_urls
+
+
+def _sitemap_urls(raw):
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return []
+    return [
+        loc.text.strip()
+        for loc in root.iter()
+        if loc.tag.rsplit('}', 1)[-1] == 'loc' and loc.text and loc.text.strip()
+    ]
+
+
+def _rss_article_links(raw, source):
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return []
+    links = []
+    for item in root.iter():
+        if item.tag.rsplit('}', 1)[-1] not in {'item', 'entry'}:
+            continue
+        values = []
+        for child in list(item):
+            tag = child.tag.rsplit('}', 1)[-1]
+            if tag == 'link':
+                href = child.get('href') or (child.text or '').strip()
+                if href:
+                    values.append(href)
+        for href in values:
+            if _is_web_article_url(source, href):
+                links.append(href)
+    return list(dict.fromkeys(links))
+
+
+def _web_topic_matches(source, article):
+    if source.get('web_article_scope') == 'dedicated_licitacao':
+        return True
+    haystack = ' '.join(
+        str(article.get(key) or '')
+        for key in ('title', 'secao', 'palavras_chave', 'texto')
+    ).casefold()
+    title_meta = ' '.join(
+        str(article.get(key) or '')
+        for key in ('title', 'secao', 'palavras_chave')
+    ).casefold()
+    positive = {term for term in source.get('topic_include_terms', ()) if term.casefold() in haystack}
+    title_positive = {term for term in source.get('topic_include_terms', ()) if term.casefold() in title_meta}
+    excluded = {term for term in source.get('topic_exclude_terms', WEB_ADMIN_EXCLUDE) if term.casefold() in title_meta}
+    if title_positive:
+        return True
+    if 'administrativo' in title_meta or 'direito público' in title_meta or 'direito publico' in title_meta:
+        return True
+    if len(positive) >= 2 and not excluded:
+        return True
+    return False
+
+
+def _article_cache_text(source, article):
+    parts = [
+        f'FONTE: {source["orgao"]}',
+        f'TÍTULO: {article["title"]}',
+        f'DATA_PUBLICACAO: {article["date_publicacao"].isoformat()}',
+    ]
+    if article.get('autor'):
+        parts.append(f'AUTOR: {article["autor"]}')
+    if article.get('secao'):
+        parts.append(f'SECAO: {article["secao"]}')
+    if article.get('palavras_chave'):
+        parts.append(f'PALAVRAS_CHAVE: {article["palavras_chave"]}')
+    parts.append(f'URL: {article["url"]}')
+    parts.extend(['', article['texto']])
+    return '\n'.join(parts).strip()
+
+
+def sync_web_articles(session, source, check=False):
+    target = int(source.get('max_documents', 250))
+    min_date = _parse_web_date(source.get('min_publication_date')) or date(2021, 1, 1)
+    candidates = []
+    seen = set()
+    page_queue = list(source.get('urls', ()))
+    visited_pages = set()
+    max_pages = int(source.get('discovery_max_pages', 80))
+
+    while page_queue and len(visited_pages) < max_pages:
+        page_url = page_queue.pop(0)
+        if page_url in visited_pages:
+            continue
+        visited_pages.add(page_url)
+        try:
+            kind, final, raw, text = fetch(session, page_url)
+        except Exception as exc:
+            print(f'  aviso: descoberta {page_url} falhou: {type(exc).__name__}: {exc}')
+            continue
+        if raw.lstrip().startswith(b'<?xml') or raw.lstrip().startswith(b'<'):
+            rss_links = _rss_article_links(raw, source)
+            if rss_links:
+                for link in rss_links:
+                    if link not in seen:
+                        seen.add(link)
+                        candidates.append(link)
+                continue
+            sitemap_links = _sitemap_urls(raw)
+            if sitemap_links:
+                for link in sitemap_links[:50]:
+                    if link not in page_queue and link not in visited_pages:
+                        page_queue.append(link)
+                continue
+        links, next_urls = _web_link_candidates(raw, final, source)
+        for link in links:
+            if link not in seen:
+                seen.add(link)
+                candidates.append(link)
+        for next_url in next_urls:
+            if next_url not in visited_pages and next_url not in page_queue:
+                page_queue.append(next_url)
+
+    if len(candidates) < target:
+        for sitemap_url in source.get('sitemap_urls', ()):
+            if len(candidates) >= target:
+                break
+            try:
+                kind, final, raw, text = fetch(session, sitemap_url)
+            except Exception as exc:
+                print(f'  aviso: sitemap {sitemap_url} falhou: {type(exc).__name__}: {exc}')
+                continue
+            sitemap_links = _sitemap_urls(raw)
+            if not sitemap_links:
+                continue
+            nested = []
+            for link in sitemap_links:
+                if re.search(r'\.(?:xml|xml\.gz)    last = ''
+    for url in _source_urls(source):
+        try:
+            kind, final, raw, text = fetch(session, url)
+            validate(source, text, linked=False, final_url=final)
+            seen_ids = {slug(source['id'])}
+            if not check and not source.get('index_only'):
+                write_cache(source, final, kind, raw, text, source['id'], source['title'])
+            linked_ok = linked_total = 0
+            link_failures = False
+            if follow_links and source.get('follow_links') and kind == 'html':
+                for link_url, link_title in discover_links(raw, final, source):
+                    linked_total += 1
+                    try:
+                        linked_kind, linked_final, linked_raw, linked_text = fetch(session, link_url)
+                        validate(source, linked_text, linked=True, final_url=linked_final, document_title=link_title)
+                        linked_ok += 1
+                        document_id = (
+                            f"{source['id']}__{slug(link_title)}__{hashlib.sha1(linked_final.encode()).hexdigest()[:10]}"
+                        )
+                        seen_ids.add(slug(document_id))
+                        if not check:
+                            write_cache(source, linked_final, linked_kind, linked_raw, linked_text, document_id, link_title)
+                    except Exception as exc:
+                        link_failures = True
+                        print(f'  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}; cache anterior preservado')
+            if source.get('index_only'):
+                seen_ids.discard(slug(source['id']))
+            removed = cleanup_source_cache(source['id'], seen_ids) if not check and not link_failures else 0
+            suffix = f', PDFs linkados {linked_ok}/{linked_total}' if linked_total else ''
+            if link_failures:
+                suffix += ', cache obsoleto preservado por falha de link'
+            elif removed:
+                suffix += f', cache obsoleto removido {removed}'
+            return True, f'OK {source["id"]} via {final} ({kind}, {len(text)} chars{suffix})', seen_ids
+        except Exception as exc:
+            last = f'{type(exc).__name__}: {exc}'
+    return False, f'FAIL {source["id"]}: {last}', set()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--required-only', action='store_true')
+    parser.add_argument('--legislation-only', action='store_true')
+    parser.add_argument('--strict', action='store_true')
+    parser.add_argument('--no-follow-links', action='store_true')
+    args = parser.parse_args()
+    sources = [
+        s for s in SOURCES
+        if (not args.required_only or s.get('required'))
+        and (
+            not args.legislation_only
+            or (s.get('source_role') == 'norma' and not s.get('index_only'))
+        )
+    ]
+    session = make_session()
+    if not args.check:
+        removed_retired = purge_retired_source_cache()
+        if removed_retired:
+            print(f'Fontes jurisprudenciais legadas removidas do cache: {removed_retired}')
+    failures = []
+    ok = 0
+    for index, source in enumerate(sources, 1):
+        print(f'[{index}/{len(sources)}] {source["id"]}', flush=True)
+        good, message, _ = sync_one(session, source, check=args.check, follow_links=not args.no_follow_links and not args.check)
+        print(message, flush=True)
+        ok += int(good)
+        if not good:
+            failures.append(source['id'])
+    print(f'Fontes: {ok}/{len(sources)} OK')
+    if failures:
+        print('Falhas:', ', '.join(failures))
+    strict_failures = []
+    if args.strict:
+        strict_failures = [
+            source['id']
+            for source in sources
+            if source['id'] in failures
+            and source.get('source_role') == 'norma'
+            and not source.get('index_only')
+        ]
+    if failures and args.required_only:
+        return 1
+    if strict_failures:
+        print('Falhas legislativas bloqueantes:', ', '.join(strict_failures))
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main()), urlparse(link).path.casefold()):
+                    nested.append(link)
+                elif _is_web_article_url(source, link):
+                    if link not in seen:
+                        seen.add(link)
+                        candidates.append(link)
+            for nested_url in nested[:30]:
+                if len(candidates) >= target * 6:
+                    break
+                try:
+                    _, _, nested_raw, _ = fetch(session, nested_url)
+                except Exception:
+                    continue
+                for link in _sitemap_urls(nested_raw):
+                    if _is_web_article_url(source, link) and link not in seen:
+                        seen.add(link)
+                        candidates.append(link)
+                        if len(candidates) >= target * 6:
+                            break
+
+    accepted = []
+    fetched = 0
+    seen_articles = set()
+    old_count = 0
+    for candidate in candidates:
+        if len(accepted) >= target or fetched >= target * 6:
+            break
+        fetched += 1
+        try:
+            kind, final, raw, text = fetch(session, candidate)
+            article = extract_web_article(raw, final)
+            if not article['title'] or len(article['texto']) < 800 or not article['date_publicacao']:
+                continue
+            if article['date_publicacao'] < min_date:
+                old_count += 1
+                if old_count >= 20:
+                    break
+                continue
+            if not _web_topic_matches(source, article):
+                continue
+            article_key = (article['url'], article['title'], article['date_publicacao'].isoformat())
+            if article_key in seen_articles:
+                continue
+            seen_articles.add(article_key)
+            accepted.append(article)
+        except Exception as exc:
+            print(f'  aviso: matéria {candidate} falhou: {type(exc).__name__}: {exc}')
+
+    accepted.sort(key=lambda item: item['date_publicacao'], reverse=True)
+    accepted = accepted[:target]
+    kept_ids = set()
+    for article in accepted:
+        document_id = (
+            f'{source["id"]}__{slug(article["title"])}__'
+            f'{hashlib.sha1(article["url"].encode("utf-8")).hexdigest()[:10]}'
+        )
+        kept_ids.add(slug(document_id))
+        if not check:
+            write_cache(
+                source,
+                article['url'],
+                'web_article',
+                article['texto'].encode('utf-8'),
+                _article_cache_text(source, article),
+                document_id,
+                article['title'],
+                extra_meta={
+                    'data_publicacao': article['date_publicacao'].isoformat(),
+                    'ano': article['date_publicacao'].year,
+                    'autor': article.get('autor'),
+                    'secao': article.get('secao'),
+                    'palavras_chave': article.get('palavras_chave'),
+                    'content_scope': source.get('web_article_scope'),
+                    'web_source_title': source.get('title'),
+                },
+            )
+
+    removed = cleanup_source_cache(source['id'], kept_ids) if not check else 0
+    return True, (
+        f'OK {source["id"]}: {len(accepted)} matérias aceitas '
+        f'(>= {min_date.isoformat()}, limite {target}, candidatas {len(candidates)}, '
+        f'buscadas {fetched}, cache removido {removed})'
+    ), kept_ids
 
 def sync_one(session, source, check=False, follow_links=True):
     last = ''
