@@ -92,7 +92,7 @@ def test_discover_links_honors_exclude_patterns():
     }
     html = (
         '<main>'
-        '<a href="/pareceres/PARECERREFERENCIAL.pdf">Parecer Referencial</a>'
+        '<a href="pareceres/PARECERREFERENCIAL.pdf">Parecer Referencial</a>'
         '<a href="/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
         '</main>'
     )
