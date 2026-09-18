@@ -11,7 +11,7 @@ def test_gpu_requirements_are_canonical():
 def test_gpu_requirements_do_not_mix_cpu_fastembed_stack():
     from pathlib import Path
 
-    requirements = Path(__file__).parents[1] / "requirements-gpu.txt"
+    requirements = Path(__file__).parents[1] / "requirements.txt"
     text = requirements.read_text(encoding="utf-8")
     lines = {line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")}
     assert "fastembed-gpu==0.8.0" in lines
