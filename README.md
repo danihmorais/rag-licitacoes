@@ -68,6 +68,22 @@ TCU, TCESP, STJ, STF, TCM-SP e TJSP são tratados pelo coletor estruturado de ju
 
 Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
 
+## Matérias jurídicas e de licitação
+
+O sincronizador também coleta matérias públicas na web como **doutrina/conteúdo secundário**, separadas das normas e da jurisprudência:
+
+- **Licitação:** Nova Lei de Licitação, Licitações Públicas, ConLicitação e Zênite. Essas fontes são tratadas como dedicadas ao tema de licitações e contratos.
+- **Direito Administrativo/Direito Público:** Migalhas e ConJur. Nessas duas fontes, somente matérias cujo título, seção, palavras-chave ou conteúdo apresentem relação suficiente com Direito Administrativo ou Direito Público são aceitas.
+
+O filtro temporal considera somente publicações a partir de **01/01/2021**. O limite inicial é de **250 matérias por fonte dedicada a licitações** e **300 por Migalhas e ConJur**, priorizando as publicações mais recentes. Assim, o corpus fica grande o suficiente para ter diversidade sem deixar conteúdo secundário dominar as normas e a jurisprudência.
+
+A coleta extrai título, data de publicação, autor, seção, palavras-chave, URL e corpo do artigo. Páginas de arquivo, categorias, paginação e navegação não entram como documentos. Conteúdo que não exponha uma data de publicação identificável é descartado, assim como páginas sem corpo substantivo suficiente ou páginas de bloqueio/casca de portal.
+
+Essas matérias recebem source_role=doutrina e authority_level=4. Portanto, não são tratadas como fonte oficial nem como norma vigente. A sincronização usa apenas conteúdo publicamente acessível e não tenta contornar login, paywall ou mecanismos de controle de acesso.
+
+A atualização ocorre junto de python scripts/sync_sources.py e, por consequência, de python ingest.py.
+
+
 ## Política de autoridade e jurisdição
 
 A recuperação usa uma escala única: authority_level=1 para norma, 2 para jurisprudência/controle, 3 para orientação oficial e 4 para doutrina. Dentro das normas, normative_rank distingue Constituição, lei, decreto e ato infralegal. O score final é ponderado por relevância (0.68), autoridade (0.20) e jurisdição (0.12) antes do limite de FINAL_K. A ponderação jurisdicional só atua quando a jurisdição pode ser determinada pelos filtros estruturados ou por indicadores explícitos da consulta; sem essa evidência, o componente permanece neutro. TCM-SP usa jurisdicao=municipal_sp e não é misturado com TCESP.
