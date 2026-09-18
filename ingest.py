@@ -339,7 +339,7 @@ def main():
     dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
-    active_names = {document.name for document in files}
+    active_names = {document_id_for(document) for document in files}
     stale_removed = prune_stale_documents(client, active_names)
     deleted_manifest = list(stale_removed)
     cache, errors, skipped = read_cache(), [], 0
@@ -373,9 +373,9 @@ def main():
                 errors.append(document.name)
                 continue
             old_ids = source_point_ids(client, doc_id)
-            dense_vectors = list(dense.embed(['passage: ' + item['text'] for item in chunks]))
+            dense_vectors = list(dense.embed([item['page_content'] for item in chunks]))
             validate_dense_vectors(dense_vectors, len(chunks))
-            sparse_vectors = list(sparse.embed([item['text'] for item in chunks]))
+            sparse_vectors = list(sparse.embed([item['page_content'] for item in chunks]))
             if len(sparse_vectors) != len(chunks):
                 raise RuntimeError(
                     f'quantidade de embeddings esparsas inválida: {len(sparse_vectors)} != {len(chunks)}'
@@ -385,7 +385,7 @@ def main():
                 point_id = str(
                     uuid.uuid5(
                         uuid.NAMESPACE_URL,
-                        f"{document.name}|{item['unit_id']}|{item['chunk_index']}|{item['text']}",
+                        f"{doc_id}|{item['unit_id']}|{item['chunk_index']}|{item['page_content']}",
                     )
                 )
                 points.append(
@@ -401,19 +401,18 @@ def main():
                         payload=item,
                     )
                 )
-            new_ids = {point.id for point in points}
             replace_document_points(client, doc_id, points)
-            cache[document.name] = {'sha256': digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': meta.get('source_id')}
+            cache[document.name] = {'sha256': digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
             document_manifest[doc_id] = {
                 'sha256': digest,
                 'chunks': len(points),
                 'source': document.name,
-                'source_id': meta.get('source_id'),
-                'regime_juridico': meta.get('regime_juridico'),
-                'status': meta.get('status'),
+                'source_id': document_meta.get('source_id'),
+                'regime_juridico': document_meta.get('regime_juridico'),
+                'status': document_meta.get('status'),
             }
-            if meta.get('revogado') or meta.get('status') == 'revogado':
-                revocations.append({'doc_id': doc_id, 'source': document.name, 'status': meta.get('status'), 'effective_to': meta.get('effective_to')})
+            if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
+                revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
             write_cache(cache)
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
