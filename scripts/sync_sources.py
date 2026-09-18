@@ -189,7 +189,7 @@ def _looks_like_shell(text):
     return shell_hits >= 2 and len(_substantive_lines(text)) <= 8
 
 
-def validate(source, text, *, linked=False, final_url=None):
+def validate(source, text, *, linked=False, final_url=None, document_title=None):
     stripped = text.strip()
     if source.get('index_only') and not linked:
         if not stripped:
@@ -219,7 +219,8 @@ def validate(source, text, *, linked=False, final_url=None):
             raise RuntimeError('conteúdo normativo sem artigo/dispositivo reconhecível')
     elif role == 'orientacao_oficial':
         markers = ('parecer', 'manual', 'guia', 'orientação', 'orientacao', 'modelo', 'boletim')
-        if not any(marker in stripped.casefold() for marker in markers):
+        identity = f"{document_title or ''} {final_url or ''}".casefold()
+        if not any(marker in stripped.casefold() or marker in identity for marker in markers):
             raise RuntimeError('conteúdo de orientação oficial sem marcador documental reconhecível')
 
 
@@ -239,6 +240,7 @@ def normalized_pattern(value):
 def discover_links(raw_html, base_url, source):
     soup = BeautifulSoup(raw_html, 'html.parser')
     patterns = [re.compile(normalized_pattern(p), re.I) for p in source.get('follow_patterns', ())]
+    exclude_patterns = [re.compile(normalized_pattern(p), re.I) for p in source.get('exclude_patterns', ())]
     host = urlparse(base_url).netloc.lower()
     out = []
     seen = set()
@@ -248,6 +250,8 @@ def discover_links(raw_html, base_url, source):
         if parsed.scheme not in {'http', 'https'} or (not source.get('allow_cross_host') and parsed.netloc.lower() != host):
             continue
         label = anchor.get_text(' ', strip=True)
+        if exclude_patterns and any(pattern.search(absolute) or pattern.search(label) for pattern in exclude_patterns):
+            continue
         if patterns and not any(pattern.search(absolute) or pattern.search(label) for pattern in patterns):
             continue
         if absolute in seen:
@@ -365,7 +369,7 @@ def sync_one(session, source, check=False, follow_links=True):
                     linked_total += 1
                     try:
                         linked_kind, linked_final, linked_raw, linked_text = fetch(session, link_url)
-                        validate(source, linked_text, linked=True, final_url=linked_final)
+                        validate(source, linked_text, linked=True, final_url=linked_final, document_title=link_title)
                         linked_ok += 1
                         document_id = (
                             f"{source['id']}__{slug(link_title)}__{hashlib.sha1(linked_final.encode()).hexdigest()[:10]}"
