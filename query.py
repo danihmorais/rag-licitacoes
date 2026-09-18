@@ -157,7 +157,7 @@ def qfilter(filters=None, query=None):
         must_not.append(
             models.FieldCondition(
                 key='regime_juridico',
-                match=models.MatchAny(any=['lei_8666', 'lei_10520']),
+                match=models.MatchAny(any=['lei_8666']),
             )
         )
     if not conditions and not must_not:
