@@ -837,7 +837,16 @@ class STFAdapter(JurisprudenciaAdapter):
                     if int(result.get('status') or 0) in {202, 403, 405}:
                         if attempt == 0:
                             page.reload(wait_until='domcontentloaded', timeout=120000)
-                            page.wait_for_timeout(2500)
+                            for _ in range(60):
+                                token = next(
+                                    (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
+                                    None,
+                                )
+                                if token:
+                                    break
+                                page.wait_for_timeout(1000)
+                            if not token:
+                                raise RuntimeError('STF não renovou aws-waf-token após novo desafio do AWS WAF.')
                             continue
                         raise RuntimeError(f'STF AWS WAF rejeitou a consulta HTTP {result.get("status")}: {result.get("waf") or "challenge"}')
                     if int(result.get('status') or 0) < 200 or int(result.get('status') or 0) >= 300:
@@ -983,7 +992,11 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                 str(field.get_attribute(name) or '')
                 for name in ('name', 'id', 'placeholder', 'aria-label')
             ).casefold()
-            if any(term in descriptor for term in wanted):
+            try:
+                context_text = clean_text(field.locator('xpath=ancestor::*[self::div or self::td or self::li][1]').inner_text()).casefold()
+            except Exception:
+                context_text = ''
+            if any(term in descriptor or term in context_text for term in wanted):
                 try:
                     field.fill(value)
                     return True
@@ -1004,7 +1017,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                 page.wait_for_timeout(1500)
                 if not self._fill_by_label(page, ('Todas estas palavras',), query):
                     raise RuntimeError('TCM-SP: campo "Todas estas palavras" não foi encontrado no portal oficial.')
-                buttons = page.locator('button, input[type="submit"], input[type="button"]')
+                buttons = page.locator('button, input[type="submit"], input[type="button"], a')
                 clicked = False
                 for index in range(buttons.count()):
                     button = buttons.nth(index)
