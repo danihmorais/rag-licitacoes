@@ -99,9 +99,9 @@ def _municipal_sp(id_: str, title: str, url: str, *, tipo_documento: str = "decr
 
 SOURCES = [
     _federal("cf1988", "Constituição Federal de 1988", "https://www2.camara.leg.br/legin/fed/consti/1988/constituicao-1988-5-outubro-1988-322142-normaatualizada-pl.html", tipo_documento="constituicao", required=True, ramo_direito="Constitucional"),
-    _federal("lei14133", "Lei nº 14.133/2021 — Licitações e Contratos Administrativos", "https://www2.camara.leg.br/legin/fed/lei/2021/lei-14133-1-abril-2021-791222-normaatualizada-pl.html", required=True, ramo_direito="Administrativo"),
-    _federal("decreto12807", "Decreto nº 12.807/2025 — valores da Lei nº 14.133/2021", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2025/decreto/d12807.htm", tipo_documento="decreto", required=True),
-    _federal("lindb", "Decreto-Lei nº 4.657/1942 — LINDB", "https://www.planalto.gov.br/ccivil_03/decreto-lei/del4657compilado.htm", tipo_documento="decreto_lei", required=True),
+    _federal("lei14133", "Lei nº 14.133/2021 — Licitações e Contratos Administrativos", "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2021/lei/l14133.htm", required=True, ramo_direito="Administrativo", fallback_urls=("https://www2.camara.leg.br/legin/fed/lei/2021/lei-14133-1-abril-2021-791222-normaatualizada-pl.html",)),
+    _federal("decreto12807", "Decreto nº 12.807/2025 — valores da Lei nº 14.133/2021", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2025/decreto/d12807.htm", tipo_documento="decreto", required=True, fallback_urls=("https://www2.camara.leg.br/legin/fed/decret/2025/decreto-12807-29-dezembro-2025-798615-publicacaooriginal-177646-pe.html",)),
+    _federal("lindb", "Decreto-Lei nº 4.657/1942 — LINDB", "https://www2.camara.leg.br/legin/fed/declei/1940-1949/decreto-lei-4657-4-setembro-1942-414605-normaatualizada-pe.html", tipo_documento="decreto_lei", required=True, fallback_urls=("https://www.planalto.gov.br/ccivil_03/decreto-lei/del4657compilado.htm",)),
     _federal("del200", "Decreto-Lei nº 200/1967 — Organização da Administração Federal", "https://www.planalto.gov.br/ccivil_03/decreto-lei/del0200.htm", tipo_documento="decreto_lei"),
     _federal("lei9784", "Lei nº 9.784/1999 — Processo Administrativo Federal", "https://www2.camara.leg.br/legin/fed/lei/1999/lei-9784-29-janeiro-1999-322239-normaatualizada-pl.html", required=True),
     _federal("lei8429", "Lei nº 8.429/1992 — Improbidade Administrativa", "https://www2.camara.leg.br/legin/fed/lei/1992/lei-8429-2-junho-1992-357452-normaatualizada-pl.html"),
