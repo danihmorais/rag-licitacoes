@@ -82,3 +82,34 @@ def test_validator_rejects_empty_discovery_page():
     source = next(item for item in SOURCES if item["id"] == "pl-discovery-lexml")
     with pytest.raises(RuntimeError, match="conteúdo vazio"):
         validate(source, "   ")
+
+
+def test_discover_links_honors_exclude_patterns():
+    source = {
+        "follow_patterns": [r"\\.pdf(?:$|\\?)"],
+        "exclude_patterns": [r"observatorio_da_democracia", r"(?:^|/)cartilha\\.pdf(?:$|\\?)"],
+        "max_follow": 10,
+    }
+    html = (
+        '<main>'
+        '<a href="/pareceres/PARECERREFERENCIAL.pdf">Parecer Referencial</a>'
+        '<a href="/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
+        '</main>'
+    )
+    assert discover_links(
+        html, "https://www.gov.br/agu/pagina", source
+    ) == [("https://www.gov.br/agu/pareceres/PARECERREFERENCIAL.pdf", "Parecer Referencial")]
+
+
+def test_validator_accepts_official_guidance_when_marker_is_only_in_link_metadata():
+    source = next(item for item in SOURCES if item["id"] == "agu-pareceres-referenciais")
+    content = "\n".join(
+        ["MANIFESTAÇÃO JURÍDICA " + ("fundamentação jurídica " * 25) for _ in range(6)]
+    )
+    validate(
+        source,
+        content,
+        linked=True,
+        final_url="https://www.gov.br/agu/documentos/00009.pdf",
+        document_title="PARECER REFERENCIAL n. 00009/2025/GERTEC/ELIC/PGF/AGU",
+    )
