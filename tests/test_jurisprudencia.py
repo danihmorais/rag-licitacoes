@@ -279,7 +279,7 @@ def test_tjsp_reports_visible_antibot_without_treating_it_as_zero():
 
 
 def test_tcesp_search_sends_required_form_markers():
-    html = b'''<html><body><table><tr><th>N° Proc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr></table></body></html>'''
+    html = '''<html><body><table><tr><th>N° Proc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr></table></body></html>'''.encode('utf-8')
     session = FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])
     try:
         TCESPAdapter(session).search("licitação", 1)
