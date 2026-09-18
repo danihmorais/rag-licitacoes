@@ -31,6 +31,7 @@ class GeminiProvider(LLMProvider):
             "generationConfig": {"temperature": self.temperature},
         }
 
+        response = None
         try:
             response = requests.post(url, params=params, json=payload, timeout=self.timeout)
             response.raise_for_status()
