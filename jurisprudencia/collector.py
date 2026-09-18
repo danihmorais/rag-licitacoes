@@ -370,7 +370,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 if not cells:
                     continue
                 joined = ' | '.join(cells)
-                if joined.casefold().startswith('trechos localizados'):
+                if 'trechos localizados' in joined.casefold():
                     expect_excerpt = True
                     continue
                 if expect_excerpt and records and len(cells) == 1:
