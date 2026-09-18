@@ -435,7 +435,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
         ]
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
-        raw_html = response.text
+        raw_html = getattr(response, 'text', None) or response.content.decode(getattr(response, 'encoding', None) or 'utf-8', errors='replace')
         tbody_start = raw_html.find('<tbody')
         tbody_end = raw_html.find('</tbody>')
         if tbody_start < 0 or tbody_end < 0:
@@ -444,16 +444,16 @@ class TCESPAdapter(JurisprudenciaAdapter):
         lines = re.split(r'<tr(?=[\s>])', body)[1:]
         records: list[JurisprudenciaRecord] = []
         for index, line in enumerate(lines):
-            if 'class="borda-superior"' not in line:
-                continue
             tds = [match.group(1) for match in re.finditer(r'<td[^>]*>([\s\S]*?)(?=</td>|<td|</tr>)', line)]
-            if len(tds) < 2:
+            if len(tds) < 7:
                 continue
             process = clean_text(re.sub(r'<a[^>]*>|</a>', '', tds[1]))
-            if not process or process in seen:
+            if not re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', process):
+                continue
+            if process in seen:
                 continue
             date_text = clean_text(tds[2]) if len(tds) > 2 else ''
-            next_line = lines[index + 1] if index + 1 < len(lines) and 'class="borda-superior"' not in lines[index + 1] else ''
+            next_line = lines[index + 1] if index + 1 < len(lines) and not re.search(r'<td[^>]*>\s*[^<]*\d+\s*/\s*\d+\s*/\s*\d+\s*</td>', lines[index + 1]) else ''
             trecho_items = [clean_text(match.group(1)) for match in re.finditer(r'<li>([\s\S]*?)</li>', next_line)]
             trecho = ' '.join(item for item in trecho_items if item)
             pdf_match = re.search(r"href=['\"]([^'\"]*\.pdf)['\"]", line, re.I)
