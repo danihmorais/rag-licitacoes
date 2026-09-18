@@ -25,11 +25,29 @@ class FakeSession:
     def request(self, method, *args, **kwargs): return self.get(*args, **kwargs)
 
 
-def test_tcu_adapter_normalizes_official_acordao_payload():
-    session = FakeSession([FakeResponse([{"key":"abc-123","tipo":"Acórdão","numeroAcordao":"1234/2026","colegiado":"Plenário","dataSessao":"27/08/2026","relator":"Ministro X","situacao":"Publicado","sumario":"Licitação e contratação pública.","urlAcordao":"https://portal.tcu.gov.br/acordao/abc","urlArquivo":"https://portal.tcu.gov.br/acordao/abc","urlArquivoPDF":"https://portal.tcu.gov.br/acordao/abc.pdf","area":"Licitação","tema":"Contratação","subtema":"Edital"}])])
+def test_tcu_adapter_uses_current_public_rest_contract():
+    session = FakeSession([
+        FakeResponse({
+            "quantidadeEncontrada": 1,
+            "documentos": [{
+                "KEY": "4802024",
+                "NUMACORDAO": "480",
+                "ANOACORDAO": "2024",
+                "COLEGIADO": "Plenário",
+                "DTSESSAO": "27/08/2024",
+                "RELATOR": "Ministro X",
+                "SITUACAO": "Publicado",
+                "SUMARIO": "Licitação e contratação pública.",
+                "AREA": "Licitação", "TEMA": "Contratação", "SUBTEMA": "Edital"
+            }]
+        })
+    ])
     records = TCUAdapter(session).search("licitação", 1)
-    assert len(records) == 1 and records[0].numero_decisao == "1234/2026" and records[0].orgao_julgador == "Plenário"
-
+    assert len(records) == 1
+    assert TCUAdapter.endpoint == "https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo"
+    assert records[0].numero_decisao == "480/2024"
+    assert records[0].orgao_julgador == "Plenário"
+    assert records[0].url_oficial.endswith("/4802024")
 
 def test_tcesp_adapter_parses_result_table():
     html = '''<html><body><table><tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr><tr><td>Relatório / Voto</td><td>5600/989/25</td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Exame de edital</td><td>2025</td></tr><tr><td colspan="8">Trechos localizados no documento:</td></tr><tr><td colspan="8">A exigência de qualificação técnica deve ser pertinente e proporcional.</td></tr></table></body></html>'''.encode("utf-8")
