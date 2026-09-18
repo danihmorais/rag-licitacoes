@@ -284,7 +284,7 @@ def replace_document_points(client, doc_id, new_points):
     return old_ids
 
 
-def prune_stale_documents(client, active_names):
+def prune_stale_documents(client, active_names, *, delete=True):
     if not config.RAG_PRUNE_STALE:
         return []
     if not client.collection_exists(config.COLLECTION_NAME):
@@ -307,8 +307,9 @@ def prune_stale_documents(client, active_names):
         if offset is None:
             break
     stale = sorted(indexed_ids - {str(item) for item in active_names})
-    for doc_id in stale:
-        delete_doc(client, doc_id)
+    if delete:
+        for doc_id in stale:
+            delete_doc(client, doc_id)
     return stale
 
 
@@ -340,8 +341,8 @@ def main():
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
     active_names = {document_id_for(document) for document in files}
-    stale_removed = prune_stale_documents(client, active_names)
-    deleted_manifest = list(stale_removed)
+    stale_removed = prune_stale_documents(client, active_names, delete=False)
+    deleted_manifest = []
     cache, errors, skipped = read_cache(), [], 0
     document_manifest = {}
     revocations = []
@@ -364,6 +365,16 @@ def main():
             and indexed_count > 0
         ):
             skipped += 1
+            document_manifest[doc_id] = {
+                'sha256': digest,
+                'chunks': indexed_count,
+                'source': document.name,
+                'source_id': document_meta.get('source_id'),
+                'regime_juridico': document_meta.get('regime_juridico'),
+                'status': document_meta.get('status'),
+            }
+            if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
+                revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
             continue
         try:
             pages = extract_pages(document)
@@ -372,7 +383,6 @@ def main():
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
                 continue
-            old_ids = source_point_ids(client, doc_id)
             dense_vectors = list(dense.embed([item['page_content'] for item in chunks]))
             validate_dense_vectors(dense_vectors, len(chunks))
             sparse_vectors = list(sparse.embed([item['page_content'] for item in chunks]))
@@ -429,6 +439,13 @@ def main():
     for name, entry in cache.items():
         if isinstance(entry, dict) and entry.get('doc_id') and name in {document.name for document in files}:
             document_manifest.setdefault(str(entry['doc_id']), {**entry, 'source': name})
+    for doc_id in stale_removed:
+        delete_doc(client, doc_id)
+        deleted_manifest.append({
+            'doc_id': doc_id,
+            'reason': 'stale',
+            'timestamp': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+        })
     write_manifest(
         documents=document_manifest,
         deletions=deleted_manifest,
