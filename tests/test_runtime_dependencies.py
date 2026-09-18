@@ -1,6 +1,3 @@
-from importlib.metadata import version
-
-
 def test_gpu_requirements_are_canonical():
     from pathlib import Path
 
