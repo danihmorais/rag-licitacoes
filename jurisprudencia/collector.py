@@ -667,7 +667,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
             absolute = urljoin(base_url, str(anchor['href'])).split('#', 1)[0]
             parsed = urlparse(absolute)
             path = parsed.path.casefold()
-            if parsed.netloc.lower() != 'portal.tcm.sp.gov.br':
+            if parsed.netloc.lower() not in {'portal.tcm.sp.gov.br', 'jurisprudencia.tcm.sp.gov.br'}:
                 continue
             if '/management/acordaoitem/documento/' not in path and '/acordao/detalhe/' not in path:
                 continue
@@ -755,7 +755,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                     parsed = self._parse_records(raw, final, variant)
                     if parsed:
                         return self._enrich(parsed[:limit], detail=detail, with_content=with_content)
-        return []
+        raise RuntimeError('Pesquisa de jurisprudência do TCM-SP não retornou resultados após tentar os endpoints oficiais.')
 
     def _enrich(self, records, *, detail: bool, with_content: bool):
         if not (detail or with_content):
