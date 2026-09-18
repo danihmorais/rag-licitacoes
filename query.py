@@ -133,7 +133,8 @@ def qfilter(filters):
 
 
 def embedding_kwargs():
-    return {'providers': config.FASTEMBED_PROVIDERS} if config.FASTEMBED_PROVIDERS else {}
+    config.validate_gpu_runtime()
+    return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
 def hybrid(client, dense, sparse, query, query_filter):
@@ -388,7 +389,7 @@ def build_runtime():
         raise RuntimeError(f'Coleção Qdrant não encontrada: {config.COLLECTION_NAME}. Rode python ingest.py.')
     dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
-    reranker = TextCrossEncoder(model_name=config.RERANK_MODEL)
+    reranker = TextCrossEncoder(model_name=config.RERANK_MODEL, **embedding_kwargs())
     llm = get_llm_provider()
     return client, dense, sparse, reranker, llm
 

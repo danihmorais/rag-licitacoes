@@ -26,7 +26,7 @@ FINAL_K = int(os.getenv('RAG_FINAL_K', '8'))
 CONTEXT_NEIGHBORS = int(os.getenv('RAG_CONTEXT_NEIGHBORS', '1'))
 MAX_CONTEXT_CHARS = int(os.getenv('RAG_MAX_CONTEXT_CHARS', '26000'))
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
-FASTEMBED_PROVIDERS = [x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', '').split(',') if x.strip()] or None
+FASTEMBED_PROVIDERS = tuple(x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', 'CUDAExecutionProvider').split(',') if x.strip())
 RAG_SYNC_SOURCES = os.getenv('RAG_SYNC_SOURCES', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_SYNC_JURISPRUDENCIA = os.getenv('RAG_SYNC_JURISPRUDENCIA', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_PRUNE_STALE = os.getenv('RAG_PRUNE_STALE', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
@@ -60,6 +60,7 @@ def validate_config() -> None:
         (0 < FINAL_K <= CANDIDATES_K, 'RAG_FINAL_K deve ser maior que zero e não exceder RAG_CANDIDATES_K.'),
         (MAX_CONTEXT_CHARS > 0, 'RAG_MAX_CONTEXT_CHARS deve ser maior que zero.'),
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
+        (FASTEMBED_PROVIDERS == ('CUDAExecutionProvider',), 'RAG_FASTEMBED_PROVIDERS deve ser exclusivamente CUDAExecutionProvider.'),
         (RERANK_SCORE_MODE in {'sigmoid', 'identity'}, "RAG_RERANK_SCORE_MODE deve ser 'sigmoid' ou 'identity'."),
         (RERANK_RELEVANCE_WEIGHT >= 0, 'RAG_RERANK_RELEVANCE_WEIGHT não pode ser negativo.'),
         (RERANK_AUTHORITY_WEIGHT >= 0, 'RAG_RERANK_AUTHORITY_WEIGHT não pode ser negativo.'),
@@ -72,6 +73,19 @@ def validate_config() -> None:
     errors = [message for ok, message in checks if not ok]
     if errors:
         raise ValueError('Configuração inválida: ' + ' '.join(errors))
+
+
+def validate_gpu_runtime() -> None:
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise RuntimeError('Execução GPU obrigatória: onnxruntime-gpu não está instalado.') from exc
+    providers = tuple(ort.get_available_providers())
+    if 'CUDAExecutionProvider' not in providers:
+        raise RuntimeError(
+            'Execução GPU obrigatória: CUDAExecutionProvider não está disponível no ONNX Runtime. '
+            f'Provedores disponíveis: {", ".join(providers) or "nenhum"}.'
+        )
 
 
 def ensure_directories():

@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, TJSPAdapter, TRIBUNALS, _discover_form, save_record
+import pytest
+
+from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, TJSPAdapter, TRIBUNALS, _discover_form, _query_matches, save_record
 from jurisprudencia.schema import JurisprudenciaRecord
 
 
@@ -66,7 +68,7 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
 
 
 def test_stj_adapter_finds_official_acordao_links():
-    html = b'<html><body><a href="/SCON/jurisprudencia/doc.jsp?livre=123456">REsp 1.234.567/SP</a></body></html>'
+    html = '<html><body><h1>Pesquisa de Jurisprudência</h1><a href="/SCON/jurisprudencia/doc.jsp?livre=123456">REsp 1.234.567/SP</a></body></html>'.encode("utf-8")
     records = STJAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://scon.stj.jus.br/SCON/pesquisar.jsp?livre=licitação")])).search("licitação", 1)
     assert len(records) == 1 and records[0].tribunal == "STJ" and "1.234.567/SP" in records[0].numero_processo
 
@@ -145,4 +147,27 @@ def test_tjsp_save_record_has_state_scope(tmp_path: Path):
 
 
 def test_tcm_sp_uses_current_portal_endpoint():
-    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao"
+    assert TCMSPAdapter.endpoint == "https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"
+
+
+def test_query_matching_requires_all_terms_for_short_queries():
+    assert _query_matches("contrato administrativo", "contrato administrativo")
+    assert not _query_matches("contrato administrativo", "contrato")
+
+
+def test_query_matching_requires_half_terms_for_long_queries():
+    assert _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo financeiro")
+    assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
+
+
+def test_tcm_sp_missing_search_form_is_reported_as_structure_failure():
+    html = "<html><body><p>Portal indisponível.</p></body></html>".encode("utf-8")
+    with pytest.raises(RuntimeError, match="Formulário de pesquisa do TCM-SP"):
+        TCMSPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index")])).search("licitação", 1)
+
+
+def test_tcesp_missing_results_table_is_reported_as_structure_failure():
+    html = "<html><body><p>A página do TCESP foi redesenhada.</p></body></html>".encode("utf-8")
+    with pytest.raises(RuntimeError, match="Estrutura da pesquisa TCESP"):
+        TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
+

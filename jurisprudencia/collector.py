@@ -100,12 +100,21 @@ def _as_list(*values: str) -> list[str]:
     return [value for value in (clean_text(v) for v in values) if value]
 
 
+def _query_terms(query: str) -> list[str]:
+    return list(dict.fromkeys(
+        term for term in re.findall(r'[\wÀ-ÿ]+', query.casefold())
+        if len(term) >= 3
+    ))
+
+
 def _query_matches(query: str, *fields: str) -> bool:
-    if not query.strip():
+    terms = _query_terms(query)
+    if not terms:
         return True
     haystack = clean_text(' '.join(fields)).casefold()
-    terms = [term for term in re.findall(r'[\wÀ-ÿ]+', query.casefold()) if len(term) >= 3]
-    return not terms or any(term in haystack for term in terms)
+    hits = sum(term in haystack for term in terms)
+    required = len(terms) if len(terms) <= 2 else max(2, (len(terms) + 1) // 2)
+    return hits >= required
 
 
 def _find_query_field(form: BeautifulSoup, keywords: tuple[str, ...]):
@@ -362,7 +371,10 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 None,
             )
             if table is None:
-                break
+                raise RuntimeError(
+                    'Estrutura da pesquisa TCESP alterada: tabela de resultados com coluna '
+                    'N° Proc./Nº Proc. não foi encontrada.'
+                )
             found_on_page = 0
             expect_excerpt = False
             for row in table.find_all('tr'):
@@ -443,6 +455,9 @@ class STJAdapter(JurisprudenciaAdapter):
         response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
+        page_descriptor = clean_text(soup.get_text(' ', strip=True)).casefold()
+        if 'pesquisa de jurisprudência' not in page_descriptor and 'pesquisa jurisprudencial' not in page_descriptor:
+            raise RuntimeError('Estrutura do SCON/STJ não reconhecida: área de pesquisa jurisprudencial não encontrada.')
         records = []
         seen = set()
         for anchor in soup.find_all('a', href=True):
@@ -500,7 +515,7 @@ class STFAdapter(JurisprudenciaAdapter):
         }
         kind, final, raw = fetch(self.session, self.endpoint, method='GET', params=params)
         if kind != 'html':
-            return []
+            raise RuntimeError('Pesquisa do STF retornou uma resposta não HTML inesperada.')
         soup = BeautifulSoup(raw, 'html.parser')
         records = []
         seen = set()
@@ -547,12 +562,12 @@ class STFAdapter(JurisprudenciaAdapter):
 
 class TCMSPAdapter(JurisprudenciaAdapter):
     tribunal = 'TCM-SP'
-    endpoint = 'https://portal.tcm.sp.gov.br/Acordao'
+    endpoint = 'https://jurisprudencia.tcm.sp.gov.br/Acordao/Index'
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         kind, final, raw = fetch(self.session, self.endpoint)
         if kind != 'html':
-            return []
+            raise RuntimeError('Página de pesquisa do TCM-SP retornou uma resposta não HTML inesperada.')
         soup = BeautifulSoup(raw, 'html.parser')
         result_raw = raw
         result_url = final
@@ -566,23 +581,25 @@ class TCMSPAdapter(JurisprudenciaAdapter):
             ),
             None,
         )
-        if form is not None:
-            payload = _form_data(form, query, ('pesquisa', 'ementa', 'palavra', 'termo', 'livre', 'acord'))
-            if payload is not None:
-                action, method, data = payload
-                action = urljoin(final, action or final)
-                try:
-                    kind, result_url, result_raw = fetch(
-                        self.session,
-                        action,
-                        method='POST' if method == 'post' else 'GET',
-                        data=data if method == 'post' else None,
-                        params=data if method != 'post' else None,
-                    )
-                except Exception as exc:
-                    print(f'aviso: consulta TCM-SP pelo formulário falhou: {type(exc).__name__}: {exc}')
+        if form is None:
+            raise RuntimeError('Formulário de pesquisa do TCM-SP não foi encontrado na página oficial.')
+        payload = _form_data(form, query, ('pesquisa', 'ementa', 'palavra', 'termo', 'livre', 'acord'))
+        if payload is None:
+            raise RuntimeError('Campo de pesquisa do TCM-SP não foi encontrado no formulário oficial.')
+        action, method, data = payload
+        action = urljoin(final, action or final)
+        try:
+            kind, result_url, result_raw = fetch(
+                self.session,
+                action,
+                method='POST' if method == 'post' else 'GET',
+                data=data if method == 'post' else None,
+                params=data if method != 'post' else None,
+            )
+        except Exception as exc:
+            raise RuntimeError(f'Consulta TCM-SP pelo formulário falhou: {type(exc).__name__}: {exc}') from exc
         if kind != 'html':
-            return []
+            raise RuntimeError('Pesquisa do TCM-SP retornou uma resposta não HTML inesperada.')
         soup = BeautifulSoup(result_raw, 'html.parser')
         records = []
         seen = set()
@@ -666,7 +683,7 @@ class TJSPAdapter(JurisprudenciaAdapter):
             params=data if method != 'post' else None,
         )
         if kind != 'html':
-            return []
+            raise RuntimeError('Pesquisa do TJSP retornou uma resposta não HTML inesperada.')
         soup = BeautifulSoup(result_raw, 'html.parser')
         records = []
         seen = set()
@@ -829,11 +846,13 @@ def collect(
     with_content=False,
     output_dir=None,
     persist=True,
+    strict=False,
 ) -> list[JurisprudenciaRecord]:
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     session = make_session()
     source_adapters = adapters(session)
     output = []
+    failures = []
     for tribunal in tribunals:
         if tribunal not in source_adapters:
             raise ValueError(f'Tribunal não suportado: {tribunal}')
@@ -845,13 +864,18 @@ def collect(
                 with_content=with_content,
             )
         except Exception as exc:
-            print(f'FAIL {tribunal}: {type(exc).__name__}: {exc}')
+            message = f'{type(exc).__name__}: {exc}'
+            print(f'FAIL {tribunal}: {message}')
+            failures.append((tribunal, message))
             continue
         for record in records:
             if persist:
                 save_record(record, output_dir)
             output.append(record)
         print(f'OK {tribunal}: {len(records)} registros para {query!r}')
+    if strict and failures:
+        details = '; '.join(f'{tribunal}: {message}' for tribunal, message in failures)
+        raise RuntimeError('Falhas de coleta jurisprudencial: ' + details)
     return output
 
 

@@ -122,6 +122,12 @@ def test_catalog_uses_consistent_authority_tiers():
     )
 
 
+def test_config_rejects_cpu_fastembed_provider(monkeypatch):
+    monkeypatch.setattr(config, 'FASTEMBED_PROVIDERS', ('CPUExecutionProvider',))
+    with pytest.raises(ValueError, match='exclusivamente CUDAExecutionProvider'):
+        config.validate_config()
+
+
 def test_config_rejects_inconsistent_retrieval_limits(monkeypatch):
     monkeypatch.setattr(config, 'FINAL_K', config.CANDIDATES_K + 1)
     with pytest.raises(ValueError, match='RAG_FINAL_K'):

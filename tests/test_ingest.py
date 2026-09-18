@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import ingest
 
 
@@ -46,3 +48,11 @@ def test_prune_stale_documents_removes_sources_missing_from_corpus():
     removed = ingest.prune_stale_documents(client, {'active.txt'})
     assert removed == 1
     assert len(client.deleted) == 1
+
+
+def test_sync_jurisprudencia_strict_failure_is_fatal(monkeypatch):
+    monkeypatch.setattr(ingest.config, 'RAG_SYNC_JURISPRUDENCIA', True)
+    monkeypatch.setattr(ingest.config, 'JURISPRUDENCIA_STRICT', True)
+    monkeypatch.setattr(ingest.subprocess, 'run', lambda *args, **kwargs: type('Result', (), {'returncode': 1})())
+    with pytest.raises(RuntimeError, match='jurisprudência'):
+        ingest.sync_jurisprudencia()
