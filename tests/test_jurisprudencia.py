@@ -141,32 +141,26 @@ def test_stf_adapter_uses_current_search_api_and_maps_hits(monkeypatch):
     assert records[0].inteiro_teor == "Inteiro teor do acórdão."
     assert STFAdapter.endpoint == "https://jurisprudencia.stf.jus.br/api/search/search"
 
-def test_tjsp_adapter_uses_esaj_second_degree_search_and_result_pdf():
-    html = '''<html><body>
-    <form action="/cjsg/resultadoCompleta.do" method="get">
-      <label for="pesquisaLivre">Pesquisa Livre</label>
-      <input id="pesquisaLivre" name="pesquisaLivre" type="text">
-    </form>
-    </body></html>'''
-    result = '''<html><body><table>
-      <tr><td>Acórdão</td><td>
-        <a href="/cjsg/getArquivo.do?cdAcordao=15096525&cdForo=0">Inteiro teor</a>
-        1017109-50.2020.8.26.0053
-      </td><td>Órgão julgador: 5ª Câmara de Direito Público</td>
-      <td>Relator: Des. Exemplo</td><td>Data do julgamento: 07/12/2023</td>
-      <td>Licitação e contrato administrativo</td></tr>
-    </table></body></html>'''
-    records = TJSPAdapter(
-        FakeSession([
-            FakeResponse(html.encode("utf-8"), content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
-            FakeResponse(result.encode("utf-8"), content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
-        ])
-    ).search("licitação contrato administrativo", 1)
+def test_tjsp_adapter_uses_current_cjsg_post_then_page_contract():
+    initial = '''<html><body><form action="/cjsg/resultadoCompleta.do" method="post"></form></body></html>'''.encode("utf-8")
+    posted = '''<html><body><input name="conversationId" value="CONV123"></body></html>'''.encode("utf-8")
+    page = '''<html><body><table><tr class="fundocinza1"><td>Acórdão</td><td><table>
+      <tr class="ementaClass2"><td><a class="esajLinkLogin downloadEmenta" cdacordao="15096525" cdforo="0">1017109-50.2020.8.26.0053</a></td></tr>
+      <tr class="ementaClass2"><td><strong>Órgão julgador:</strong> 5ª Câmara de Direito Público</td></tr>
+      <tr class="ementaClass2"><td><strong>Relator:</strong> Des. Exemplo</td></tr>
+      <tr class="ementaClass2"><td><strong>Data de publicação:</strong> 12/12/2023</td></tr>
+      <tr class="ementaClass2"><td><strong>Ementa:</strong> Licitação e contrato administrativo.</td></tr>
+    </table></td></tr></table></body></html>'''.encode("utf-8")
+    records = TJSPAdapter(FakeSession([
+        FakeResponse(initial, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+        FakeResponse(posted, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+        FakeResponse(page, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/trocaDePagina.do?pagina=1"),
+    ])).search("licitação contrato administrativo", 1, detail=True)
     assert len(records) == 1
-    assert records[0].tribunal == "TJSP"
     assert records[0].numero_processo == "1017109-50.2020.8.26.0053"
+    assert records[0].relator == "Des. Exemplo"
+    assert records[0].data_publicacao == "12/12/2023"
     assert records[0].url_oficial.endswith("cdForo=0")
-
 
 def test_tjsp_save_record_has_state_scope(tmp_path: Path):
     record = JurisprudenciaRecord(
@@ -242,25 +236,22 @@ def test_tcm_sp_parses_current_portal_document_link():
 
 
 def test_tjsp_falls_back_from_long_query():
-    empty_search = b'<html><body><form action="/cjsg/resultadoCompleta.do"><label>Pesquisa Livre</label><input name="pesquisaLivre" type="text"></form></body></html>'
-    empty_result = b'<html><body></body></html>'
-    result = '''<html><body><table>
-      <tr><td>Acórdão</td><td>
-        <a href="/cjsg/getArquivo.do?cdAcordao=15099999&cdForo=0">Inteiro teor</a>
-        1000000-10.2026.8.26.0053
-      </td><td>Órgão julgador: 1ª Câmara de Direito Público</td>
-      <td>Relator: Des. Exemplo</td><td>Data do julgamento: 17/09/2026</td>
-      <td>Lei 14.133 licitação</td></tr>
-    </table></body></html>'''.encode("utf-8")
+    initial = b'<html><body><form action="/cjsg/resultadoCompleta.do" method="post"></form></body></html>'
+    posted = b'<html><body></body></html>'
+    result = '''<html><body><table><tr class="fundocinza1"><td>Acórdão</td><td><table>
+      <tr class="ementaClass2"><td><a class="esajLinkLogin downloadEmenta" cdacordao="15099999" cdforo="0">1000000-10.2026.8.26.0053</a></td></tr>
+      <tr class="ementaClass2"><td><strong>Ementa:</strong> Lei 14.133 licitação.</td></tr>
+    </table></td></tr></table></body></html>'''.encode("utf-8")
     records = TJSPAdapter(FakeSession([
-        FakeResponse(empty_search, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
-        FakeResponse(empty_result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
-        FakeResponse(empty_search, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
-        FakeResponse(result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+        FakeResponse(initial, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+        FakeResponse(posted, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+        FakeResponse(b'<html><body></body></html>', content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/trocaDePagina.do"),
+        FakeResponse(initial, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do"),
+        FakeResponse(posted, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do"),
+        FakeResponse(result, content_type="text/html", url="https://esaj.tjsp.jus.br/cjsg/trocaDePagina.do?pagina=1"),
     ])).search("Lei 14.133 licitação contrato administrativo", 1)
     assert len(records) == 1
     assert records[0].numero_processo == "1000000-10.2026.8.26.0053"
-
 
 def test_stj_adapter_uses_current_open_data_host():
     assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
@@ -278,12 +269,12 @@ def test_tjsp_reports_visible_antibot_without_treating_it_as_zero():
         TJSPAdapter._check_access_block(html)
 
 
-def test_tcesp_search_sends_required_form_markers():
-    html = '''<html><body><table><tr><th>N° Proc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr></table></body></html>'''.encode('utf-8')
-    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])
-    try:
-        TCESPAdapter(session).search("licitação", 1)
-    except RuntimeError:
-        pass
-    else:
+def test_tcesp_search_does_not_send_blank_document_type():
+    class CaptureSession(FakeSession):
+        def get(self, *args, **kwargs):
+            assert 'tipoDocumento' not in kwargs.get('params', [])
+            return super().get(*args, **kwargs)
+    html = '<html><body><table><tr><th>N° Proc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr></table></body></html>'.encode('utf-8')
+    with pytest.raises(RuntimeError):
+        TCESPAdapter(CaptureSession([FakeResponse(html, content_type='text/html', url='https://www.tce.sp.gov.br/jurisprudencia/pesquisar')])).search('licitação', 1)
         raise AssertionError("a página sintética não deveria gerar registro")
