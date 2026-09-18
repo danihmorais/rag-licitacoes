@@ -138,6 +138,8 @@ def test_tcesp_srp_source_accepts_official_deliberation_pdf_content():
             "(SEI N. 0005763/2025-11)",
             "Artigo 1º - " + ("Sistema de Registro de Preços e adesão a atas. " * 4),
             "Artigo 2º - " + ("Cumprimento dos procedimentos pelos órgãos e entidades. " * 4),
+            "I - " + ("estimativa das quantidades demandadas para registro e futura contratação. " * 4),
+            "II - " + ("precisa descrição dos itens pretendidos e dos materiais e serviços. " * 4),
             "Artigo 3º - " + ("Processo administrativo específico para adesão e demonstração da vantajosidade. " * 4),
             "Artigo 5º - " + ("Regras para adesões no Estado e nos Municípios paulistas. " * 4),
         ]
