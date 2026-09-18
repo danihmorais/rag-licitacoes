@@ -241,6 +241,7 @@ WEB_ARTICLE_BASE = {
     "source_role": "doutrina",
     "authority_level": 4,
     "status": "orientativo",
+    "is_official": False,
     "tipo_documento": "materia_web",
     "index_only": False,
     "min_publication_date": "2021-01-01",
