@@ -425,7 +425,7 @@ def context_with_sources(points):
     parts, included, total = [], [], 0
     for index, point in enumerate(points, 1):
         payload = point.payload
-        text = payload.get('full_unit_text') or payload.get('text', '')
+        text = payload.get('page_content') or payload.get('full_unit_text') or payload.get('text', '')
         page = payload.get('page')
         page_end = payload.get('page_end') or page
         page_label = 'p. desconhecida' if page is None else (f'p. {page}' if page == page_end else f'pp. {page}-{page_end}')
