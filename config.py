@@ -32,7 +32,8 @@ RAG_SYNC_JURISPRUDENCIA = os.getenv('RAG_SYNC_JURISPRUDENCIA', '1').strip().lowe
 RAG_PRUNE_STALE = os.getenv('RAG_PRUNE_STALE', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 JURISPRUDENCIA_QUERY = os.getenv('RAG_JURISPRUDENCIA_QUERY', '').strip()
 JURISPRUDENCIA_QUERIES = parse_queries(os.getenv('RAG_JURISPRUDENCIA_QUERIES'))
-JURISPRUDENCIA_LIMIT = int(os.getenv('RAG_JURISPRUDENCIA_LIMIT', '12'))
+JURISPRUDENCIA_LIMIT = int(os.getenv('RAG_JURISPRUDENCIA_LIMIT', '200'))
+JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL = int(os.getenv('RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL', '150'))
 JURISPRUDENCIA_DETAIL = os.getenv('RAG_JURISPRUDENCIA_DETAIL', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
 JURISPRUDENCIA_WITH_CONTENT = os.getenv('RAG_JURISPRUDENCIA_WITH_CONTENT', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
 JURISPRUDENCIA_STRICT = os.getenv('RAG_JURISPRUDENCIA_STRICT', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
@@ -69,6 +70,8 @@ def validate_config() -> None:
         (LLM_TIMEOUT > 0, 'RAG_LLM_TIMEOUT deve ser maior que zero.'),
         (LLM_MAX_TOKENS >= 0, 'RAG_LLM_MAX_TOKENS não pode ser negativo.'),
         (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
+        (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL > 0, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL deve ser maior que zero.'),
+        (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL <= JURISPRUDENCIA_LIMIT, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL não pode exceder RAG_JURISPRUDENCIA_LIMIT.'),
     )
     errors = [message for ok, message in checks if not ok]
     if errors:
