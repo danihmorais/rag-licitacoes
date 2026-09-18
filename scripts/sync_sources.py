@@ -217,7 +217,7 @@ def validate(source, text, *, linked=False, final_url=None, document_title=None)
                 raise RuntimeError(f'identidade normativa ausente: {expected}')
         if source.get('tipo_documento') not in {'portal_oficial'} and len(ARTICLE_RE.findall(stripped)) < 1:
             raise RuntimeError('conteúdo normativo sem artigo/dispositivo reconhecível')
-    elif role == 'orientacao_oficial':
+    elif role == 'orientacao_oficial' and not (source.get('index_only') and linked):
         markers = ('parecer', 'manual', 'guia', 'orientação', 'orientacao', 'modelo', 'boletim')
         identity = f"{document_title or ''} {final_url or ''}".casefold()
         if not any(marker in stripped.casefold() or marker in identity for marker in markers):
