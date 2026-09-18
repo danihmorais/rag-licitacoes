@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import html
 import json
+import os
 import re
 import tempfile
 from abc import ABC, abstractmethod
@@ -297,396 +298,652 @@ class JurisprudenciaAdapter(ABC):
         raise NotImplementedError
 
 
+
 class TCUAdapter(JurisprudenciaAdapter):
     tribunal = 'TCU'
-    endpoint = 'https://dados-abertos.apps.tcu.gov.br/api/acordao/recupera-acordaos'
+    endpoint = 'https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo'
+    search_endpoint = endpoint + '/documentosResumidos'
+    detail_endpoint = endpoint + '/documento'
+
+    @staticmethod
+    def _rows(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if not isinstance(payload, dict):
+            return []
+        for key in ('documentos', 'data', 'items', 'acordaos', 'resultados'):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+        nested = payload.get('result')
+        if isinstance(nested, dict):
+            return TCUAdapter._rows(nested)
+        return []
+
+    @staticmethod
+    def _record(row: dict[str, Any]) -> JurisprudenciaRecord:
+        key = _first_value(row, 'KEY', 'key', 'id')
+        number = _first_value(row, 'NUMACORDAO', 'numeroAcordao', 'NUMACORDAOINT', 'numeroDecisao')
+        year = _first_value(row, 'ANOACORDAO', 'anoAcordao')
+        if number and year and '/' not in number:
+            number = f'{number}/{year}'
+        process = _first_value(
+            row,
+            'NUMPROCESSO_FORMATADO',
+            'NUMPROCESSOFORMATADO',
+            'numeroProcessoFormatado',
+            'NUMPROCESSO',
+            'numeroProcesso',
+            'PROCESSO',
+            'processo',
+        )
+        if not process:
+            process = key or number
+        return JurisprudenciaRecord(
+            tribunal='TCU',
+            numero_processo=process,
+            orgao_julgador=_first_value(row, 'COLEGIADO', 'colegiado', 'CODCOLEGIADO'),
+            relator=_first_value(row, 'RELATOR', 'relator'),
+            data=_first_value(row, 'DATASESSAO', 'DTSESSAO', 'dataSessao', 'dataSessaoFormatada'),
+            ementa=_first_value(row, 'SUMARIO', 'sumario', 'EMENTA', 'ementa', 'TITULO', 'titulo'),
+            tese=_first_value(row, 'TESE', 'tese'),
+            decisao=_first_value(row, 'ACORDAO', 'acordao'),
+            assunto=_as_list(
+                _first_value(row, 'AREA', 'area'),
+                _first_value(row, 'TEMA', 'tema'),
+                _first_value(row, 'SUBTEMA', 'subtema'),
+            ),
+            url_oficial=_first_value(row, 'URLACORDAO', 'urlAcordao', 'URL', 'url'),
+            tipo_decisao=_first_value(row, 'TIPO', 'tipo') or 'Acórdão',
+            numero_decisao=number,
+            origem='TCU — Pesquisa de Jurisprudência oficial',
+            situacao=_first_value(row, 'SITUACAO', 'situacao'),
+        )
+
+    def _detail_content(self, key: str) -> str:
+        response = self.session.get(
+            self.detail_endpoint,
+            params={'termo': key},
+            timeout=(20, 90),
+        )
+        response.raise_for_status()
+        rows = self._rows(response.json())
+        if not rows:
+            return ''
+        row = rows[0]
+        sections = [
+            _first_value(row, 'EMENTA', 'ementa', 'SUMARIO', 'sumario'),
+            _first_value(row, 'ACORDAO', 'acordao'),
+            _first_value(row, 'RELATORIO', 'relatorio', 'RELATÓRIO', 'relatório'),
+            _first_value(row, 'VOTO', 'voto'),
+            _first_value(row, 'DISPOSITIVO', 'dispositivo'),
+        ]
+        return '\n\n'.join(item for item in sections if item.strip())
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        strong_rows = []
-        weak_rows = []
-        seen = set()
-        start = 0
-        page_size = min(max(limit * 4, 50), 100)
-        terms = _query_terms(query)
-        strong_score = 1 if len(terms) <= 1 else 2
-
-        while start < 10000 and len(strong_rows) < limit:
+        seen: set[str] = set()
+        for variant in _query_variants(query):
             response = self.session.get(
-                self.endpoint,
-                params={'inicio': start, 'quantidade': page_size},
+                self.search_endpoint,
+                params={
+                    'termo': variant,
+                    'ordenacao': 'DTRELEVANCIA desc, NUMACORDAOINT desc',
+                    'quantidade': max(10, min(100, limit * 5)),
+                    'inicio': 0,
+                },
                 timeout=(20, 90),
             )
             response.raise_for_status()
             payload = response.json()
-            rows = payload
-            if isinstance(payload, dict):
-                for key in ('data', 'items', 'acordaos', 'resultados'):
-                    if isinstance(payload.get(key), list):
-                        rows = payload[key]
-                        break
-            if not isinstance(rows, list) or not rows:
-                break
-
+            rows = self._rows(payload)
+            if not rows and isinstance(payload, dict) and payload.get('quantidadeEncontrada') not in (None, 0):
+                raise RuntimeError('TCU retornou quantidadeEncontrada mas não forneceu a lista documentos no contrato oficial.')
+            records: list[JurisprudenciaRecord] = []
             for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                title = _first_value(row, 'titulo', 'sumario', 'ementa')
-                area = _first_value(row, 'area')
-                tema = _first_value(row, 'tema')
-                subtema = _first_value(row, 'subtema')
-                score = _query_score(query, title, area, tema, subtema)
-                if score <= 0:
-                    continue
-                process = _first_value(row, 'numeroProcessoFormatado', 'numeroProcesso', 'processo')
-                number = _first_value(row, 'numeroAcordao', 'numeroDecisao')
-                key = process or _first_value(row, 'key') or number
+                record = self._record(row)
+                key = _first_value(row, 'KEY', 'key', 'id') or record.document_key
                 if key in seen:
                     continue
                 seen.add(key)
-                target = strong_rows if score >= strong_score else weak_rows
-                target.append((score, row))
-                if len(strong_rows) >= limit:
-                    break
-
-            if len(strong_rows) >= limit or len(rows) < page_size:
-                break
-            start += len(rows)
-
-        selected = [row for _, row in strong_rows[:limit]]
-        if len(selected) < limit:
-            selected.extend(row for _, row in sorted(weak_rows, key=lambda item: item[0], reverse=True)[:limit - len(selected)])
-
-        records = []
-        for row in selected:
-            title = _first_value(row, 'titulo', 'sumario', 'ementa')
-            area = _first_value(row, 'area')
-            tema = _first_value(row, 'tema')
-            subtema = _first_value(row, 'subtema')
-            number = _first_value(row, 'numeroAcordao', 'numeroDecisao')
-            process = _first_value(row, 'numeroProcessoFormatado', 'numeroProcesso', 'processo') or _first_value(row, 'key') or number
-            record = JurisprudenciaRecord(
-                tribunal='TCU',
-                numero_processo=process,
-                orgao_julgador=_first_value(row, 'colegiado'),
-                relator=_first_value(row, 'relator'),
-                data=_first_value(row, 'dataSessao', 'dataSessaoFormatada'),
-                ementa=_first_value(row, 'sumario', 'ementa', 'titulo'),
-                assunto=_as_list(area, tema, subtema),
-                url_oficial=_first_value(row, 'urlAcordao', 'urlArquivo', 'urlArquivoPDF'),
-                tipo_decisao=_first_value(row, 'tipo') or 'Acórdão',
-                numero_decisao=number,
-                origem='TCU — dados abertos de acórdãos',
-                situacao=_first_value(row, 'situacao'),
-            )
-            if with_content:
-                pdf_url = _first_value(row, 'urlArquivoPDF', 'urlArquivo')
-                if pdf_url:
+                if not record.url_oficial:
+                    record.url_oficial = f'{self.endpoint}/{key}' if key else self.endpoint
+                if with_content and key:
                     try:
-                        pdf_kind, final, raw = fetch(self.session, pdf_url)
-                        if pdf_kind == 'pdf':
-                            record.inteiro_teor = pdf_text(raw)
-                            record.url_oficial = final
+                        content = self._detail_content(key)
+                        if content:
+                            record.inteiro_teor = content
                     except Exception as exc:
-                        print(f'aviso: inteiro teor TCU indisponível para {number}: {type(exc).__name__}: {exc}')
-            records.append(record)
-        return records
+                        print(f'aviso: inteiro teor TCU indisponível para {key}: {type(exc).__name__}: {exc}')
+                records.append(record)
+                if len(records) >= limit:
+                    return records
+            if records:
+                return records
+        raise RuntimeError(f'TCU não retornou resultados estruturados para a consulta {query!r}. Contrato da API oficial possivelmente alterado.')
 
 
 class TCESPAdapter(JurisprudenciaAdapter):
     tribunal = 'TCESP'
     endpoint = 'https://www.tce.sp.gov.br/jurisprudencia/pesquisar'
-    fallback_endpoint = 'https://www.tce.sp.gov.br/jurisprudencia/'
 
-    def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        records = []
-        seen_processes = set()
-        for variant in _query_variants(query):
-            offset = 0
-            variant_found = False
-            while len(records) < limit and offset < 1000:
-                params = {
-                    'acao': 'Executa',
-                    'offset': offset,
-                    'dataAutuacaoFim': '',
-                    'dataAutuacaoInicio': '',
-                    'exercicio': '',
-                    'processo': '',
-                    'quantTrechos': 3,
-                    'tipoBuscaTxt': 'Documento',
-                    'tipoDocumento': '',
-                    '_auditor': 1,
-                    '_materia': 1,
-                    '_relator': 1,
-                    'txtExp': '',
-                    'txtNenhPalvs': '',
-                    'txtNumFim': '',
-                    'txtNumIni': '',
-                    'txtQqUma': '',
-                    'txtTdPalvs': variant,
-                }
-                response = None
-                soup = None
-                for endpoint in (self.endpoint, self.fallback_endpoint):
-                    try:
-                        candidate = self.session.get(endpoint, params=params, timeout=(20, 90))
-                        candidate.raise_for_status()
-                    except Exception:
-                        continue
-                    candidate_soup = BeautifulSoup(candidate.content, 'html.parser')
-                    candidate_table = next(
-                        (
-                            table for table in candidate_soup.find_all('table')
-                            if 'N° Proc.' in clean_text(table.get_text(' ', strip=True))
-                            or 'Nº Proc.' in clean_text(table.get_text(' ', strip=True))
-                        ),
-                        None,
+    def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
+        params = [
+            ('_tipoBuscaTxt', 'on'),
+            ('_tipoDocumento', '1'),
+            ('_relator', '1'),
+            ('_auditor', '1'),
+            ('_materia', '1'),
+            ('acao', 'Executa'),
+            ('offset', '0'),
+            ('dataAutuacaoFim', ''),
+            ('dataAutuacaoInicio', ''),
+            ('exercicio', ''),
+            ('processo', ''),
+            ('quantTrechos', '3'),
+            ('tipoBuscaTxt', 'Documento'),
+            ('txtExp', ''),
+            ('txtNenhPalvs', ''),
+            ('txtNumFim', ''),
+            ('txtNumIni', ''),
+            ('txtQqUma', ''),
+            ('txtTdPalvs', variant),
+            ('tipoDocumento', ''),
+        ]
+        response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
+        table = next(
+            (
+                candidate for candidate in soup.find_all('table')
+                if re.search(r'N[°ºo]\s*Proc\.', clean_text(candidate.get_text(' ', strip=True)), re.I)
+            ),
+            None,
+        )
+        if table is None:
+            total = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', soup.get_text(' ', strip=True), re.I)
+            if total and int(total.group(1).replace('.', '')) > 0:
+                raise RuntimeError('TCESP informou registros mas a tabela de resultados não está no HTML esperado.')
+            return []
+        records: list[JurisprudenciaRecord] = []
+        pending_excerpt = False
+        for row in table.find_all('tr'):
+            cells = [clean_text(cell.get_text(' ', strip=True)) for cell in row.find_all(['th', 'td'])]
+            if not cells:
+                continue
+            joined = ' | '.join(cells)
+            if 'trechos localizados' in joined.casefold():
+                pending_excerpt = True
+                continue
+            if pending_excerpt:
+                pending_excerpt = False
+                if records and joined:
+                    records[-1].ementa = joined
+                continue
+            if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
+                continue
+            process = cells[1]
+            if not process or process in seen or _query_score(variant, *cells) <= 0:
+                continue
+            detail_anchor = next(
+                (a for a in row.find_all('a', href=True) if '/jurisprudencia/exibir' in str(a['href'])),
+                None,
+            )
+            detail_url = urljoin(response.url, str(detail_anchor['href'])) if detail_anchor else response.url
+            record = JurisprudenciaRecord(
+                tribunal='TCESP',
+                numero_processo=process,
+                data_autuacao=cells[2],
+                ementa=cells[6],
+                assunto=_as_list(cells[5], cells[6]),
+                tipo_decisao=cells[0] or 'Jurisprudência',
+                origem='TCESP — Pesquisa de Jurisprudência',
+                url_oficial=detail_url,
+                partes=_as_list(cells[3], cells[4]),
+            )
+            if detail or with_content:
+                try:
+                    detail_text, final, content = _detail_enrichment(
+                        self.session,
+                        detail_url,
+                        with_content=with_content,
                     )
-                    if candidate_table is not None:
-                        response, soup = candidate, candidate_soup
-                        break
-                if response is None or soup is None:
-                    raise RuntimeError(
-                        'Estrutura da pesquisa TCESP alterada: tabela de resultados com coluna '
-                        'N° Proc./Nº Proc. não foi encontrada.'
-                    )
-                table = next(
-                    (
-                        table for table in soup.find_all('table')
-                        if 'N° Proc.' in clean_text(table.get_text(' ', strip=True))
-                        or 'Nº Proc.' in clean_text(table.get_text(' ', strip=True))
-                    ),
-                    None,
-                )
-                found_on_page = 0
-                expect_excerpt = False
-                for row in table.find_all('tr'):
-                    cells = [clean_text(cell.get_text(' ', strip=True)) for cell in row.find_all(['th', 'td'])]
-                    if not cells:
-                        continue
-                    joined = ' | '.join(cells)
-                    if 'trechos localizados' in joined.casefold():
-                        expect_excerpt = True
-                        continue
-                    if expect_excerpt:
-                        expect_excerpt = False
-                        if records and joined:
-                            records[-1].ementa = joined
-                        continue
-                    if len(records) >= limit:
-                        continue
-                    if len(cells) < 7 or not re.search(r'\d{2}/\d{2}/\d{4}', cells[2]):
-                        continue
-                    detail_anchor = next(
-                        (anchor for anchor in row.find_all('a', href=True)
-                         if '/jurisprudencia/exibir' in str(anchor['href'])),
-                        None,
-                    )
-                    detail_url = urljoin(response.url, str(detail_anchor['href'])) if detail_anchor else response.url
-                    process = cells[1]
-                    if process in seen_processes or _query_score(variant, *cells) <= 0:
-                        continue
-                    seen_processes.add(process)
-                    record = JurisprudenciaRecord(
-                        tribunal='TCESP',
-                        numero_processo=process,
-                        data_autuacao=cells[2],
-                        ementa=cells[6],
-                        assunto=_as_list(cells[5], cells[6]),
-                        tipo_decisao=cells[0] or 'Jurisprudência',
-                        origem='TCESP — Pesquisa de Jurisprudência',
-                        url_oficial=detail_url,
-                        partes=_as_list(cells[3], cells[4]),
-                    )
-                    if detail or with_content:
-                        try:
-                            detail_text, final, content = _detail_enrichment(
-                                self.session,
-                                detail_url,
-                                with_content=with_content,
-                            )
-                            record.url_oficial = final
-                            record.relator = _label_value(detail_text, ('Relator', 'RELATOR'))
-                            record.data_publicacao = _label_value(detail_text, ('Data de Publicação', 'Data da Publicação'))
-                            record.ementa = _extract_ementa(content or detail_text) or record.ementa
-                            if with_content and content:
-                                record.inteiro_teor = content
-                        except Exception as exc:
-                            print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
-                    records.append(record)
-                    found_on_page += 1
-                    variant_found = True
-                if len(records) >= limit:
-                    break
-                if found_on_page == 0:
-                    break
-                offset += 10
+                    record.url_oficial = final
+                    record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
+                    record.data_publicacao = _label_value(
+                        detail_text,
+                        ('Data de Publicação', 'Data da Publicação'),
+                    ) or record.data_publicacao
+                    record.ementa = _extract_ementa(content or detail_text) or record.ementa
+                    if with_content and content:
+                        record.inteiro_teor = content
+                except Exception as exc:
+                    print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
+            seen.add(process)
+            records.append(record)
             if len(records) >= limit:
                 break
-            if variant_found:
-                break
         return records
+
+    def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
+        seen: set[str] = set()
+        for variant in _query_variants(query):
+            records = self._search_once(
+                variant,
+                limit,
+                detail=detail,
+                with_content=with_content,
+                seen=seen,
+            )
+            if records:
+                return records[:limit]
+        raise RuntimeError(f'TCESP não retornou resultados estruturados para {query!r}; a página oficial pode ter mudado ou a consulta não encontrou registros.')
 
 
 class STJAdapter(JurisprudenciaAdapter):
     tribunal = 'STJ'
-    endpoint = 'https://processo.stj.jus.br/SCON/pesquisar.jsp'
+    endpoint = 'https://dadosabertos.web.stj.jus.br'
+    max_months_scanned = 6
+    orgao_datasets = {
+        'CORTE ESPECIAL': 'espelhos-de-acordaos-corte-especial',
+        'PRIMEIRA SECAO': 'espelhos-de-acordaos-primeira-secao',
+        'PRIMEIRA TURMA': 'espelhos-de-acordaos-primeira-turma',
+        'QUARTA TURMA': 'espelhos-de-acordaos-quarta-turma',
+        'QUINTA TURMA': 'espelhos-de-acordaos-quinta-turma',
+        'SEGUNDA SECAO': 'espelhos-de-acordaos-segunda-secao',
+        'SEGUNDA TURMA': 'espelhos-de-acordaos-segunda-turma',
+        'SEXTA TURMA': 'espelhos-de-acordaos-sexta-turma',
+        'TERCEIRA SECAO': 'espelhos-de-acordaos-terceira-secao',
+        'TERCEIRA TURMA': 'espelhos-de-acordaos-terceira-turma',
+    }
+
+    def _json(self, url: str, **params: Any) -> dict | list:
+        response = self.session.get(url, params=params, timeout=(20, 90))
+        response.raise_for_status()
+        return response.json()
+
+    def _resources(self, dataset: str) -> list[dict[str, Any]]:
+        payload = self._json(
+            f'{self.endpoint}/api/3/action/package_show',
+            id=dataset,
+        )
+        if not isinstance(payload, dict) or not payload.get('success'):
+            raise RuntimeError(f'STJ pacote CKAN inválido para {dataset}.')
+        resources = (payload.get('result') or {}).get('resources') or []
+        if not isinstance(resources, list):
+            raise RuntimeError(f'STJ pacote CKAN {dataset} não contém resources.')
+        candidates = [
+            resource for resource in resources
+            if isinstance(resource, dict)
+            and (
+                str(resource.get('format') or '').upper() == 'JSON'
+                or str(resource.get('mimetype') or '').lower() == 'application/json'
+            )
+            and re.match(r'^\d{8}', str(resource.get('name') or ''))
+            and resource.get('url')
+        ]
+        candidates.sort(key=lambda item: str(item.get('name') or ''), reverse=True)
+        return candidates[:self.max_months_scanned]
+
+    @staticmethod
+    def _match(query: str, row: dict[str, Any]) -> bool:
+        digits = ''.join(ch for ch in query if ch.isdigit())
+        if digits and len(digits) >= 6:
+            if digits in _first_value(row, 'numeroProcesso', 'numeroRegistro', 'numeroDocumento'):
+                return True
+        fields = [
+            _first_value(row, 'ementa'),
+            _first_value(row, 'decisao'),
+            _first_value(row, 'teseJuridica'),
+            _first_value(row, 'informacoesComplementares'),
+            _first_value(row, 'descricaoClasse'),
+            _first_value(row, 'siglaClasse'),
+            _first_value(row, 'nomeOrgaoJulgador'),
+            _first_value(row, 'ministroRelator'),
+        ]
+        return _query_score(query, *fields) > 0
+
+    @staticmethod
+    def _record(row: dict[str, Any], dataset: str, resource_url: str) -> JurisprudenciaRecord:
+        process = _first_value(row, 'numeroProcesso', 'numeroRegistro', 'numeroDocumento', 'id')
+        ementa = _first_value(row, 'ementa')
+        decisao = _first_value(row, 'decisao')
+        tese = _first_value(row, 'teseJuridica')
+        content = '\n\n'.join(item for item in (ementa, decisao, tese) if item)
+        return JurisprudenciaRecord(
+            tribunal='STJ',
+            numero_processo=process,
+            orgao_julgador=_first_value(row, 'nomeOrgaoJulgador'),
+            relator=_first_value(row, 'ministroRelator'),
+            data=_first_value(row, 'dataDecisao'),
+            data_publicacao=_first_value(row, 'dataPublicacao'),
+            ementa=ementa,
+            tese=tese,
+            decisao=decisao,
+            inteiro_teor=content or None,
+            assunto=_as_list(
+                _first_value(row, 'siglaClasse'),
+                _first_value(row, 'descricaoClasse'),
+            ),
+            url_oficial=resource_url,
+            tipo_decisao=_first_value(row, 'tipoDeDecisao') or 'Acórdão',
+            numero_decisao=_first_value(row, 'numeroDocumento'),
+            origem='STJ — Dados Abertos / espelhos de acórdãos',
+        )
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        records = []
-        seen = set()
-        for variant in _query_variants(query):
-            params = {
-                'acao': 'pesquisar',
-                'novaConsulta': 'true',
-                'i': 1,
-                'b': 'ACOR',
-                'livre': variant,
-                'thesaurus': 'JURIDICO',
-                'tp': 'P',
-                'tipo_visualizacao': 'RESUMO',
-            }
-            response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'html.parser')
-            page_descriptor = clean_text(soup.get_text(' ', strip=True)).casefold()
-            if 'pesquisa de jurisprudência' not in page_descriptor and 'pesquisa jurisprudencial' not in page_descriptor:
-                raise RuntimeError('Estrutura do SCON/STJ não reconhecida: área de pesquisa jurisprudencial não encontrada.')
-            for anchor in soup.find_all('a', href=True):
-                absolute = urljoin(response.url, str(anchor['href']))
-                label = clean_text(anchor.get_text(' ', strip=True))
-                if '/SCON/jurisprudencia/doc.jsp' not in absolute or not label or absolute in seen:
+        del detail, with_content
+        seen: set[str] = set()
+        variants = _query_variants(query)
+        for variant in variants:
+            for dataset in self.orgao_datasets.values():
+                resources = self._resources(dataset)
+                for resource in resources:
+                    payload = self._json(str(resource['url']))
+                    if not isinstance(payload, list):
+                        continue
+                    for row in payload:
+                        if not isinstance(row, dict) or not self._match(variant, row):
+                            continue
+                        record = self._record(row, dataset, str(resource['url']))
+                        key = row.get('id') or record.document_key
+                        if key in seen:
+                            continue
+                        seen.add(str(key))
+                        return [record] if limit == 1 else self._collect_remaining(
+                            variants,
+                            dataset,
+                            resource,
+                            seen,
+                            limit,
+                            seed=[record],
+                        )
+        raise RuntimeError(f'STJ não encontrou registros na base de dados abertos para {query!r} nos últimos {self.max_months_scanned} espelhos mensais.' )
+
+    def _collect_remaining(
+        self,
+        variants: tuple[str, ...],
+        first_dataset: str,
+        first_resource: dict[str, Any],
+        seen: set[str],
+        limit: int,
+        *,
+        seed: list[JurisprudenciaRecord],
+    ) -> list[JurisprudenciaRecord]:
+        records = list(seed)
+        ordered = list(self.orgao_datasets.items())
+        start_index = next(
+            (i for i, item in enumerate(ordered) if item[1] == first_dataset),
+            0,
+        )
+        for dataset_name in [item[1] for item in ordered[start_index:]]:
+            resources = self._resources(dataset_name)
+            for resource in resources:
+                if dataset_name == first_dataset and resource.get('url') == first_resource.get('url'):
                     continue
-                seen.add(absolute)
-                detail_text = ''
-                content = ''
-                if detail or with_content:
-                    try:
-                        detail_text, final, content = _detail_enrichment(self.session, absolute, with_content=with_content)
-                        absolute = final
-                    except Exception as exc:
-                        print(f'aviso: detalhe STJ indisponível: {type(exc).__name__}: {exc}')
-                source_text = content or detail_text
-                records.append(
-                    JurisprudenciaRecord(
-                        tribunal='STJ',
-                        numero_processo=_extract_process(label, absolute) or _extract_process(source_text, absolute) or label,
-                        relator=_label_value(source_text, ('RELATOR', 'Relator')),
-                        data=_label_value(source_text, ('DATA DO JULGAMENTO', 'Data do julgamento', 'JULGAMENTO')),
-                        orgao_julgador=_label_value(source_text, ('ÓRGÃO JULGADOR', 'ORGAO JULGADOR', 'Órgão Julgador')),
-                        ementa=_extract_ementa(source_text) or label,
-                        assunto=['licitações/contratos'] if 'licit' in clean_text(label).casefold() else [],
-                        url_oficial=absolute,
-                        tipo_decisao=_label_value(source_text, ('TIPO', 'Tipo')) or 'Acórdão',
-                        origem='STJ — SCON',
-                        inteiro_teor=content or None,
-                    )
-                )
-                if len(records) >= limit:
-                    return records
-            if records:
-                break
+                payload = self._json(str(resource['url']))
+                if not isinstance(payload, list):
+                    continue
+                for variant in variants:
+                    for row in payload:
+                        if not isinstance(row, dict) or not self._match(variant, row):
+                            continue
+                        record = self._record(row, dataset_name, str(resource['url']))
+                        key = str(row.get('id') or record.document_key)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        records.append(record)
+                        if len(records) >= limit:
+                            return records
         return records
 
 
 class STFAdapter(JurisprudenciaAdapter):
     tribunal = 'STF'
-    endpoint = 'https://jurisprudencia.stf.jus.br/pages/search'
+    endpoint = 'https://jurisprudencia.stf.jus.br/api/search/search'
+    portal = 'https://jurisprudencia.stf.jus.br/pages/search'
+
+    source_fields = [
+        'base', 'id', 'dg_unique', 'titulo', 'ministro_facet', 'procedencia_geografica_completo',
+        'procedencia_geografica_uf_sigla', 'processo_codigo_completo',
+        'processo_classe_processual_unificada_extenso', 'processo_classe_processual_unificada_sigla',
+        'processo_numero', 'julgamento_data', 'publicacao_data', 'relator_processo_nome',
+        'relator_acordao_nome', 'relator_decisao_nome', 'revisor_processo_nome', 'presidente_nome',
+        'orgao_julgador', 'acordao_ata', 'decisao_texto', 'ementa_texto', 'sumula_texto',
+        'ramo_direito', 'partes_lista_texto', 'documental_publicacao_lista_texto',
+        'documental_legislacao_citada_texto', 'documental_jurisprudencia_citada_texto',
+        'documental_indexacao_texto', 'documental_observacao_texto', 'documental_doutrina_texto',
+        'documental_tese_texto', 'documental_tese_tema_texto', 'is_repercussao_geral',
+        'is_iac', 'is_questao_ordem', 'is_colac', 'inteiro_teor_url', 'inteiro_teor_texto',
+    ]
+
+    text_fields = [
+        'acordao_ata.plural', 'documental_doutrina_texto.plural', 'documental_indexacao_texto.plural',
+        'documental_jurisprudencia_citada_texto.plural', 'documental_legislacao_citada_texto.plural',
+        'documental_observacao_texto.plural', 'documental_tese_texto.plural',
+        'documental_tese_tema_texto.plural', 'ementa_texto.plural', 'titulo.plural',
+        'decisao_texto.plural', 'sumula_texto.plural', 'ramo_direito.plural',
+    ]
+
+    def _body(self, query: str, limit: int, *, include_full_text: bool) -> dict[str, Any]:
+        fields = list(self.text_fields)
+        if include_full_text:
+            fields.append('inteiro_teor_texto.plural')
+        query_clause = {
+            'query_string': {
+                'default_operator': 'AND',
+                'fields': fields,
+                'query': query,
+                'fuzziness': 'AUTO:4,7',
+            }
+        }
+        highlight_fields = [
+            'ementa_texto', 'sumula_texto', 'materia_noticia', 'titulo_noticia',
+            'resumo_noticia', 'conteudo_noticia', 'acordao_ata', 'decisao_texto',
+            'documental_tese_texto', 'documental_tese_tema_texto', 'documental_observacao_texto',
+            'documental_indexacao_texto', 'documental_legislacao_citada_texto',
+            'documental_jurisprudencia_citada_texto', 'documental_doutrina_texto',
+            'partes_lista_texto', 'documental_publicacao_lista_texto',
+            'documental_acordao_mesmo_sentido_lista_texto', 'documental_decisao_mesmo_sentido_lista_texto',
+            'processo_precedente_texto', 'procedencia_geografica_completo',
+        ]
+        if include_full_text:
+            highlight_fields.append('inteiro_teor_texto')
+        highlight = {
+            'highlight_query': query_clause,
+            'number_of_fragments': 64,
+            'fragment_size': 300,
+            'order': 'score',
+            'pre_tags': ['<em>'],
+            'post_tags': ['</em>'],
+            'fields': {
+                name: {
+                    'matched_fields': [f'{name}.plural'],
+                    'type': 'fvh',
+                }
+                for name in highlight_fields
+            },
+        }
+        return {
+            'query': {
+                'bool': {
+                    'filter': [
+                        {'term': {'base': 'acordaos'}},
+                        query_clause,
+                    ],
+                    'must': [],
+                    'should': [],
+                    'must_not': [],
+                },
+            },
+            'post_filter': {'bool': {'must': [{'term': {'base': 'acordaos'}}]}},
+            '_source': fields,
+            'from': 0,
+            'size': max(1, min(limit, 250)),
+            'track_total_hits': True,
+            'sort': [{'_score': 'desc'}, {'julgamento_data': 'desc'}],
+            'highlight': highlight,
+        }
+
+    def _browser_search(self, query: str, limit: int, *, with_content: bool) -> list[dict[str, Any]]:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError('STF exige Playwright para resolver o desafio AWS WAF; instale playwright e o Chromium.') from exc
+        headless = os.getenv('RAG_JURISPRUDENCIA_HEADLESS', '1').strip().lower() not in {'0', 'false', 'no'}
+        body = self._body(query, limit, include_full_text=with_content)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=headless,
+                args=['--disable-blink-features=AutomationControlled'],
+            )
+            try:
+                context = browser.new_context(
+                    locale='pt-BR',
+                    viewport={'width': 1440, 'height': 1100},
+                )
+                page = context.new_page()
+                page.goto(self.portal, wait_until='domcontentloaded', timeout=120000)
+                token = None
+                for _ in range(60):
+                    token = next(
+                        (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
+                        None,
+                    )
+                    if token:
+                        break
+                    page.wait_for_timeout(1000)
+                if not token:
+                    raise RuntimeError('STF não emitiu aws-waf-token após abrir o portal; desafio do AWS WAF alterado ou indisponível.')
+                for attempt in range(2):
+                    result = page.evaluate(
+                        """async ({url, body}) => {
+                            const response = await fetch(url, {
+                                method: 'POST',
+                                headers: {
+                                    'content-type': 'application/json',
+                                    'accept': 'application/json, text/plain, */*'
+                                },
+                                body: JSON.stringify(body)
+                            });
+                            return {
+                                status: response.status,
+                                waf: response.headers.get('x-amzn-waf-action'),
+                                text: await response.text()
+                            };
+                        }""",
+                        {'url': self.endpoint, 'body': body},
+                    )
+                    if int(result.get('status') or 0) in {202, 403, 405}:
+                        if attempt == 0:
+                            page.reload(wait_until='domcontentloaded', timeout=120000)
+                            for _ in range(60):
+                                token = next(
+                                    (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
+                                    None,
+                                )
+                                if token:
+                                    break
+                                page.wait_for_timeout(1000)
+                            if not token:
+                                raise RuntimeError('STF não renovou aws-waf-token após novo desafio do AWS WAF.')
+                            continue
+                        raise RuntimeError(f'STF AWS WAF rejeitou a consulta HTTP {result.get("status")}: {result.get("waf") or "challenge"}')
+                    if int(result.get('status') or 0) < 200 or int(result.get('status') or 0) >= 300:
+                        raise RuntimeError(f'STF API respondeu HTTP {result.get("status")}: {str(result.get("text") or "")[:300]}')
+                    try:
+                        return json.loads(result.get('text') or '{}')
+                    except json.JSONDecodeError as exc:
+                        raise RuntimeError(f'STF API devolveu resposta não-JSON: {str(result.get("text") or "")[:300]}') from exc
+                raise RuntimeError('STF consulta terminou sem resposta válida.')
+            finally:
+                context.close()
+                browser.close()
+
+    @staticmethod
+    def _hits(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        result = payload.get('result') if isinstance(payload, dict) else None
+        if not isinstance(result, dict):
+            result = payload if isinstance(payload, dict) else {}
+        hits = ((result.get('hits') or {}).get('hits') or [])
+        return [hit.get('_source', {}) for hit in hits if isinstance(hit, dict) and isinstance(hit.get('_source'), dict)]
+
+    @staticmethod
+    def _record(source: dict[str, Any], doc_id: str = '') -> JurisprudenciaRecord:
+        process = _first_value(
+            source,
+            'processo_codigo_completo',
+            'processo_numero',
+            'titulo',
+        ) or doc_id
+        return JurisprudenciaRecord(
+            tribunal='STF',
+            numero_processo=process,
+            orgao_julgador=_first_value(source, 'orgao_julgador'),
+            relator=_first_value(source, 'relator_acordao_nome', 'relator_processo_nome', 'relator_decisao_nome'),
+            data=_first_value(source, 'julgamento_data'),
+            data_publicacao=_first_value(source, 'publicacao_data'),
+            ementa=_first_value(source, 'ementa_texto', 'acordao_ata', 'titulo'),
+            tese=_first_value(source, 'documental_tese_texto'),
+            decisao=_first_value(source, 'decisao_texto'),
+            inteiro_teor=_first_value(source, 'inteiro_teor_texto'),
+            assunto=_as_list(
+                _first_value(source, 'ramo_direito'),
+                _first_value(source, 'processo_classe_processual_unificada_extenso'),
+            ),
+            url_oficial=f'https://jurisprudencia.stf.jus.br/pages/search/{doc_id}/false' if doc_id else 'https://jurisprudencia.stf.jus.br/pages/search',
+            tipo_decisao='Acórdão',
+            origem='STF — API oficial de jurisprudência',
+        )
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        records = []
-        seen = set()
+        del detail
         for variant in _query_variants(query):
-            params = {
-                'base': 'acordaos',
-                'pesquisa_inteiro_teor': 'true',
-                'sinonimo': 'true',
-                'plural': 'true',
-                'radicais': 'false',
-                'buscaExata': 'false',
-                'page': 1,
-                'pageSize': min(max(limit * 2, 25), 100),
-                'queryString': variant,
-                'sort': 'date',
-                'sortBy': 'desc',
-            }
-            kind, final, raw = fetch(self.session, self.endpoint, method='GET', params=params)
-            if kind != 'html':
-                raise RuntimeError('Pesquisa do STF retornou uma resposta não HTML inesperada.')
-            soup = BeautifulSoup(raw, 'html.parser')
-            for anchor in soup.find_all('a', href=True):
-                absolute = urljoin(final, str(anchor['href']).strip())
-                parsed = urlparse(absolute)
-                label = clean_text(anchor.get_text(' ', strip=True))
-                if parsed.netloc.lower() != 'jurisprudencia.stf.jus.br' or not re.match(r'^/pages/search/.+/(?:true|false)$', parsed.path, re.I):
-                    continue
-                if not label and anchor.parent is not None:
-                    label = clean_text(anchor.parent.get_text(' ', strip=True))
-                if not label or absolute in seen:
-                    continue
-                seen.add(absolute)
-                detail_text = ''
-                content = ''
-                if detail or with_content:
-                    try:
-                        detail_text, detail_final, content = _detail_enrichment(self.session, absolute, with_content=with_content)
-                        absolute = detail_final
-                    except Exception as exc:
-                        print(f'aviso: detalhe STF indisponível: {type(exc).__name__}: {exc}')
-                source_text = content or detail_text
-                process = _extract_process(label, absolute) or _extract_process(source_text, absolute) or label
-                records.append(
-                    JurisprudenciaRecord(
-                        tribunal='STF',
-                        numero_processo=process,
-                        relator=_label_value(source_text, ('RELATOR', 'Relator')),
-                        data=_label_value(source_text, ('DATA DO JULGAMENTO', 'Data do julgamento', 'Julgamento')),
-                        orgao_julgador=_label_value(source_text, ('ÓRGÃO JULGADOR', 'ORGAO JULGADOR', 'Órgão julgador')),
-                        ementa=_extract_ementa(source_text) or label,
-                        assunto=['controle constitucional'] if any(token in clean_text(source_text + ' ' + label).casefold() for token in ('constitucional', 'repercussão geral', 'repercussao geral')) else [],
-                        url_oficial=absolute,
-                        tipo_decisao='Acórdão',
-                        origem='STF — Jurisprudência Oficial',
-                        inteiro_teor=content or None,
-                    )
-                )
-                if len(records) >= limit:
+            payload = self._browser_search(variant, limit, with_content=with_content)
+            hits = self._hits(payload)
+            if hits:
+                records = []
+                raw_result = payload.get('result', payload)
+                raw_hits = ((raw_result.get('hits') or {}).get('hits') or []) if isinstance(raw_result, dict) else []
+                for hit in raw_hits:
+                    if not isinstance(hit, dict):
+                        continue
+                    record = self._record(hit.get('_source') or {}, str(hit.get('_id') or (hit.get('_source') or {}).get('id') or ''))
+                    records.append(record)
+                    if len(records) >= limit:
+                        return records
+                if records:
                     return records
-            if records:
-                break
-        return records
+        raise RuntimeError(f'STF API oficial não retornou resultados estruturados para {query!r}.')
 
 
 class TCMSPAdapter(JurisprudenciaAdapter):
     tribunal = 'TCM-SP'
-    endpoint = 'https://portal.tcm.sp.gov.br/Acordao'
-    fallback_endpoint = 'https://jurisprudencia.tcm.sp.gov.br/Acordao/Index'
+    endpoint = 'https://portal.tcm.sp.gov.br/Acordao/Index'
 
     @staticmethod
     def _parse_records(raw: bytes, base_url: str, query: str) -> list[JurisprudenciaRecord]:
         soup = BeautifulSoup(raw, 'html.parser')
-        records = []
-        seen = set()
+        records: list[JurisprudenciaRecord] = []
+        seen: set[str] = set()
         for anchor in soup.find_all('a', href=True):
-            absolute = urljoin(base_url, str(anchor['href'])).split('#', 1)[0]
+            absolute = urljoin(base_url, str(anchor['href']).strip()).split('#', 1)[0]
             parsed = urlparse(absolute)
-            path = parsed.path.casefold()
-            if parsed.netloc.lower() not in {'portal.tcm.sp.gov.br', 'jurisprudencia.tcm.sp.gov.br'}:
+            if parsed.netloc.lower() != 'portal.tcm.sp.gov.br':
                 continue
+            path = parsed.path.casefold()
             if '/management/acordaoitem/documento/' not in path and '/acordao/detalhe/' not in path:
                 continue
             label = clean_text(anchor.get_text(' ', strip=True))
             container = anchor.find_parent(['tr', 'li', 'article', 'section', 'div'])
-            container_text = clean_text(container.get_text(' ', strip=True)) if container else label
-            text = clean_text(label + ' ' + container_text)
-            if not text or absolute in seen:
-                continue
-            if _query_score(query, text) <= 0:
+            text = clean_text(label + ' ' + (container.get_text(' ', strip=True) if container else ''))
+            if not text or _query_score(query, text) <= 0:
                 continue
             process = _extract_process(text, absolute)
             if not process:
-                match = re.search(r'\bTC\s*[/.-]?\s*([0-9./-]+)', text, re.I)
-                process = 'TC/' + match.group(1) if match else ''
-            if not process:
+                match = re.search(r'\bTC\s*/?\s*([0-9./-]+)', text, re.I)
+                process = f'TC/{match.group(1)}' if match else ''
+            if not process or absolute in seen:
                 continue
             seen.add(absolute)
             records.append(
@@ -694,7 +951,7 @@ class TCMSPAdapter(JurisprudenciaAdapter):
                     tribunal='TCM-SP',
                     numero_processo=process,
                     ementa=label or text[:4000],
-                    assunto=_as_list('licitações/contratos', 'controle municipal'),
+                    assunto=['licitações/contratos', 'controle municipal'],
                     url_oficial=absolute,
                     tipo_decisao='Acórdão',
                     origem='TCM-SP — Jurisprudência Oficial',
@@ -702,73 +959,105 @@ class TCMSPAdapter(JurisprudenciaAdapter):
             )
         return records
 
-    def _search_form(self, session: requests.Session, query: str):
-        kind, final, raw = fetch(session, self.endpoint)
-        if kind != 'html':
-            return []
-        soup = BeautifulSoup(raw, 'html.parser')
-        form = next(
-            (
-                form for form in soup.find_all('form')
-                if any(
-                    token in clean_text(form.get_text(' ', strip=True)).casefold()
-                    for token in ('pesquisa', 'ementa', 'palavra', 'acórdão', 'acordao')
-                )
-            ),
-            None,
-        )
-        if form is None:
-            return []
-        payload = _form_data(form, query, ('pesquisa', 'ementa', 'palavra', 'termo', 'livre', 'acord'))
-        if payload is None:
-            return []
-        action, method, data = payload
-        action = urljoin(final, action or final)
-        kind, result_url, result_raw = fetch(
-            session,
-            action,
-            method='POST' if method == 'post' else 'GET',
-            data=data if method == 'post' else None,
-            params=data if method != 'post' else None,
-        )
-        if kind != 'html':
-            return []
-        return self._parse_records(result_raw, result_url, query)
+    @staticmethod
+    def _fill_by_label(page: Any, terms: tuple[str, ...], value: str) -> bool:
+        wanted = tuple(clean_text(term).casefold() for term in terms)
+        labels = page.locator('label')
+        for index in range(labels.count()):
+            label = labels.nth(index)
+            text_value = clean_text(label.inner_text()).casefold()
+            if not any(term in text_value for term in wanted):
+                continue
+            for_attr = label.get_attribute('for')
+            if for_attr:
+                target = page.locator(f'[id="{for_attr}"]').first
+                if target.count():
+                    try:
+                        target.fill(value)
+                        return True
+                    except Exception:
+                        pass
+            parent = label
+            for _ in range(3):
+                parent = parent.locator('xpath=..')
+                field = parent.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea').first
+                if field.count():
+                    try:
+                        field.fill(value)
+                        return True
+                    except Exception:
+                        pass
+        for field in page.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea').all():
+            descriptor = ' '.join(
+                str(field.get_attribute(name) or '')
+                for name in ('name', 'id', 'placeholder', 'aria-label')
+            ).casefold()
+            try:
+                context_text = clean_text(field.locator('xpath=ancestor::*[self::div or self::td or self::li][1]').inner_text()).casefold()
+            except Exception:
+                context_text = ''
+            if any(term in descriptor or term in context_text for term in wanted):
+                try:
+                    field.fill(value)
+                    return True
+                except Exception:
+                    pass
+        return False
+
+    def _browser_records(self, query: str, limit: int) -> list[JurisprudenciaRecord]:
+        try:
+            from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+        except ImportError as exc:
+            raise RuntimeError('TCM-SP usa a consulta jurisprudencial dinâmica do portal atual; instale playwright e o Chromium.') from exc
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+            try:
+                page = browser.new_page(locale='pt-BR', viewport={'width': 1440, 'height': 1100})
+                page.goto(self.endpoint, wait_until='domcontentloaded', timeout=120000)
+                page.wait_for_timeout(1500)
+                if not self._fill_by_label(page, ('Todas estas palavras',), query):
+                    raise RuntimeError('TCM-SP: campo "Todas estas palavras" não foi encontrado no portal oficial.')
+                buttons = page.locator('button, input[type="submit"], input[type="button"], a')
+                clicked = False
+                for index in range(buttons.count()):
+                    button = buttons.nth(index)
+                    label = clean_text(
+                        str(button.inner_text() or '') + ' ' +
+                        str(button.get_attribute('value') or '') + ' ' +
+                        str(button.get_attribute('aria-label') or '')
+                    ).casefold()
+                    if 'pesquis' in label or 'buscar' in label:
+                        button.click()
+                        clicked = True
+                        break
+                if not clicked:
+                    raise RuntimeError('TCM-SP: botão de pesquisa não foi encontrado no portal oficial.')
+                try:
+                    page.wait_for_selector('a[href*="/Management/AcordaoItem/Documento/"]', timeout=10000)
+                except PlaywrightTimeoutError:
+                    page.wait_for_timeout(2500)
+                return self._parse_records(page.content().encode('utf-8'), page.url, query)[:limit]
+            finally:
+                browser.close()
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
+        records: list[JurisprudenciaRecord] = []
         for variant in _query_variants(query):
-            records = self._search_form(self.session, variant)
-            if records:
-                return self._enrich(records[:limit], detail=detail, with_content=with_content)
-            for endpoint in (self.endpoint, self.fallback_endpoint):
-                for params in (
-                    {'todasEstasPalavras': variant},
-                    {'todasAsPalavras': variant},
-                    {'palavras': variant},
-                    {'query': variant},
-                    {'termo': variant},
-                    {'search': variant},
-                ):
-                    try:
-                        kind, final, raw = fetch(self.session, endpoint, method='GET', params=params)
-                    except Exception:
-                        continue
-                    if kind != 'html':
-                        continue
-                    parsed = self._parse_records(raw, final, variant)
-                    if parsed:
-                        return self._enrich(parsed[:limit], detail=detail, with_content=with_content)
-        raise RuntimeError('Pesquisa de jurisprudência do TCM-SP não retornou resultados após tentar os endpoints oficiais.')
+            parsed = self._browser_records(variant, limit)
+            if parsed:
+                records = self._enrich(parsed[:limit], detail=detail, with_content=with_content)
+                return records
+        raise RuntimeError(f'TCM-SP não retornou registros estruturados para {query!r} no portal oficial {self.endpoint}.')
 
-    def _enrich(self, records, *, detail: bool, with_content: bool):
+    def _enrich(self, records: list[JurisprudenciaRecord], *, detail: bool, with_content: bool) -> list[JurisprudenciaRecord]:
         if not (detail or with_content):
             return records
         for record in records:
             try:
                 detail_text, final, content = _detail_enrichment(self.session, record.url_oficial, with_content=with_content)
                 record.url_oficial = final
-                record.relator = _label_value(detail_text, ('RELATOR', 'Relator'))
-                record.data = _label_value(detail_text, ('DATA DO JULGAMENTO', 'Data do julgamento', 'SESSÃO'))
+                record.relator = _label_value(detail_text, ('RELATOR', 'Relator')) or record.relator
+                record.data = _label_value(detail_text, ('DATA DO JULGAMENTO', 'Data do julgamento', 'SESSÃO')) or record.data
                 record.ementa = _extract_ementa(content or detail_text) or record.ementa
                 if with_content and content:
                     record.inteiro_teor = content
@@ -782,13 +1071,33 @@ class TJSPAdapter(JurisprudenciaAdapter):
     endpoint = 'https://esaj.tjsp.jus.br/cjsg/consultaCompleta.do'
     result_endpoint = 'https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do'
 
+    @staticmethod
+    def _check_access_block(raw: bytes) -> None:
+        soup = BeautifulSoup(raw, 'html.parser')
+        visible = clean_text(soup.get_text(' ', strip=True)).casefold()
+        patterns = (
+            'não sou um robô',
+            'nao sou um robo',
+            'verificação de segurança',
+            'verificacao de seguranca',
+            'captcha',
+            'recaptcha',
+            'hcaptcha',
+            'acesso negado',
+            'acesso bloqueado',
+            'cf-chl-',
+        )
+        if any(pattern in visible for pattern in patterns):
+            raise RuntimeError('TJSP bloqueou a pesquisa por desafio/captcha/antibot; nenhum contorno automático é feito pelo coletor.')
+
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        records = []
-        seen = set()
+        records: list[JurisprudenciaRecord] = []
+        seen: set[tuple[str, str]] = set()
         for variant in _query_variants(query):
             kind, final, raw = fetch(self.session, self.endpoint)
             if kind != 'html':
                 raise RuntimeError('Consulta Completa do TJSP retornou uma resposta não HTML esperada.')
+            self._check_access_block(raw)
             soup = BeautifulSoup(raw, 'html.parser')
             form = _find_query_form(soup, ('pesquisa livre', 'pesquisa', 'livre'))
             if form is None:
@@ -807,8 +1116,8 @@ class TJSPAdapter(JurisprudenciaAdapter):
             )
             if kind != 'html':
                 raise RuntimeError('Pesquisa do TJSP retornou uma resposta não HTML inesperada.')
+            self._check_access_block(result_raw)
             soup = BeautifulSoup(result_raw, 'html.parser')
-            variant_records = []
             for row in soup.find_all(['tr', 'article', 'li']):
                 row_text = clean_text(row.get_text(' ', strip=True))
                 if len(row_text) < 30:
@@ -841,7 +1150,7 @@ class TJSPAdapter(JurisprudenciaAdapter):
                 if key in seen:
                     continue
                 seen.add(key)
-                ementa = row_text[:4000]
+                ementa = _extract_ementa(row_text) or row_text[:4000]
                 relator = _label_value(row_text, ('Relator', 'Relator(a)'))
                 data = _label_value(row_text, ('Data do julgamento', 'Data do Julgamento', 'Data de julgamento'))
                 orgao = _label_value(row_text, ('Órgão julgador', 'Órgão Julgador', 'Orgão julgador'))
@@ -869,7 +1178,7 @@ class TJSPAdapter(JurisprudenciaAdapter):
                             inteiro_teor = content or None
                     except Exception as exc:
                         print(f'aviso: detalhe TJSP indisponível para {process}: {type(exc).__name__}: {exc}')
-                variant_records.append(
+                records.append(
                     JurisprudenciaRecord(
                         tribunal='TJSP',
                         numero_processo=process,
@@ -883,14 +1192,9 @@ class TJSPAdapter(JurisprudenciaAdapter):
                         inteiro_teor=inteiro_teor,
                     )
                 )
-                if len(records) + len(variant_records) >= limit:
-                    break
-            if variant_records:
-                records.extend(variant_records)
                 if len(records) >= limit:
                     return records[:limit]
-        return records[:limit]
-
+        raise RuntimeError(f'TJSP não retornou registros estruturados para {query!r}.') 
 
 def _find_query_form(soup: BeautifulSoup, keywords: tuple[str, ...]):
     candidates = []

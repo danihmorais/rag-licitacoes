@@ -25,11 +25,29 @@ class FakeSession:
     def request(self, method, *args, **kwargs): return self.get(*args, **kwargs)
 
 
-def test_tcu_adapter_normalizes_official_acordao_payload():
-    session = FakeSession([FakeResponse([{"key":"abc-123","tipo":"Acórdão","numeroAcordao":"1234/2026","colegiado":"Plenário","dataSessao":"27/08/2026","relator":"Ministro X","situacao":"Publicado","sumario":"Licitação e contratação pública.","urlAcordao":"https://portal.tcu.gov.br/acordao/abc","urlArquivo":"https://portal.tcu.gov.br/acordao/abc","urlArquivoPDF":"https://portal.tcu.gov.br/acordao/abc.pdf","area":"Licitação","tema":"Contratação","subtema":"Edital"}])])
+def test_tcu_adapter_uses_current_public_rest_contract():
+    session = FakeSession([
+        FakeResponse({
+            "quantidadeEncontrada": 1,
+            "documentos": [{
+                "KEY": "4802024",
+                "NUMACORDAO": "480",
+                "ANOACORDAO": "2024",
+                "COLEGIADO": "Plenário",
+                "DTSESSAO": "27/08/2024",
+                "RELATOR": "Ministro X",
+                "SITUACAO": "Publicado",
+                "SUMARIO": "Licitação e contratação pública.",
+                "AREA": "Licitação", "TEMA": "Contratação", "SUBTEMA": "Edital"
+            }]
+        })
+    ])
     records = TCUAdapter(session).search("licitação", 1)
-    assert len(records) == 1 and records[0].numero_decisao == "1234/2026" and records[0].orgao_julgador == "Plenário"
-
+    assert len(records) == 1
+    assert TCUAdapter.endpoint == "https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo"
+    assert records[0].numero_decisao == "480/2024"
+    assert records[0].orgao_julgador == "Plenário"
+    assert records[0].url_oficial.endswith("/4802024")
 
 def test_tcesp_adapter_parses_result_table():
     html = '''<html><body><table><tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr><tr><td>Relatório / Voto</td><td>5600/989/25</td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Exame de edital</td><td>2025</td></tr><tr><td colspan="8">Trechos localizados no documento:</td></tr><tr><td colspan="8">A exigência de qualificação técnica deve ser pertinente e proporcional.</td></tr></table></body></html>'''.encode("utf-8")
@@ -38,18 +56,13 @@ def test_tcesp_adapter_parses_result_table():
 
 
 
-def test_tcm_sp_adapter_parses_official_result_links():
+def test_tcm_sp_parser_handles_current_official_document_link():
     html = '''<html><body>
-    <form action="/Acordao/Index" method="get"><label>Pesquisa por ementa</label><input name="termo" type="text"></form>
-    <table><tr><td>1234/989/26</td><td>Licitação de serviços</td><td>Exame de edital e fiscalização contratual</td></tr></table>
-    <a href="/Acordao/Detalhe/1234">1234/989/26 — Licitação de serviços</a>
-    </body></html>'''
-    session = FakeSession([FakeResponse(html.encode("utf-8"), content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index"), FakeResponse(html, content_type="text/html", url="https://jurisprudencia.tcm.sp.gov.br/Acordao/Index?termo=licitação")])
-    records = TCMSPAdapter(session).search("licitação", 1)
+    <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação de serviços</a>
+    </body></html>'''.encode("utf-8")
+    records = TCMSPAdapter._parse_records(html, "https://portal.tcm.sp.gov.br/Acordao/Index", "licitação")
     assert len(records) == 1
-    assert records[0].tribunal == "TCM-SP"
-    assert records[0].numero_processo == "1234/989/26"
-
+    assert records[0].numero_processo == "TC/002198/2023"
 
 def test_tcm_sp_save_record_has_municipal_scope(tmp_path: Path):
     record = JurisprudenciaRecord(tribunal="TCM-SP", numero_processo="1234/989/26", ementa="Licitação municipal.", url_oficial="https://jurisprudencia.tcm.sp.gov.br/Acordao/Detalhe/1234")
@@ -67,11 +80,28 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
     assert path.exists() and '"source_role": "jurisprudencia_controle"' in data and '"version_sha256":' in data
 
 
-def test_stj_adapter_finds_official_acordao_links():
-    html = '<html><body><h1>Pesquisa de Jurisprudência</h1><a href="/SCON/jurisprudencia/doc.jsp?livre=123456">REsp 1.234.567/SP</a></body></html>'.encode("utf-8")
-    records = STJAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://scon.stj.jus.br/SCON/pesquisar.jsp?livre=licitação")])).search("licitação", 1)
-    assert len(records) == 1 and records[0].tribunal == "STJ" and "1.234.567/SP" in records[0].numero_processo
-
+def test_stj_adapter_uses_official_open_data_snapshot():
+    session = FakeSession([
+        FakeResponse({"success": True, "result": {"resources": [{
+            "name": "20260915.json", "format": "JSON",
+            "url": "https://dadosabertos.web.stj.jus.br/dataset/espelhos/raw/20260915.json"
+        }]}}),
+        FakeResponse([{
+            "id": "956702", "numeroProcesso": "2238193", "numeroRegistro": "202503517440",
+            "siglaClasse": "REsp", "descricaoClasse": "RECURSO ESPECIAL",
+            "nomeOrgaoJulgador": "TERCEIRA SEÇÃO", "ministroRelator": "Ministro X",
+            "dataPublicacao": "DJEN DATA:05/05/2026",
+            "ementa": "DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS PÚBLICOS.",
+            "tipoDeDecisao": "ACÓRDÃO", "dataDecisao": "20260428",
+            "decisao": "Recurso conhecido e provido."
+        }])
+    ])
+    records = STJAdapter(session).search("licitação", 1)
+    assert len(records) == 1
+    assert records[0].tribunal == "STJ"
+    assert records[0].numero_processo == "2238193"
+    assert records[0].relator == "Ministro X"
+    assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
 
 def test_stf_form_is_discovered_without_hardcoding_input_name():
     from bs4 import BeautifulSoup
@@ -89,21 +119,27 @@ def test_all_required_tribunals_have_adapters():
     assert TRIBUNALS == ('tcu', 'tcesp', 'stj', 'stf', 'tcm-sp', 'tjsp')
 
 
-def test_stf_adapter_uses_current_search_endpoint_and_result_links():
-    html = b'<html><body><a href="/pages/search/sjur524003/false">RE 1.234.567/SP - Direito Administrativo</a></body></html>'
-    records = STFAdapter(
-        FakeSession([
-            FakeResponse(
-                html,
-                content_type="text/html",
-                url="https://jurisprudencia.stf.jus.br/pages/search?base=acordaos",
-            )
-        ])
-    ).search("direito administrativo", 1)
+def test_stf_adapter_uses_current_search_api_and_maps_hits(monkeypatch):
+    payload = {"result": {"hits": {"total": {"value": 1}, "hits": [{
+        "_id": "sjur524003",
+        "_source": {
+            "processo_codigo_completo": "RE 1234567/SP",
+            "orgao_julgador": "Primeira Turma",
+            "relator_acordao_nome": "Ministro X",
+            "julgamento_data": "2026-08-20",
+            "publicacao_data": "2026-08-29",
+            "ementa_texto": "Licitação e contrato administrativo.",
+            "documental_tese_texto": "A contratação deve observar a legislação aplicável.",
+            "inteiro_teor_texto": "Inteiro teor do acórdão.",
+            "ramo_direito": "Direito Administrativo"
+        }
+    }]}}}
+    monkeypatch.setattr(STFAdapter, "_browser_search", lambda self, query, limit, *, with_content: payload)
+    records = STFAdapter(FakeSession([])).search("licitação", 1, with_content=True)
     assert len(records) == 1
-    assert records[0].tribunal == "STF"
-    assert records[0].numero_processo == "1.234.567/SP"
-
+    assert records[0].numero_processo == "RE 1234567/SP"
+    assert records[0].inteiro_teor == "Inteiro teor do acórdão."
+    assert STFAdapter.endpoint == "https://jurisprudencia.stf.jus.br/api/search/search"
 
 def test_tjsp_adapter_uses_esaj_second_degree_search_and_result_pdf():
     html = '''<html><body>
@@ -147,8 +183,7 @@ def test_tjsp_save_record_has_state_scope(tmp_path: Path):
 
 
 def test_tcm_sp_uses_current_portal_endpoint():
-    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao"
-
+    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao/Index"
 
 def test_query_matching_requires_all_terms_for_short_queries():
     assert _query_matches("contrato administrativo", "contrato administrativo")
@@ -160,11 +195,10 @@ def test_query_matching_requires_half_terms_for_long_queries():
     assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
 
 
-def test_tcm_sp_missing_search_structure_is_reported_as_failure():
-    html = "<html><body><p>Portal indisponível.</p></body></html>".encode("utf-8")
-    with pytest.raises(RuntimeError, match="Pesquisa de jurisprudência do TCM-SP"):
-        TCMSPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://portal.tcm.sp.gov.br/Acordao")])).search("licitação", 1)
-
+def test_tcm_sp_missing_browser_results_are_reported_as_failure(monkeypatch):
+    monkeypatch.setattr(TCMSPAdapter, "_browser_records", lambda self, query, limit: [])
+    with pytest.raises(RuntimeError, match="TCM-SP não retornou registros estruturados"):
+        TCMSPAdapter(FakeSession([])).search("licitação", 1)
 
 def test_tcesp_missing_results_table_is_reported_as_structure_failure():
     html = "<html><body><p>A página do TCESP foi redesenhada.</p></body></html>".encode("utf-8")
@@ -228,5 +262,28 @@ def test_tjsp_falls_back_from_long_query():
     assert records[0].numero_processo == "1000000-10.2026.8.26.0053"
 
 
-def test_stj_adapter_uses_current_process_host():
-    assert STJAdapter.endpoint == "https://processo.stj.jus.br/SCON/pesquisar.jsp"
+def test_stj_adapter_uses_current_open_data_host():
+    assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
+
+def test_stf_body_uses_acordaos_and_full_text_fields():
+    body = STFAdapter(FakeSession([]))._body("licitação", 1, include_full_text=True)
+    assert body["query"]["bool"]["filter"][0] == {"term": {"base": "acordaos"}}
+    assert "inteiro_teor_texto.plural" in body["_source"]
+    assert "inteiro_teor_texto" in body["highlight"]["fields"]
+
+
+def test_tjsp_reports_visible_antibot_without_treating_it_as_zero():
+    html = b"<html><body><div>CAPTCHA</div><div>Verificacao de seguranca</div></body></html>"
+    with pytest.raises(RuntimeError, match="desafio/captcha/antibot"):
+        TJSPAdapter._check_access_block(html)
+
+
+def test_tcesp_search_sends_required_form_markers():
+    html = b'''<html><body><table><tr><th>N° Proc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th></tr></table></body></html>'''
+    session = FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])
+    try:
+        TCESPAdapter(session).search("licitação", 1)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("a página sintética não deveria gerar registro")
