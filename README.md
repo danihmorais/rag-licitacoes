@@ -181,7 +181,7 @@ O catálogo estadual inclui, entre outros:
 
 A jurisprudência possui pipeline próprio em **jurisprudencia/**.
 
-Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual a partir dos catálogos oficiais consolidados (o catálogo do TCU atualmente informa 295 registros). Quando o catálogo do TCU for entregue por uma aplicação renderizada, o coletor usa Chromium para obter o conteúdo efetivamente exibido e navega pelo paginador nativo do catálogo. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
+Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual a partir dos catálogos oficiais consolidados (o catálogo do TCU atualmente informa 295 registros), com normalização das variações de cabeçalho dos enunciados. Quando o catálogo do TCU for entregue por uma aplicação renderizada, o coletor usa Chromium para obter o conteúdo efetivamente exibido e navega pelo paginador nativo do catálogo. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
 
 O conjunto padrão utiliza:
 
