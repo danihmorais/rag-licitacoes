@@ -105,6 +105,15 @@ def metadata_fingerprint(document):
     metadata_path = Path(__file__).with_name('metadata.py')
     digest.update(b'metadata.py\0')
     digest.update(metadata_path.read_bytes())
+    config_values = (
+        config.OCR_ENABLED,
+        config.OCR_REQUIRED,
+        config.OCR_MIN_NATIVE_CHARS_PER_PAGE,
+        config.OCR_MIN_NATIVE_CONFIDENCE,
+        config.OCR_DPI,
+        config.OCR_LANGUAGE,
+    )
+    digest.update(json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
     sidecar = document.with_suffix('.json')
     if sidecar.exists():
         digest.update(b'sidecar.json\0')
