@@ -119,15 +119,21 @@ def collect_batch(
                     counts[tribunal_key] += 1
 
     sumulas = {"tcu": [], "tcesp": []}
-    if include_sumulas:
+    requested_sumula_tribunals = tuple(
+        tribunal for tribunal in ("tcu", "tcesp") if tribunal in tribunals
+    )
+    if include_sumulas and requested_sumula_tribunals:
         try:
-            sumulas = collect_sumulas(strict=strict)
+            sumulas = collect_sumulas(
+                tribunals=requested_sumula_tribunals,
+                strict=strict,
+            )
         except Exception as exc:
             if strict:
                 raise
             print(f"Aviso: coleta de súmulas terminou com falha: {type(exc).__name__}: {exc}")
             sumulas = {"tcu": [], "tcesp": []}
-        for tribunal in ("tcu", "tcesp"):
+        for tribunal in requested_sumula_tribunals:
             for record in sumulas.get(tribunal, []):
                 key = record.document_key
                 if key in seen:
