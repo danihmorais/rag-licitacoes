@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,10 +20,11 @@ from pypdf import PdfReader
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-try:
-    from scripts.sources import SOURCES
-except ModuleNotFoundError:
-    from sources import SOURCES
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.sources import SOURCES
 
 SOURCES = [dict(item) for item in SOURCES]
 for item in SOURCES:
@@ -102,13 +104,23 @@ def pdf_text(data):
 
 
 def _decode_response(raw, final, content_type=''):
+    lowered_content_type = content_type.lower()
+    path = final.lower().split('?', 1)[0]
+    stripped = raw.lstrip()
     is_pdf = (
-        'application/pdf' in content_type.lower()
-        or final.lower().split('?', 1)[0].endswith('.pdf')
+        'application/pdf' in lowered_content_type
+        or path.endswith('.pdf')
         or raw.startswith(b'%PDF')
     )
     if is_pdf:
         return 'pdf', final, raw, pdf_text(raw)
+    is_xml = (
+        'xml' in lowered_content_type
+        or path.endswith(('.xml', '.xml.gz'))
+        or stripped.startswith((b'<?xml', b'<urlset', b'<sitemapindex', b'<rss', b'<feed'))
+    )
+    if is_xml:
+        return 'xml', final, raw, raw.decode('utf-8', errors='replace')
     return 'html', final, raw, clean_html(raw)
 
 

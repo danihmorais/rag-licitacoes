@@ -2,6 +2,7 @@ from datetime import date
 import json
 
 from scripts.sources import SOURCES
+from scripts.sync_sources import _decode_response
 from scripts.web_sources import (
     _is_web_article_url,
     _parse_web_date,
@@ -115,3 +116,28 @@ def test_extract_web_article_rejects_spa_shell():
     import pytest
     with pytest.raises(RuntimeError, match="casca de portal/SPA"):
         extract_web_article(shell.encode("utf-8"), "https://example.com/")
+
+
+def test_sync_response_treats_sitemap_xml_as_xml_without_html_parsing_warning():
+    import warnings
+
+    raw = b'<?xml version="1.0" encoding="UTF-8"?><urlset><url><loc>https://example.com/a</loc></url></urlset>'
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        kind, final, returned_raw, text = _decode_response(
+            raw,
+            "https://example.com/wp-sitemap.xml",
+            "application/xml",
+        )
+
+    assert kind == "xml"
+    assert final.endswith("/wp-sitemap.xml")
+    assert returned_raw == raw
+    assert "https://example.com/a" in text
+    assert not any("XMLParsedAsHTMLWarning" in str(item.message.__class__.__name__) for item in caught)
+
+
+def test_nova_lei_licitacao_does_not_configure_known_404_sitemap():
+    source = next(item for item in SOURCES if item["id"] == "web-nova-lei-licitacao")
+    assert "https://www.novaleilicitacao.com.br/sitemap_index.xml" not in source["sitemap_urls"]
+    assert "https://www.novaleilicitacao.com.br/wp-sitemap.xml" in source["sitemap_urls"]
