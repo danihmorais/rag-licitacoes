@@ -308,9 +308,9 @@ def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRe
                 next_locator = page.get_by_role("button", name=re.compile(r"Próxima página|Próximo", re.I)).last
                 if next_locator.count() == 0:
                     break
-                if await next_locator.get_attribute("disabled") is not None:
+                if next_locator.get_attribute("disabled") is not None:
                     break
-                if await next_locator.get_attribute("aria-disabled") == "true":
+                if next_locator.get_attribute("aria-disabled") == "true":
                     break
                 before = signature
                 next_locator.click(force=True)
