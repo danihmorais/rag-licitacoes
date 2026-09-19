@@ -30,7 +30,7 @@ def test_cache_round_trip_and_legacy_invalidation(tmp_path: Path, monkeypatch):
 
 
 def test_validate_dense_vectors_accepts_expected_shape():
-    ingest.validate_dense_vectors([[0.0] * ingest.config.DENSE_DIM], 1)
+    ingest.validate_dense_vectors([[1.0] + [0.0] * (ingest.config.DENSE_DIM - 1)], 1)
 
 
 def test_validate_dense_vectors_rejects_wrong_dimension():
@@ -89,9 +89,9 @@ def test_ensure_collection_creates_payload_indexes(monkeypatch):
     client = CollectionClient()
     ingest.ensure_collection(client)
     fields = {item['field_name']: item['field_schema'] for item in client.indexes}
-    assert fields['doc_id'] is ingest.models.PayloadSchemaType.KEYWORD
-    assert fields['ano'] is ingest.models.PayloadSchemaType.INTEGER
-    assert fields['revogado'] is ingest.models.PayloadSchemaType.BOOL
+    assert fields['doc_id'] == ingest.models.PayloadSchemaType.KEYWORD
+    assert fields['ano'] == ingest.models.PayloadSchemaType.INTEGER
+    assert fields['revogado'] == ingest.models.PayloadSchemaType.BOOL
 
 
 def test_build_chunks_uses_e5_passage_prefix_and_real_newline(tmp_path: Path):
