@@ -176,3 +176,14 @@ def test_tcu_collection_uses_browser_when_http_catalog_is_incomplete(monkeypatch
     records = sumulas.collect_tcu_sumulas(Session())
     assert called["value"] is True
     assert records[0].numero_sumula == "222"
+
+
+def test_tcu_sumula_collection_contract_uses_current_catalog_expectations():
+    from jurisprudencia.sumulas import (
+        TCU_SUMULA_MIN_RECORDS,
+        TCU_SUMULA_REQUIRED_NUMBERS,
+        TCU_SUMULA_CATALOG_URL,
+    )
+    assert TCU_SUMULA_MIN_RECORDS == 295
+    assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
+    assert TCU_SUMULA_CATALOG_URL.endswith("?pb=sumula")
