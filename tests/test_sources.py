@@ -154,7 +154,11 @@ def test_tcu_manual_is_required_official_guidance_source():
     assert source["source_role"] == "orientacao_oficial"
     assert source["authority_level"] == 3
     assert source["tipo_documento"] == "manual"
-    assert source["urls"][0].endswith("Licitacoes-e-Contratos-Orientacoes-e-Jurisprudencia-do-TCU-5a-Edicao.pdf")
+    assert source["urls"][0] == (
+        "https://licitacoesecontratos.tcu.gov.br/wp-content/uploads/sites/11/2026/02/"
+        "Manual-versao-SECOM-publicada-no-site-VERSAO-FINAL-ATUALIZADA-1_compressed-1.pdf"
+    )
+    assert source["data_versao"] == "5ª edição — atualizado em 29/08/2025"
 
 
 def test_validator_accepts_tcu_manual_content():

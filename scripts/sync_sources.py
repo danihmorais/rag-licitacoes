@@ -127,13 +127,16 @@ def _decode_response(raw, final, content_type=''):
 def _fetch_with_wget(url):
     if shutil.which('wget') is None:
         raise RuntimeError('wget não está instalado no sistema.')
+    is_pdf = urlparse(url).path.lower().split('?', 1)[0].endswith('.pdf')
+    timeout = 180 if is_pdf else 20
+    process_timeout = 240 if is_pdf else 50
     result = subprocess.run(
         [
             'wget',
             '--quiet',
             '--server-response',
             '--max-redirect=10',
-            '--timeout=20',
+            f'--timeout={timeout}',
             '--tries=2',
             '--user-agent=Mozilla/5.0',
             '--header=Accept: text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
@@ -143,7 +146,7 @@ def _fetch_with_wget(url):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
-        timeout=50,
+        timeout=process_timeout,
     )
     if result.returncode != 0:
         detail = result.stderr.decode('utf-8', errors='replace').strip().splitlines()
@@ -155,7 +158,9 @@ def _fetch_with_wget(url):
 
 def fetch(session, url):
     try:
-        response = session.get(url, timeout=(8, 20), allow_redirects=True)
+        is_pdf = urlparse(url).path.lower().split('?', 1)[0].endswith('.pdf')
+        response_timeout = (8, 120) if is_pdf else (8, 20)
+        response = session.get(url, timeout=response_timeout, allow_redirects=True)
         response.raise_for_status()
         return _decode_response(
             response.content,
