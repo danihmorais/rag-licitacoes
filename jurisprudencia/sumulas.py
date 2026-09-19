@@ -179,39 +179,54 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
                     break
                 visited_urls.add(current_url)
 
-                candidates = page.locator("a,button")
-                next_index = None
-                for index in range(candidates.count()):
-                    item = candidates.nth(index)
+                next_locator = page.locator(
+                    'button[aria-label*="Próxima página"], a[aria-label*="Próxima página"]'
+                )
+                if next_locator.count() == 0:
+                    candidates = page.locator("a,button")
+                    next_index = None
+                    for index in range(candidates.count()):
+                        item = candidates.nth(index)
+                        try:
+                            label = " ".join(filter(None, [
+                                item.inner_text(timeout=1000),
+                                item.get_attribute("aria-label"),
+                                item.get_attribute("title"),
+                            ])).strip().casefold()
+                        except Exception:
+                            continue
+                        normalized = re.sub(r"\s+", " ", label)
+                        if (
+                            re.search(r"\b(próxima|proxima|next)\b", normalized)
+                            or normalized in {">", "›", "»", "→"}
+                        ):
+                            disabled = item.get_attribute("disabled")
+                            aria_disabled = item.get_attribute("aria-disabled")
+                            if disabled is None and aria_disabled != "true":
+                                next_index = index
+                                break
+                    if next_index is None:
+                        break
+                    next_locator = candidates.nth(next_index)
+                disabled = next_locator.get_attribute("disabled")
+                aria_disabled = next_locator.get_attribute("aria-disabled")
+                if disabled is not None or aria_disabled == "true":
+                    break
+                before_url = page.url
+                before_signature = re.sub(r"\s+", " ", body_text)
+                next_locator.click(force=True)
+                changed = False
+                for _attempt in range(75):
                     try:
-                        label = " ".join(filter(None, [
-                            item.inner_text(timeout=1000),
-                            item.get_attribute("aria-label"),
-                            item.get_attribute("title"),
-                        ])).strip().casefold()
+                        page.wait_for_timeout(200)
+                        new_url = page.url
+                        new_text = page.locator("body").inner_text(timeout=1000)
                     except Exception:
                         continue
-                    normalized = re.sub(r"\s+", " ", label)
-                    if (
-                        re.search(r"\b(próxima|proxima|next)\b", normalized)
-                        or normalized in {">", "›", "»", "→"}
-                    ):
-                        disabled = item.get_attribute("disabled")
-                        aria_disabled = item.get_attribute("aria-disabled")
-                        if disabled is None and aria_disabled != "true":
-                            next_index = index
-                            break
-                if next_index is None:
-                    break
-                before_signature = body_text[-4000:]
-                page.locator("a,button").nth(next_index).click(force=True)
-                try:
-                    page.wait_for_function(
-                        "(oldText) => document.body && document.body.innerText.slice(-4000) !== oldText",
-                        arg=before_signature,
-                        timeout=10000,
-                    )
-                except PlaywrightTimeoutError:
+                    if new_url != before_url or re.sub(r"\s+", " ", new_text) != before_signature:
+                        changed = True
+                        break
+                if not changed:
                     break
         finally:
             browser.close()
