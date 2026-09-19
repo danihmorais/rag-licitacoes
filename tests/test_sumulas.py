@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from jurisprudencia.collector import save_record
+import jurisprudencia.sumulas as sumulas
+
 from jurisprudencia.sumulas import (
     TCU_SUMULA_DOCUMENT_URL,
     TCU_SUMULA_MIN_RECORDS,
@@ -165,3 +167,45 @@ def test_batch_can_disable_sumulas_for_targeted_health_checks(monkeypatch, tmp_p
     )
 
     assert result == []
+
+
+def test_tcu_collection_uses_browser_fallback_for_unparsed_portal(monkeypatch):
+    record = sumulas._make_tcu_record(
+        222,
+        "Enunciado da Súmula 222.",
+        source_url=TCU_SUMULA_DOCUMENT_URL.format(numero=222),
+    )
+
+    monkeypatch.setattr(sumulas, "_fetch_tcu_sumula", lambda number: None)
+
+    async def fake_browser(numbers):
+        assert numbers == [222]
+        return [record]
+
+    monkeypatch.setattr(sumulas, "_collect_tcu_sumulas_browser", fake_browser)
+
+    records = sumulas._collect_tcu_sumulas([222])
+
+    assert [item.numero_sumula for item in records] == ["222"]
+
+
+def test_collect_sumulas_strict_only_validates_requested_tribunals(monkeypatch):
+    monkeypatch.setattr(
+        sumulas,
+        "collect_tcu_sumulas",
+        lambda: [sumulas._make_tcu_record(
+            222,
+            "Enunciado da Súmula 222.",
+            source_url=TCU_SUMULA_DOCUMENT_URL.format(numero=222),
+        )] * 295,
+    )
+
+    def fail_tcesp():
+        raise AssertionError("TCESP não deveria ser consultado")
+
+    monkeypatch.setattr(sumulas, "collect_tcesp_sumulas", fail_tcesp)
+
+    result = sumulas.collect_sumulas(tribunals=("tcu",), strict=False)
+
+    assert len(result["tcu"]) == 295
+    assert result["tcesp"] == []
