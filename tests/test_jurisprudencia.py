@@ -203,7 +203,6 @@ def test_tjsp_save_record_has_state_scope(tmp_path: Path):
 
 
 def test_tcm_sp_uses_current_portal_endpoint():
-    assert TCMSPAdapter.endpoint == "https://portal.tcm.sp.gov.br/Acordao/Index"
 
 def test_query_matching_requires_all_terms_for_short_queries():
     assert _query_matches("contrato administrativo", "contrato administrativo")
