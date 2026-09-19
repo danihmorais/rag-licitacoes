@@ -210,7 +210,7 @@ def test_tcesp_parser_accepts_heading_embedded_in_text():
 def test_tcesp_collection_uses_browser_when_catalog_is_incomplete(monkeypatch):
     from jurisprudencia import sumulas
     class Response:
-        content = b"<html><body>SÚMULA Nº 1 - somente uma</body></html>"
+        content = "<html><body>SÚMULA Nº 1 - somente uma</body></html>".encode("utf-8")
         def raise_for_status(self): return None
     class Session:
         def get(self, *args, **kwargs): return Response()
