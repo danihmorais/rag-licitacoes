@@ -50,7 +50,7 @@ def collect_batch(
     min_records_per_tribunal=1,
     per_query_limit=25,
     dlq_path=None,
-    include_sumulas=True,
+    include_sumulas=False,
 ):
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     output = []
@@ -202,7 +202,10 @@ def main() -> int:
     parser.add_argument('--strict', action='store_true', help='Falha se algum tribunal solicitado ficar abaixo do mínimo de registros.')
     parser.add_argument('--min-records-per-tribunal', type=int, default=config.JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL)
     parser.add_argument('--per-query-limit', type=int, default=25, help='Máximo coletado por tribunal em cada consulta temática.')
-    parser.add_argument('--without-sumulas', action='store_false', dest='include_sumulas', help='Não coleta as Súmulas do TCU e do TCESP; útil para health-checks pontuais.')
+    sumula_group = parser.add_mutually_exclusive_group()
+    sumula_group.add_argument('--with-sumulas', action='store_true', dest='include_sumulas', help='Coleta as Súmulas do TCU e do TCESP.')
+    sumula_group.add_argument('--without-sumulas', action='store_false', dest='include_sumulas', help='Não coleta as Súmulas; útil para health-checks pontuais.')
+    parser.set_defaults(include_sumulas=True)
     parser.add_argument('--output-dir', type=Path, default=None)
     args = parser.parse_args()
     if args.min_records_per_tribunal < 1:
