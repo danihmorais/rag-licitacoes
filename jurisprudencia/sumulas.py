@@ -63,16 +63,13 @@ def _thread_session():
     return session
 
 
-def _parse_tcu_sumulas_page(raw: bytes) -> list[JurisprudenciaRecord]:
-    soup = BeautifulSoup(raw, "html.parser")
-    for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
-        tag.decompose()
-    text = "\n".join(line.strip() for line in soup.get_text("\n").splitlines() if line.strip())
+def _parse_tcu_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
+    cleaned = "\n".join(line.strip() for line in text.splitlines() if line.strip())
     records = []
     pattern = re.compile(
         r"(?is)S[ÚU]MULA\s+TCU\s+(\d+)\s*(?:\(([^)]+)\))?\s*:\s*(.+?)(?=\n\s*(?:Acórdão|Decisão)\b|\n\s*S[ÚU]MULA\s+TCU\s+\d+\s*(?:\(|:)|\Z)"
     )
-    for match in pattern.finditer(text):
+    for match in pattern.finditer(cleaned):
         number = int(match.group(1))
         status = clean_text(match.group(2) or "")
         enunciado = _strip_markup(clean_text(match.group(3)))
@@ -94,6 +91,13 @@ def _parse_tcu_sumulas_page(raw: bytes) -> list[JurisprudenciaRecord]:
             )
         )
     return records
+
+
+def _parse_tcu_sumulas_page(raw: bytes) -> list[JurisprudenciaRecord]:
+    soup = BeautifulSoup(raw, "html.parser")
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
+        tag.decompose()
+    return _parse_tcu_sumulas_text(soup.get_text("\n"))
 
 
 def _pagination_links(raw: bytes, base_url: str) -> list[str]:
@@ -143,30 +147,90 @@ def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
     return None
 
 
+def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
+    except ImportError as exc:
+        raise RuntimeError("Playwright é necessário para renderizar o catálogo de Súmulas do TCU.") from exc
+
+    by_number = {}
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1600, "height": 1200})
+        try:
+            page.goto(TCU_SUMULA_CATALOG_URL, wait_until="domcontentloaded", timeout=60000)
+            visited_urls = set()
+            for _ in range(max_pages):
+                try:
+                    page.wait_for_load_state("networkidle", timeout=10000)
+                except PlaywrightTimeoutError:
+                    pass
+                body_text = page.locator("body").inner_text(timeout=10000)
+                for record in _parse_tcu_sumulas_text(body_text):
+                    number = int(record.numero_sumula or 0)
+                    if 1 <= number <= max_number:
+                        by_number[number] = record
+                current_url = page.url
+                if current_url in visited_urls:
+                    break
+                visited_urls.add(current_url)
+
+                candidates = page.locator("a,button")
+                next_index = None
+                for index in range(candidates.count()):
+                    item = candidates.nth(index)
+                    try:
+                        label = " ".join(filter(None, [
+                            item.inner_text(timeout=1000),
+                            item.get_attribute("aria-label"),
+                            item.get_attribute("title"),
+                        ])).strip().casefold()
+                    except Exception:
+                        continue
+                    normalized = re.sub(r"\s+", " ", label)
+                    if (
+                        re.search(r"\b(próxima|proxima|next)\b", normalized)
+                        or normalized in {">", "›", "»", "→"}
+                    ):
+                        disabled = item.get_attribute("disabled")
+                        aria_disabled = item.get_attribute("aria-disabled")
+                        if disabled is None and aria_disabled != "true":
+                            next_index = index
+                            break
+                if next_index is None:
+                    break
+                before_signature = body_text[-4000:]
+                page.locator("a,button").nth(next_index).click()
+                try:
+                    page.wait_for_function(
+                        "(oldText) => document.body && document.body.innerText.slice(-4000) !== oldText",
+                        arg=before_signature,
+                        timeout=10000,
+                    )
+                except PlaywrightTimeoutError:
+                    break
+        finally:
+            browser.close()
+    return [by_number[number] for number in sorted(by_number)]
+
+
 def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
     session = session or make_session()
-    queue = [TCU_SUMULA_CATALOG_URL]
-    visited = set()
-    by_number = {}
-    while queue and len(visited) < 40:
-        url = queue.pop(0)
-        if url in visited:
-            continue
-        visited.add(url)
-        response = session.get(url, timeout=(8, 60), allow_redirects=True)
+    try:
+        response = session.get(TCU_SUMULA_CATALOG_URL, timeout=(8, 60), allow_redirects=True)
         response.raise_for_status()
-        page_records = _parse_tcu_sumulas_page(response.content)
-        for record in page_records:
+        records = _parse_tcu_sumulas_page(response.content)
+    except requests.RequestException:
+        records = []
+    if records:
+        by_number = {}
+        for record in records:
             number = int(record.numero_sumula or 0)
             if 1 <= number <= max_number:
                 by_number[number] = record
-        for next_url in _pagination_links(response.content, response.url):
-            if next_url not in visited:
-                queue.append(next_url)
-        if not page_records and len(visited) > 1:
-            break
-    records = [by_number[number] for number in sorted(by_number)]
-    return records
+        if len(by_number) >= 1:
+            return [by_number[number] for number in sorted(by_number)]
+    return _collect_tcu_sumulas_browser(max_number=max_number)
 
 
 def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
