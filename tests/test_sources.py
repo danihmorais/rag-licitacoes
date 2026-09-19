@@ -22,7 +22,7 @@ def test_source_catalog_is_unique_and_broad():
     retired = {"tcu","tcesp","tcu-dados-jurisprudencia","tcu-jurisprudencia-pesquisa","stj-jurisprudencia","stj-teses","stj-repetitivos-iacs","stj-sumulas-anotadas","stj-legislacao-aplicada","stj-informativos","stf-jurisprudencia","stf-repercussao-geral","stf-teses-rg","stf-tesauro","tjsp-jurisprudencia","tjsp-saj-jurisprudencia"}
     assert retired.isdisjoint(set(ids))
     areas = {item.get("ramo_direito") for item in SOURCES if item.get("ramo_direito")}
-    assert {"Constitucional","Administrativo","Processual Público","Tributário","Financeiro e Orçamentário","Ambiental","Urbanístico","Saúde Pública","Educação Pública","Assistência Social","Pessoal e Servidores","Serviços Públicos"} <= areas
+    assert {"Constitucional","Administrativo","Processual Público","Tributário","Financeiro e Orçamentário","Ambiental","Urbanístico","Saúde Pública","Educação Pública","Assistência Social","Pessoal e Servidores","Serviços Públicos","Contratações Públicas"} <= areas
 
 
 def test_discovery_indexes_are_not_indexed_as_corpus_documents():
@@ -142,6 +142,33 @@ def test_tcesp_srp_source_accepts_official_deliberation_pdf_content():
             "II - " + ("precisa descrição dos itens pretendidos e dos materiais e serviços. " * 4),
             "Artigo 3º - " + ("Processo administrativo específico para adesão e demonstração da vantajosidade. " * 4),
             "Artigo 5º - " + ("Regras para adesões no Estado e nos Municípios paulistas. " * 4),
+        ]
+    )
+    validate(source, content)
+
+
+def test_tcu_manual_is_required_official_guidance_source():
+    catalog = {item["id"]: item for item in SOURCES}
+    source = catalog["tcu-manual-licitacoes"]
+    assert source["required"] is True
+    assert source["source_role"] == "orientacao_oficial"
+    assert source["authority_level"] == 3
+    assert source["tipo_documento"] == "manual"
+    assert source["urls"][0].endswith("Licitacoes-e-Contratos-Orientacoes-e-Jurisprudencia-do-TCU-5a-Edicao.pdf")
+
+
+def test_validator_accepts_tcu_manual_content():
+    source = next(item for item in SOURCES if item["id"] == "tcu-manual-licitacoes")
+    content = "\n".join(
+        [
+            "MANUAL DE LICITAÇÕES E CONTRATOS",
+            "Orientações e Jurisprudência do Tribunal de Contas da União",
+            "5ª edição",
+            "Objetivo e escopo do manual.",
+            "Licitações e contratos administrativos.",
+            "A Lei 14.133/2021 constitui a referência normativa central.",
+            "São apresentadas orientações preventivas e pedagógicas.",
+            "O manual reúne referências normativas e jurisprudência.",
         ]
     )
     validate(source, content)
