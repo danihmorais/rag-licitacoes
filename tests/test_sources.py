@@ -62,6 +62,12 @@ def test_validator_accepts_official_guidance_content():
     guidance = (ROOT / "tests" / "fixtures" / "pge_guidance.txt").read_text(encoding="utf-8")
     validate(next(item for item in SOURCES if item["id"] == "sp-pge-pareceres"), guidance, linked=True)
 
+def test_prefeitura_sp_sources_are_absent():
+    municipal = [item for item in SOURCES if item.get("jurisdicao") == "municipal_sp"]
+    assert municipal == []
+    assert not any(item["id"].startswith("spm-") for item in SOURCES)
+
+
 def test_current_source_endpoints():
     catalog = {item["id"]: item for item in SOURCES}
     assert catalog["pncp"]["urls"][0] == "https://www.gov.br/pncp/pt-br/pncp/legislacao"
