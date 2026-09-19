@@ -28,7 +28,7 @@ WEB_EXCLUDED_PATH_PARTS = (
 WEB_STATIC_EXTENSIONS = (
     ".7z", ".avi", ".bmp", ".css", ".csv", ".doc", ".docx", ".gif", ".gz",
     ".ico", ".jpeg", ".jpg", ".js", ".json", ".m4a", ".mp3", ".mp4",
-    ".mpeg", ".png", ".svg", ".tar", ".tif", ".tiff", ".webm", ".webp",
+    ".mpeg", ".pdf", ".png", ".rss", ".svg", ".tar", ".tif", ".tiff", ".webm", ".webp",
     ".woff", ".woff2", ".xls", ".xlsx", ".zip",
 )
 
