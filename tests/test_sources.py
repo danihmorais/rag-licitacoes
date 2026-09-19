@@ -161,14 +161,16 @@ def test_validator_accepts_tcu_manual_content():
     source = next(item for item in SOURCES if item["id"] == "tcu-manual-licitacoes")
     content = "\n".join(
         [
-            "MANUAL DE LICITAÇÕES E CONTRATOS",
-            "Orientações e Jurisprudência do Tribunal de Contas da União",
-            "5ª edição",
-            "Objetivo e escopo do manual.",
-            "Licitações e contratos administrativos.",
-            "A Lei 14.133/2021 constitui a referência normativa central.",
-            "São apresentadas orientações preventivas e pedagógicas.",
-            "O manual reúne referências normativas e jurisprudência.",
+            "MANUAL DE LICITAÇÕES E CONTRATOS — ORIENTAÇÕES E JURISPRUDÊNCIA DO TCU",
+            "5ª edição — Tribunal de Contas da União.",
+            "Este manual apresenta orientações para licitações e contratos administrativos.",
+            "O conteúdo foi elaborado para apoiar a aplicação prática da legislação de contratações públicas.",
+            "A Lei 14.133/2021 constitui a referência normativa central para as contratações públicas.",
+            "São apresentadas orientações preventivas, pedagógicas e referências à jurisprudência do TCU.",
+            "O manual reúne referências normativas, jurisprudenciais e procedimentos de contratação administrativa.",
+            "A obra aborda planejamento, seleção do fornecedor, gestão contratual e controle das contratações.",
+            "As orientações devem ser consideradas em conjunto com a legislação vigente e a jurisprudência aplicável.",
+            "O material possui caráter de orientação oficial e não substitui o texto da legislação.",
         ]
     )
     validate(source, content)
