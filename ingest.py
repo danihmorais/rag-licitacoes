@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -15,6 +16,29 @@ import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
 from chunking import build_structural_chunks
+
+PAYLOAD_INDEXES = {
+    'doc_id': models.PayloadSchemaType.KEYWORD,
+    'source_id': models.PayloadSchemaType.KEYWORD,
+    'source': models.PayloadSchemaType.KEYWORD,
+    'unit_id': models.PayloadSchemaType.KEYWORD,
+    'jurisdicao': models.PayloadSchemaType.KEYWORD,
+    'esfera': models.PayloadSchemaType.KEYWORD,
+    'orgao': models.PayloadSchemaType.KEYWORD,
+    'tribunal': models.PayloadSchemaType.KEYWORD,
+    'tipo_documento': models.PayloadSchemaType.KEYWORD,
+    'source_role': models.PayloadSchemaType.KEYWORD,
+    'status': models.PayloadSchemaType.KEYWORD,
+    'municipio': models.PayloadSchemaType.KEYWORD,
+    'modalidade': models.PayloadSchemaType.KEYWORD,
+    'tipo': models.PayloadSchemaType.KEYWORD,
+    'regime_juridico': models.PayloadSchemaType.KEYWORD,
+    'authority_level': models.PayloadSchemaType.INTEGER,
+    'normative_rank': models.PayloadSchemaType.INTEGER,
+    'ano': models.PayloadSchemaType.INTEGER,
+    'norm_ano': models.PayloadSchemaType.INTEGER,
+    'revogado': models.PayloadSchemaType.BOOL,
+}
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
@@ -169,11 +193,13 @@ def build_chunks(document, pages):
         page_content = prefix
         if hierarchy_label:
             page_content += f' [HIERARQUIA: {hierarchy_label}]'
-        page_content += '\\n' + chunk.get('page_content', chunk['text'])
+        page_content += '\n' + chunk.get('page_content', chunk['text'])
+        embedding_text = 'passage: ' + page_content
         output.append({
             **chunk,
             'text': chunk['text'],
             'page_content': page_content,
+            'embedding_text': embedding_text,
             'doc_id': doc_id,
             'source': document.name,
             'source_id': meta.get('source_id') or document.stem,
@@ -189,6 +215,29 @@ def embedding_kwargs():
     return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
+def validate_embedding_inputs(model, texts, *, label):
+    tokenizer = getattr(getattr(model, 'model', None), 'tokenizer', None)
+    if tokenizer is None or not hasattr(tokenizer, 'encode_batch'):
+        raise RuntimeError('Não foi possível validar o tamanho dos textos antes do embedding.')
+    truncation = getattr(tokenizer, 'truncation', None) or {}
+    actual_limit = truncation.get('max_length') if isinstance(truncation, dict) else None
+    limit = min(config.DENSE_MAX_TOKENS, int(actual_limit)) if actual_limit else config.DENSE_MAX_TOKENS
+    for offset in range(0, len(texts), 256):
+        batch = texts[offset:offset + 256]
+        encoded = tokenizer.encode_batch(batch)
+        oversized = [
+            (offset + index + 1, len(item.ids))
+            for index, item in enumerate(encoded)
+            if len(item.ids) > limit
+        ]
+        if oversized:
+            index, count = oversized[0]
+            raise RuntimeError(
+                f'{label} excede o limite de {limit} tokens do embedding no item {index}: {count} tokens. '
+                'O texto não será truncado silenciosamente; reduza o chunk ou ajuste o limite do modelo.'
+            )
+
+
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
         client.create_collection(
@@ -197,6 +246,13 @@ def ensure_collection(client):
                 'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)
             },
             sparse_vectors_config={'sparse': models.SparseVectorParams()},
+        )
+    for field_name, field_schema in PAYLOAD_INDEXES.items():
+        client.create_payload_index(
+            collection_name=config.COLLECTION_NAME,
+            field_name=field_name,
+            field_schema=field_schema,
+            wait=True,
         )
 
 
@@ -252,11 +308,23 @@ def delete_point_ids(client, point_ids):
     point_ids = list(point_ids)
     if not point_ids:
         return
-    client.delete(
-        collection_name=config.COLLECTION_NAME,
-        points_selector=models.PointIdsList(points=point_ids),
-        wait=True,
-    )
+    for start in range(0, len(point_ids), config.QDRANT_UPSERT_BATCH_SIZE):
+        batch = point_ids[start:start + config.QDRANT_UPSERT_BATCH_SIZE]
+        client.delete(
+            collection_name=config.COLLECTION_NAME,
+            points_selector=models.PointIdsList(points=batch),
+            wait=True,
+        )
+
+
+def upsert_points(client, points):
+    points = list(points)
+    for start in range(0, len(points), config.QDRANT_UPSERT_BATCH_SIZE):
+        client.upsert(
+            collection_name=config.COLLECTION_NAME,
+            points=points[start:start + config.QDRANT_UPSERT_BATCH_SIZE],
+            wait=True,
+        )
 
 
 def delete_doc(client, doc_id, legacy_source=None):
@@ -270,7 +338,7 @@ def _restore_points(client, points):
         models.PointStruct(id=point.id, vector=point.vector, payload=point.payload or {})
         for point in points
     ]
-    client.upsert(collection_name=config.COLLECTION_NAME, points=restored, wait=True)
+    upsert_points(client, restored)
 
 
 def replace_document_points(client, doc_id, new_points, legacy_source=None):
@@ -303,7 +371,7 @@ def replace_document_points(client, doc_id, new_points, legacy_source=None):
     old_ids = {point.id for point in old_points}
     try:
         delete_point_ids(client, old_ids)
-        client.upsert(collection_name=config.COLLECTION_NAME, points=new_points, wait=True)
+        upsert_points(client, new_points)
     except Exception as exc:
         try:
             delete_point_ids(client, {point.id for point in new_points})
@@ -352,6 +420,14 @@ def validate_dense_vectors(vectors, expected):
                 f'embedding denso com dimensão inválida no chunk {index}: '
                 f'{len(vector)} != {config.DENSE_DIM}'
             )
+        norm_sq = 0.0
+        for value in vector:
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise RuntimeError(f'embedding denso contém valor não finito no chunk {index}.')
+            norm_sq += numeric * numeric
+        if norm_sq <= 0.0:
+            raise RuntimeError(f'embedding denso nulo no chunk {index}.')
     if len(vectors) != expected:
         raise RuntimeError(f'quantidade de embeddings densa inválida: {len(vectors)} != {expected}')
 
@@ -369,7 +445,7 @@ def main():
     elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME, exact=True).count:
         raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
 
-    dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
+    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
     active_names = {document_id_for(document) for document in files}
@@ -415,7 +491,9 @@ def main():
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
                 continue
-            dense_vectors = list(dense.embed([item['page_content'] for item in chunks]))
+            embedding_inputs = [item['embedding_text'] for item in chunks]
+            validate_embedding_inputs(dense, embedding_inputs, label=document.name)
+            dense_vectors = list(dense.embed(embedding_inputs))
             validate_dense_vectors(dense_vectors, len(chunks))
             sparse_vectors = list(sparse.embed([item['page_content'] for item in chunks]))
             if len(sparse_vectors) != len(chunks):
