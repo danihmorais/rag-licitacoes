@@ -141,3 +141,9 @@ def test_tcu_catalog_parser_accepts_dash_separator():
     )
     assert len(records) == 1
     assert records[0].numero_sumula == "222"
+
+
+def test_tcu_catalog_pagination_signature_is_supported():
+    from jurisprudencia.sumulas import _parse_tcu_sumulas_text
+    text = "SÚMULA TCU Nº 222: Enunciado.\nDecisão 759/1994-Plenário"
+    assert [item.numero_sumula for item in _parse_tcu_sumulas_text(text)] == ["222"]
