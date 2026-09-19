@@ -238,34 +238,21 @@ def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -
 
 
 def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
-    lines = [line.strip() for line in text.replace(" ", " ").splitlines() if line.strip()]
-    heading = re.compile(
-        r"^S[ÚU]MULA\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:[-–—:]\s*)?(.*)$",
-        re.IGNORECASE,
+    normalized = text.replace(" ", " ")
+    pattern = re.compile(
+        r"(?is)S[ÚU]MULA\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:[-–—:]\s*)?"
     )
-    raw_records = []
-    current = None
-    for line in lines:
-        match = heading.match(line)
-        if match:
-            if current is not None:
-                raw_records.append(current)
-            current = {
-                "numero": int(match.group(1)),
-                "parts": [match.group(2).strip()] if match.group(2).strip() else [],
-            }
-            continue
-        if current is not None:
-            current["parts"].append(line)
-    if current is not None:
-        raw_records.append(current)
-
+    matches = list(pattern.finditer(normalized))
     records = []
-    for item in raw_records:
-        number = item["numero"]
-        block = " ".join(part for part in item["parts"] if part)
+    for index, match in enumerate(matches):
+        number = int(match.group(1))
+        if not 1 <= number <= 53:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        block = normalized[match.end():end]
         block = re.sub(r"\(Veja histórico e fundamento\)", "", block, flags=re.I)
         cancelled = bool(re.search(r"\bCANCELADA\b", block, re.I))
+        block = re.split(r"\n\s*(?:Veja|Histórico|Fundamento)\b", block, maxsplit=1, flags=re.I)[0]
         block = re.sub(r"\s*\(CANCELADA\)\s*", " ", block, flags=re.I)
         enunciado = _strip_markup(clean_text(block))
         if not enunciado:
@@ -285,7 +272,8 @@ def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
                 origem="TCESP — Repertório de Súmulas",
             )
         )
-    return sorted(records, key=lambda item: int(item.numero_decisao or 0))
+    by_number = {int(record.numero_decisao): record for record in records}
+    return [by_number[number] for number in sorted(by_number)]
 
 
 def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
