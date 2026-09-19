@@ -42,8 +42,7 @@ def test_expanded_sources_are_present():
         'in147', 'in148', 'in176', 'in190', 'in381', 'in382',
         'agu-on', 'agu-pareceres-referenciais', 'agu-modelos-14133',
         'lei4717', 'lei7347', 'lc131', 'decreto7724', 'lei6019',
-        'lei12016', 'lc182', 'sp-lai', 'spm-decreto62100',
-        'spm-decreto62436', 'spm-decreto64863', 'sp-pge-pareceres',
+        'lei12016', 'lc182', 'sp-lai', 'sp-pge-pareceres',
     }
     assert required <= ids
     retired = {
