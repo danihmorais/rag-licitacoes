@@ -51,7 +51,7 @@ RETIRED_SOURCE_IDS = {
     'stj-sumulas-anotadas', 'stj-legislacao-aplicada', 'stj-informativos',
     'stf-repercussao-geral', 'stf-teses-rg', 'stf-tesauro', 'stf-jurisprudencia',
     'tjsp-jurisprudencia', 'tjsp-saj-jurisprudencia', 'tcu-dados-jurisprudencia',
-    'tcu-jurisprudencia-pesquisa',
+    'tcu-jurisprudencia-pesquisa', 'tcm-sp-jurisprudencia',
     'spm-decreto62100', 'spm-decreto62436', 'spm-decreto64863',
     'spm-in-seges6-2023', 'spm-pgm38-2025',
 }

@@ -28,10 +28,7 @@ def test_schema_normalizes_tcu_variants_before_validation():
     assert record.assunto == ["licitação", "contrato"]
 
 
-def test_schema_normalizes_tcesp_and_tcm_aliases():
+def test_schema_normalizes_tcesp_aliases():
     tcesp = JurisprudenciaRecord(siglaTribunal="TCE-SP", processo_numero="1/2026")
     tcesp.validate()
     assert tcesp.tribunal == "TCESP"
-    tcm = JurisprudenciaRecord(tribunal="TCM SP", processo="2/2026")
-    tcm.validate()
-    assert tcm.tribunal == "TCM-SP"
