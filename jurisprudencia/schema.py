@@ -193,7 +193,8 @@ class JurisprudenciaRecord(BaseModel):
             lines.append(f"TIPO DOCUMENTO: {self.tipo_documento}")
         if self.numero_sumula:
             lines.append(f"SÚMULA: {self.numero_sumula}")
-        lines.append(f"PROCESSO: {self.numero_processo}")
+        if self.numero_processo:
+            lines.append(f"PROCESSO: {self.numero_processo}")
         if self.numero_decisao:
             lines.append(f"DECISÃO/ACÓRDÃO: {self.numero_decisao}")
         if self.tipo_decisao:
