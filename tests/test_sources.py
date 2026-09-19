@@ -121,6 +121,39 @@ def test_historical_nllc_value_decrees_use_official_camara_fallback_series():
         assert source["fallback_urls"] == (fallback_url,)
 
 
+def test_planalto_sources_with_secondary_official_mirror():
+    catalog = {item["id"]: item for item in SOURCES}
+    expected = {
+        "lei14063": "https://www2.camara.leg.br/legin/fed/lei/2020/lei-14063-23-setembro-2020-790659-norma-pl.html",
+        "lei12527": "https://www2.camara.leg.br/legin/fed/lei/2011/lei-12527-18-novembro-2011-611802-norma-pl.html",
+        "lei13303": "https://www2.camara.leg.br/legin/fed/lei/2016/lei-13303-30-junho-2016-783296-norma-pl.html",
+        "lei8987": "https://www2.camara.leg.br/legin/fed/lei/1995/lei-8987-13-fevereiro-1995-349810-norma-pl.html",
+        "lei11079": "https://www2.camara.leg.br/legin/fed/lei/2004/lei-11079-30-dezembro-2004-535279-norma-pl.html",
+        "lei4320": "https://www2.camara.leg.br/legin/fed/lei/1960-1969/lei-4320-17-marco-1964-376590-norma-pl.html",
+        "lc123": "https://www2.camara.leg.br/legin/fed/leicom/2006/leicomplementar-123-14-dezembro-2006-548099-normaatualizada-pl.html",
+        "lei13019": "https://www2.camara.leg.br/legin/fed/lei/2014/lei-13019-31-julho-2014-779123-norma-pl.html",
+        "lei13460": "https://www2.camara.leg.br/legin/fed/lei/2017/lei-13460-26-junho-2017-785098-norma-pl.html",
+        "lei14129": "https://www2.camara.leg.br/legin/fed/lei/2021/lei-14129-29-marco-2021-791203-norma-pl.html",
+        "decreto11246": "https://www2.camara.leg.br/legin/fed/decret/2022/decreto-11246-27-outubro-2022-793362-norma-pe.html",
+        "decreto11461": "https://www2.camara.leg.br/legin/fed/decret/2023/decreto-11461-31-marco-2023-793985-norma-pe.html",
+        "lei6938": "https://www2.camara.leg.br/legin/fed/lei/1980-1987/lei-6938-31-agosto-1981-366135-norma-pl.html",
+        "lei9605": "https://www2.camara.leg.br/legin/fed/lei/1998/lei-9605-12-fevereiro-1998-365397-norma-pl.html",
+        "lei13146": "https://www2.camara.leg.br/legin/fed/lei/2015/lei-13146-6-julho-2015-781174-norma-pl.html",
+        "lei10520": "https://www2.camara.leg.br/legin/fed/lei/2002/lei-10520-17-julho-2002-472321-norma-pl.html",
+        "lei12462": "https://www2.camara.leg.br/legin/fed/lei/2011/lei-12462-4-agosto-2011-611147-norma-pl.html",
+        "decreto12771": "https://www2.camara.leg.br/legin/fed/decret/2025/decreto-12771-5-dezembro-2025-798434-norma-pe.html",
+        "lei15210": "https://www2.camara.leg.br/legin/fed/lei/2025/lei-15210-16-setembro-2025-797983-norma-pl.html",
+        "lei15266": "https://www2.camara.leg.br/legin/fed/lei/2025/lei-15266-21-novembro-2025-798322-norma-pl.html",
+        "lei15190": "https://www2.camara.leg.br/legin/fed/lei/2025/lei-15190-8-agosto-2025-797833-norma-pl.html",
+        "decreto12926": "https://www2.camara.leg.br/legin/fed/decret/2026/decreto-12926-13-abril-2026-798946-norma-pe.html",
+        "decreto13031": "https://www2.camara.leg.br/legin/fed/decret/2026/decreto-13031-17-junho-2026-799366-norma-pe.html",
+        "decreto13106": "https://www2.camara.leg.br/legin/fed/decret/2026/decreto-13106-24-agosto-2026-799815-norma-pe.html",
+        "lei15471": "https://www2.camara.leg.br/legin/fed/lei/2026/lei-15471-20-julho-2026-799657-publicacaooriginal-180540-pl.html",
+    }
+    for source_id, fallback_url in expected.items():
+        assert catalog[source_id]["fallback_urls"] == (fallback_url,)
+
+
 def test_current_source_endpoints():
     catalog = {item["id"]: item for item in SOURCES}
     assert catalog["pncp"]["urls"][0] == "https://www.gov.br/pncp/pt-br/pncp/legislacao"
