@@ -147,3 +147,30 @@ def test_tcu_catalog_pagination_signature_is_supported():
     from jurisprudencia.sumulas import _parse_tcu_sumulas_text
     text = "SÚMULA TCU Nº 222: Enunciado.\nDecisão 759/1994-Plenário"
     assert [item.numero_sumula for item in _parse_tcu_sumulas_text(text)] == ["222"]
+
+
+def test_tcu_collection_uses_browser_when_http_catalog_is_incomplete(monkeypatch):
+    import jurisprudencia.sumulas as sumulas
+
+    class Response:
+        content = b"<html><body>S\xc3\x9aMULA TCU N\xc2\xba 1: Enunciado 1.</body></html>"
+        def raise_for_status(self):
+            return None
+
+    class Session:
+        def get(self, *args, **kwargs):
+            return Response()
+
+    expected = _parse_tcu_record_for_test(
+        b"<html><body>S\xc3\x9aMULA TCU N\xc2\xba 222: Enunciado 222.</body></html>"
+    )
+    called = {"value": False}
+
+    def fake_browser(**kwargs):
+        called["value"] = True
+        return [expected]
+
+    monkeypatch.setattr(sumulas, "_collect_tcu_sumulas_browser", fake_browser)
+    records = sumulas.collect_tcu_sumulas(Session())
+    assert called["value"] is True
+    assert records[0].numero_sumula == "222"
