@@ -81,3 +81,25 @@ def test_sumula_schema_does_not_require_process_number():
     )
     record.validate()
     assert "SÚMULA: 53" in record.to_index_text()
+
+
+
+def test_tcu_catalog_parser_extracts_multiple_sumulas_and_pagination():
+    from jurisprudencia.sumulas import _pagination_links, _parse_tcu_sumulas_page
+    html = """<html><body>
+    <div>SÚMULA TCU 222: Enunciado sobre normas gerais.</div>
+    <div>Decisão 759/1994-Plenário</div>
+    <div>SÚMULA TCU 247: Enunciado sobre parcelamento.</div>
+    <div>Acórdão 1782/2004-Plenário</div>
+    <a href="/resultado/todas-bases/*?pb=sumula&pagina=2">2</a>
+    <a href="/resultado/todas-bases/*?pb=sumula&pagina=3">Próxima</a>
+    </body></html>"""
+    records = _parse_tcu_sumulas_page(html.encode("utf-8"))
+    assert [item.numero_sumula for item in records] == ["222", "247"]
+    links = _pagination_links(html.encode("utf-8"), "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula")
+    assert len(links) == 2
+
+
+def test_tcu_catalog_is_canonical_source_url():
+    from jurisprudencia.sumulas import TCU_SUMULA_CATALOG_URL
+    assert TCU_SUMULA_CATALOG_URL == "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula"
