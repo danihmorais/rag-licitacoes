@@ -125,7 +125,7 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
         page = browser.new_page(viewport={"width": 1600, "height": 1200})
         try:
             page.goto(TCU_SUMULA_CATALOG_URL, wait_until="domcontentloaded", timeout=60000)
-            visited_urls = set()
+            visited_signatures = set()
             for _ in range(max_pages):
                 try:
                     page.wait_for_load_state("networkidle", timeout=10000)
@@ -138,10 +138,10 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
                     number = int(record.numero_sumula or 0)
                     if 1 <= number <= max_number:
                         by_number[number] = record
-                current_url = page.url
-                if current_url in visited_urls:
+                page_signature = re.sub(r"\s+", " ", body_text)
+                if page_signature in visited_signatures:
                     break
-                visited_urls.add(current_url)
+                visited_signatures.add(page_signature)
 
                 next_locator = page.get_by_role("button", name="Próxima página").last
                 if next_locator.count() == 0:
