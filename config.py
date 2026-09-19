@@ -27,6 +27,14 @@ FINAL_K = int(os.getenv('RAG_FINAL_K', '6'))
 CONTEXT_NEIGHBORS = int(os.getenv('RAG_CONTEXT_NEIGHBORS', '1'))
 MAX_CONTEXT_CHARS = int(os.getenv('RAG_MAX_CONTEXT_CHARS', '16000'))
 QDRANT_UPSERT_BATCH_SIZE = int(os.getenv('RAG_QDRANT_UPSERT_BATCH_SIZE', '100'))
+QDRANT_PAYLOAD_INDEXES = {
+    'doc_id': 'keyword', 'source_id': 'keyword', 'source': 'keyword', 'unit_id': 'keyword',
+    'jurisdicao': 'keyword', 'esfera': 'keyword', 'orgao': 'keyword', 'tribunal': 'keyword',
+    'tipo_documento': 'keyword', 'source_role': 'keyword', 'status': 'keyword', 'municipio': 'keyword',
+    'modalidade': 'keyword', 'tipo': 'keyword', 'regime_juridico': 'keyword',
+    'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
+    'revogado': 'bool',
+}
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
 FASTEMBED_PROVIDERS = tuple(x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', 'CUDAExecutionProvider').split(',') if x.strip())
