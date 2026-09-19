@@ -389,6 +389,15 @@ def sync_one(session, source, check=False, follow_links=True):
     return False, f'FAIL {source["id"]}: {last}', set()
 
 
+def strict_failure_ids(sources, failures):
+    failed = set(failures)
+    return [
+        source["id"]
+        for source in sources
+        if source["id"] in failed and not source.get("index_only")
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
@@ -430,17 +439,7 @@ def main():
     print(f'Fontes: {ok}/{len(sources)} OK')
     if failures:
         print('Falhas:', ', '.join(failures))
-    strict_failures = []
-    if args.strict:
-        strict_failures = [
-            source['id']
-            for source in sources
-            if source['id'] in failures
-            and (
-                (source.get('source_role') == 'norma' and not source.get('index_only'))
-                or source.get('source_type') == 'web_articles'
-            )
-        ]
+    strict_failures = strict_failure_ids(sources, failures) if args.strict else []
     if failures and args.required_only:
         return 1
     if strict_failures:
