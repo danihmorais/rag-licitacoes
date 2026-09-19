@@ -67,12 +67,14 @@ def _parse_tcu_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
     cleaned = "\n".join(line.strip() for line in text.splitlines() if line.strip())
     records = []
     pattern = re.compile(
-        r"(?is)S[ÚU]MULA\s+TCU\s+(\d+)\s*(?:\(([^)]+)\))?\s*:\s*(.+?)(?=\n\s*(?:Acórdão|Decisão)\b|\n\s*S[ÚU]MULA\s+TCU\s+\d+\s*(?:\(|:)|\Z)"
+        r"(?is)S[ÚU]MULA\s+TCU\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:\(([^)]+)\))?\s*:?\s*(.+?)(?=\n\s*S[ÚU]MULA\s+TCU\s+(?:N[ºO°]?\s*)?\d+\b|\Z)"
     )
     for match in pattern.finditer(cleaned):
         number = int(match.group(1))
         status = clean_text(match.group(2) or "")
-        enunciado = _strip_markup(clean_text(match.group(3)))
+        block = clean_text(match.group(3))
+        block = re.split(r"\n\s*(?:Acórdão|Decisão)\b", block, maxsplit=1, flags=re.I)[0]
+        enunciado = _strip_markup(block)
         if not enunciado:
             continue
         records.append(
