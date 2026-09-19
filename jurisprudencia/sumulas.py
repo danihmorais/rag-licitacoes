@@ -198,7 +198,7 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
         diagnostics = [
             re.sub(r"\s+", " ", line).strip()
             for line in body_text.splitlines()
-            if "s[úu]mula" in line.casefold()
+            if "súmula" in line.casefold()
         ]
         print("  diagnóstico TCU: nenhuma súmula extraída.")
         print(f"  URL renderizada: {page.url if 'page' in locals() else TCU_SUMULA_CATALOG_URL}")
@@ -216,10 +216,9 @@ def _has_complete_tcu_coverage(records: list[JurisprudenciaRecord], max_number: 
         if record.numero_sumula and str(record.numero_sumula).isdigit()
         and 1 <= int(record.numero_sumula) <= max_number
     }
-    if not numbers:
-        return False
-    highest = max(numbers)
-    return highest >= min(290, max_number) and not (set(range(1, highest + 1)) - numbers)
+    return len(numbers) >= TCU_SUMULA_MIN_RECORDS and all(
+        number in numbers for number in TCU_SUMULA_REQUIRED_NUMBERS
+    )
 
 
 def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
@@ -295,7 +294,7 @@ def smoke_test_sumulas() -> None:
     if numbers != expected:
         missing = sorted(expected - numbers)
         raise RuntimeError(f"TCESP: repertório de súmulas incompleto no portal oficial; ausentes={missing}")
-    print("Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | TCESP 1-53")
+    if len(tcu_records) < TCU_SUMULA_MIN_RECORDS:\n        raise RuntimeError(f"TCU: catálogo retornou apenas {len(tcu_records)} súmulas; esperado pelo menos {TCU_SUMULA_MIN_RECORDS}.")\n    print(f"Smoke súmulas OK: TCU={len(tcu_records)} | TCU-chave=222,247,259,263,292 | TCESP={len(records)}")
 
 
 def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRecord]]:
