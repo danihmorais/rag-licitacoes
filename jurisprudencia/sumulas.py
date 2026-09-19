@@ -143,9 +143,7 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
                     break
                 visited_urls.add(current_url)
 
-                next_locator = page.locator(
-                    'button[aria-label*="Próxima página"], a[aria-label*="Próxima página"]'
-                )
+                next_locator = page.get_by_role("button", name="Próxima página").last
                 if next_locator.count() == 0:
                     candidates = page.locator("a,button")
                     next_index = None
