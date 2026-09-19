@@ -129,6 +129,23 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     return sorted(records, key=lambda item: int(item.numero_decisao or 0))
 
 
+def smoke_test_sumulas() -> None:
+    session = make_session()
+    for number in (222, 247, 259, 263, 292):
+        record = _fetch_tcu_sumula(session, number)
+        if record is None:
+            raise RuntimeError(f"Súmula TCU {number} não foi encontrada no portal oficial.")
+        if not record.ementa or record.tipo_decisao != "Súmula" or record.numero_sumula != str(number):
+            raise RuntimeError(f"Súmula TCU {number} retornou registro estrutural inválido.")
+    records = collect_tcesp_sumulas(session)
+    numbers = {int(item.numero_decisao) for item in records if item.numero_decisao and item.numero_decisao.isdigit()}
+    expected = set(range(1, 54))
+    if numbers != expected:
+        missing = sorted(expected - numbers)
+        raise RuntimeError(f"TCESP: repertório de súmulas incompleto no portal oficial; ausentes={missing}")
+    print("Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | TCESP 1-53")
+
+
 def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRecord]]:
     session = make_session()
     result: dict[str, list[JurisprudenciaRecord]] = {"tcu": [], "tcesp": []}
@@ -164,9 +181,14 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Coleta as Súmulas do TCU e do TCESP em registros estruturados.")
-    parser.add_argument("--strict", action="store_true")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--strict", action="store_true")
+    group.add_argument("--health", action="store_true")
     args = parser.parse_args()
     try:
+        if args.health:
+            smoke_test_sumulas()
+            return 0
         result = collect_sumulas(strict=args.strict)
     except Exception as exc:
         print(f"FAIL súmulas: {type(exc).__name__}: {exc}")
