@@ -92,6 +92,7 @@ class JurisprudenciaRecord(BaseModel):
             return raw
         data = dict(raw)
         _coalesce(data, "tribunal", "TRIBUNAL", "siglaTribunal", "tribunal_sigla", "orgaoTribunal")
+        _coalesce(data, "tipo_documento", "TIPO_DOCUMENTO", "tipoDocumento", "document_type")
         _coalesce(
             data,
             "numero_processo",
