@@ -571,7 +571,9 @@ def context_with_sources(points):
         context_label = ' | contexto_vizinho=true' if context_only else ''
         ambiguity = payload.get('metadata_ambiguous')
         ambiguity_label = ' | metadados_ambiguos=true' if ambiguity else ''
-        extraction_label = f" | origem_texto={payload.get('text_origin', 'desconhecido')} | confianca_extracao={float(payload.get('extraction_confidence', 0.0)):.3f}"
+        extraction_label = ''
+        if 'text_origin' in payload or 'extraction_confidence' in payload:
+            extraction_label = f" | origem_texto={payload.get('text_origin', 'desconhecido')} | confianca_extracao={float(payload.get('extraction_confidence', 0.0)):.3f}"
         part = (f"[F{index}] {title} ({payload.get('source') or 'arquivo desconhecido'}), {page_label}{unit_ref} | papel={payload.get('source_role', 'desconhecido')} | autoridade={payload.get('authority_level', 'desconhecida')} | status={payload.get('status', 'desconhecido')} | jurisdicao={payload.get('jurisdicao', 'desconhecida')} | vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} até {payload.get('effective_to') or 'indeterminada'} | recuperado_em={retrieved}{version_label}{context_label}{ambiguity_label}{extraction_label} | fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}")
         if total + len(part) > config.MAX_CONTEXT_CHARS:
             if context_only:
