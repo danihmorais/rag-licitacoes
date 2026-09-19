@@ -446,8 +446,18 @@ def jurisdiction_score(payload, query_jurisdiction):
     return 0.5
 
 
+def extraction_quality_score(payload):
+    try:
+        confidence = float(payload.get('extraction_confidence', 1.0))
+    except (TypeError, ValueError):
+        confidence = 1.0
+    return max(0.0, min(1.0, confidence))
+
+
 def combined_retrieval_score(payload, query_jurisdiction):
-    relevance = float(payload.get('_evidence_score', 0.0))
+    raw_relevance = float(payload.get('_evidence_score', 0.0))
+    extraction_quality = extraction_quality_score(payload)
+    relevance = raw_relevance * extraction_quality
     authority = authority_score(payload)
     jurisdiction = jurisdiction_score(payload, query_jurisdiction)
     score = (
@@ -455,12 +465,17 @@ def combined_retrieval_score(payload, query_jurisdiction):
         + config.RERANK_AUTHORITY_WEIGHT * authority
         + config.RERANK_JURISDICTION_WEIGHT * jurisdiction
     )
+    payload['_raw_evidence_score'] = raw_relevance
+    payload['_extraction_quality_score'] = extraction_quality
     payload['_authority_score'] = authority
     payload['_jurisdiction_score'] = jurisdiction
     payload['_retrieval_score'] = max(0.0, min(1.0, score))
     return payload['_retrieval_score']
 
-def rerank(reranker, query, points, filters=None):
+
+def rerank(reranker, query, points, filters=None, limit=None):
+    if limit is not None and limit <= 0:
+        return []
     if not points:
         return []
     texts = [p.payload.get('page_content') or p.payload.get('text', '') for p in points]
@@ -490,7 +505,7 @@ def rerank(reranker, query, points, filters=None):
             continue
         counts[key] = counts.get(key, 0) + 1
         output.append(point)
-        if len(output) >= config.FINAL_K:
+        if len(output) >= (config.FINAL_K if limit is None else limit):
             break
     output = [point for point in output if point.payload.get('_evidence_score', 0.0) >= config.MIN_EVIDENCE_SCORE]
     return output
@@ -556,7 +571,8 @@ def context_with_sources(points):
         context_label = ' | contexto_vizinho=true' if context_only else ''
         ambiguity = payload.get('metadata_ambiguous')
         ambiguity_label = ' | metadados_ambiguos=true' if ambiguity else ''
-        part = (f"[F{index}] {title} ({payload.get('source') or 'arquivo desconhecido'}), {page_label}{unit_ref} | papel={payload.get('source_role', 'desconhecido')} | autoridade={payload.get('authority_level', 'desconhecida')} | status={payload.get('status', 'desconhecido')} | jurisdicao={payload.get('jurisdicao', 'desconhecida')} | vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} até {payload.get('effective_to') or 'indeterminada'} | recuperado_em={retrieved}{version_label}{context_label}{ambiguity_label} | fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}")
+        extraction_label = f" | origem_texto={payload.get('text_origin', 'desconhecido')} | confianca_extracao={float(payload.get('extraction_confidence', 0.0)):.3f}"
+        part = (f"[F{index}] {title} ({payload.get('source') or 'arquivo desconhecido'}), {page_label}{unit_ref} | papel={payload.get('source_role', 'desconhecido')} | autoridade={payload.get('authority_level', 'desconhecida')} | status={payload.get('status', 'desconhecido')} | jurisdicao={payload.get('jurisdicao', 'desconhecida')} | vigencia={payload.get('effective_from') or payload.get('data_vigencia') or 'desconhecida'} até {payload.get('effective_to') or 'indeterminada'} | recuperado_em={retrieved}{version_label}{context_label}{ambiguity_label}{extraction_label} | fonte={payload.get('fonte_oficial') or 'não informada'}\n{text}")
         if total + len(part) > config.MAX_CONTEXT_CHARS:
             if context_only:
                 continue
@@ -646,7 +662,7 @@ def main():
         except Exception as error:
             print(f'Erro: {error}')
             return 1
-        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False)), 'mandatory_context': bool(point.payload.get('_mandatory_context', False))} for index, point in enumerate(points, 1)]}
+        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'extraction_quality': round(point.payload.get('_extraction_quality_score', 1.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False)), 'mandatory_context': bool(point.payload.get('_mandatory_context', False))} for index, point in enumerate(points, 1)]}
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
