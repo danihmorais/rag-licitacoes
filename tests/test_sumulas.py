@@ -132,3 +132,12 @@ def test_tcu_catalog_parser_accepts_heading_without_tcu_prefix():
     )
     assert len(records) == 1
     assert records[0].numero_sumula == "222"
+
+
+def test_tcu_catalog_parser_accepts_dash_separator():
+    from jurisprudencia.sumulas import _parse_tcu_sumulas_text
+    records = _parse_tcu_sumulas_text(
+        "SÚMULA TCU Nº 222 - Enunciado do catálogo oficial.\nDecisão 759/1994-Plenário"
+    )
+    assert len(records) == 1
+    assert records[0].numero_sumula == "222"
