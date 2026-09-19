@@ -18,27 +18,10 @@ from metadata import embedding_metadata_prefix, extract_metadata
 from chunking import build_structural_chunks
 from embedding_utils import validate_embedding_inputs
 
-PAYLOAD_INDEXES = {
-    'doc_id': models.PayloadSchemaType.KEYWORD,
-    'source_id': models.PayloadSchemaType.KEYWORD,
-    'source': models.PayloadSchemaType.KEYWORD,
-    'unit_id': models.PayloadSchemaType.KEYWORD,
-    'jurisdicao': models.PayloadSchemaType.KEYWORD,
-    'esfera': models.PayloadSchemaType.KEYWORD,
-    'orgao': models.PayloadSchemaType.KEYWORD,
-    'tribunal': models.PayloadSchemaType.KEYWORD,
-    'tipo_documento': models.PayloadSchemaType.KEYWORD,
-    'source_role': models.PayloadSchemaType.KEYWORD,
-    'status': models.PayloadSchemaType.KEYWORD,
-    'municipio': models.PayloadSchemaType.KEYWORD,
-    'modalidade': models.PayloadSchemaType.KEYWORD,
-    'tipo': models.PayloadSchemaType.KEYWORD,
-    'regime_juridico': models.PayloadSchemaType.KEYWORD,
-    'authority_level': models.PayloadSchemaType.INTEGER,
-    'normative_rank': models.PayloadSchemaType.INTEGER,
-    'ano': models.PayloadSchemaType.INTEGER,
-    'norm_ano': models.PayloadSchemaType.INTEGER,
-    'revogado': models.PayloadSchemaType.BOOL,
+PAYLOAD_INDEX_TYPES = {
+    'keyword': models.PayloadSchemaType.KEYWORD,
+    'integer': models.PayloadSchemaType.INTEGER,
+    'bool': models.PayloadSchemaType.BOOL,
 }
 
 PAGE_BREAK = '\f'
@@ -225,7 +208,11 @@ def ensure_collection(client):
             },
             sparse_vectors_config={'sparse': models.SparseVectorParams()},
         )
-    for field_name, field_schema in PAYLOAD_INDEXES.items():
+    for field_name, field_type in config.QDRANT_PAYLOAD_INDEXES.items():
+        try:
+            field_schema = PAYLOAD_INDEX_TYPES[field_type]
+        except KeyError as exc:
+            raise RuntimeError(f'Tipo de índice de payload inválido para {field_name}: {field_type!r}.') from exc
         client.create_payload_index(
             collection_name=config.COLLECTION_NAME,
             field_name=field_name,
