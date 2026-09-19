@@ -4,7 +4,6 @@ import concurrent.futures
 import re
 
 import requests
-import threading
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -13,8 +12,6 @@ import config
 from .collector import clean_text, make_session
 from .schema import JurisprudenciaRecord
 
-TCU_SUMULA_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/{numero}"
-TCU_SUMULA_SEARCH_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/%2A/NUMERO%253A{numero}/sinonimos%253Dtrue"
 TCU_SUMULA_CATALOG_URL = "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula"
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 TCU_SUMULA_MAX_NUMBER = 400
@@ -23,46 +20,6 @@ TCU_SUMULA_REQUIRED_NUMBERS = (222, 247, 259, 263, 292)
 def _strip_markup(value: str) -> str:
     return re.sub(r"~~|\*\*", "", str(value or "")).strip()
 
-
-def _tcu_record(numero: int, raw: bytes) -> JurisprudenciaRecord | None:
-    soup = BeautifulSoup(raw, "html.parser")
-    for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
-        tag.decompose()
-    text = "\n".join(line.strip() for line in soup.get_text("\n").splitlines() if line.strip())
-    match = re.search(
-        rf"(?is)S[ÚU]MULA\s+TCU\s+{numero}\s*(?:\(([^)]+)\))?\s*:\s*(.+?)(?=\n\s*Acórdão\b|\n\s*Acórdão:|\Z)",
-        text,
-    )
-    if not match:
-        return None
-    situation = clean_text(match.group(1) or "")
-    enunciado = _strip_markup(clean_text(match.group(2)))
-    if not enunciado:
-        return None
-    return JurisprudenciaRecord(
-        tribunal="TCU",
-        tipo_documento="sumula",
-        numero_processo=f"Súmula TCU {numero}",
-        numero_sumula=str(numero),
-        numero_decisao=str(numero),
-        tipo_decisao="Súmula",
-        orgao_julgador="Plenário",
-        ementa=enunciado,
-        situacao=situation or "VIGENTE",
-        url_oficial=TCU_SUMULA_URL.format(numero=numero),
-        origem="TCU — Pesquisa de Jurisprudência — Súmulas",
-    )
-
-
-_thread_state = threading.local()
-
-
-def _thread_session():
-    session = getattr(_thread_state, 'session', None)
-    if session is None:
-        session = make_session()
-        _thread_state.session = session
-    return session
 
 
 def _parse_tcu_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
@@ -154,23 +111,6 @@ def _pagination_links(raw: bytes, base_url: str) -> list[str]:
             links.append(href.split("#", 1)[0])
     return list(dict.fromkeys(links))
 
-
-def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
-    session = _thread_session()
-    urls = (
-        TCU_SUMULA_URL.format(numero=numero),
-        TCU_SUMULA_SEARCH_URL.format(numero=numero),
-    )
-    for url in urls:
-        response = session.get(url, timeout=(8, 45), allow_redirects=True)
-        if response.status_code == 404:
-            continue
-        response.raise_for_status()
-        records = _parse_tcu_sumulas_page(response.content)
-        for record in records:
-            if record.numero_sumula == str(numero):
-                return record
-    return None
 
 
 def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
