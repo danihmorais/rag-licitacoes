@@ -172,12 +172,15 @@ def extract_metadata(text, pdf_path):
     if tribunal and not sidecar_values.get('tribunal'):
         metadata['tribunal'] = tribunal
         metadata['orgao'] = tribunal
-        metadata['source_role'] = 'jurisprudencia_controle' if tribunal in {'TCU', 'TCESP'} else 'jurisprudencia'
         metadata['tipo_documento'] = 'jurisprudencia'
-        metadata['authority_level'] = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2}.get(tribunal, 4)
         metadata['status'] = 'jurisprudencia'
-        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
-        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+        if tribunal not in {'STF', 'STJ', 'TCU', 'TCESP', 'TJSP'}:
+            metadata['metadata_ambiguous'] = True
+        else:
+            metadata['source_role'] = 'jurisprudencia_controle' if tribunal in {'TCU', 'TCESP'} else 'jurisprudencia'
+            metadata['authority_level'] = 2
+            metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+            metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     processo_header = _header_value(sample, 'PROCESSO')
     if processo_header and not sidecar_values.get('processo'):
         metadata['processo'] = processo_header
