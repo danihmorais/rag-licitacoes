@@ -176,8 +176,8 @@ def extract_metadata(text, pdf_path):
         metadata['tipo_documento'] = 'jurisprudencia'
         metadata['authority_level'] = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2}.get(tribunal, 4)
         metadata['status'] = 'jurisprudencia'
-        metadata['jurisdicao'] = 'municipal_sp' if tribunal == 'TCM-SP' else ('estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal')
-        metadata['esfera'] = 'municipal' if metadata['jurisdicao'] == 'municipal_sp' else ('estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal')
+        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     processo_header = _header_value(sample, 'PROCESSO')
     if processo_header and not sidecar_values.get('processo'):
         metadata['processo'] = processo_header
@@ -201,7 +201,7 @@ def extract_metadata(text, pdf_path):
             metadata[key] = value
     tribunal = str(metadata.get('tribunal') or '').upper()
     if tribunal:
-        inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}.get(tribunal)
+        inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2}.get(tribunal)
         if inferred_authority is not None:
             metadata['authority_level'] = inferred_authority
         metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
