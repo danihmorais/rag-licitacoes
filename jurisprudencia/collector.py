@@ -1396,6 +1396,7 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
     record.validate()
     record.retrieved_at = record.retrieved_at or datetime.now(timezone.utc).isoformat()
     record.version_sha256 = record.version_sha256 or record.calculate_version_sha256()
+    is_sumula = str(record.tipo_decisao or '').strip().casefold() == 'súmula'
     source_id = {
         'TCU': 'tcu-jurisprudencia',
         'TCESP': 'tcesp-jurisprudencia',
@@ -1403,6 +1404,8 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
         'STF': 'stf-jurisprudencia-estruturada',
         'TJSP': 'tjsp-jurisprudencia-estruturada',
     }.get(record.tribunal, f'{record.tribunal.lower()}-jurisprudencia')
+    if is_sumula:
+        source_id = f'{record.tribunal.lower()}-sumulas'
     basename = f'jurisprudencia__{record.tribunal.lower()}__{record.document_key}__{record.version_sha256[:10]}'
     text_path = output_dir / f'{basename}.txt'
     json_path = output_dir / f'{basename}.json'
@@ -1417,10 +1420,15 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
         'esfera': 'estadual' if record.tribunal in {'TCESP', 'TJSP'} else 'federal',
         'orgao': record.tribunal,
         'tribunal': record.tribunal,
-        'tipo_documento': 'jurisprudencia',
+        'tipo_documento': 'sumula' if is_sumula else 'jurisprudencia',
         'authority_level': 2,
         'normative_rank': None,
-        'status': 'jurisprudencia',
+        'status': (
+            'cancelada' if is_sumula and 'cancel' in str(record.situacao or '').casefold()
+            else 'revogada' if is_sumula and 'revog' in str(record.situacao or '').casefold()
+            else 'vigente' if is_sumula else 'jurisprudencia'
+        ),
+        'revogado': bool(is_sumula and 'revog' in str(record.situacao or '').casefold()),
         'fonte_oficial': record.url_oficial,
         'fonte_host': urlparse(record.url_oficial).netloc if record.url_oficial else None,
         'version_sha256': record.version_sha256,
