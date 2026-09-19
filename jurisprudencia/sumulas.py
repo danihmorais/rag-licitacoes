@@ -5,6 +5,8 @@ import re
 
 import requests
 import threading
+from urllib.parse import urljoin, urlparse
+
 from bs4 import BeautifulSoup
 
 import config
