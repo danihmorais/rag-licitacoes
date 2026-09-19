@@ -68,3 +68,16 @@ def test_batch_can_disable_sumulas_for_targeted_health_checks(monkeypatch, tmp_p
         include_sumulas=False,
     )
     assert result == []
+
+
+def test_sumula_schema_does_not_require_process_number():
+    from jurisprudencia.schema import JurisprudenciaRecord
+    record = JurisprudenciaRecord(
+        tribunal="TCESP",
+        tipo_documento="sumula",
+        numero_sumula="53",
+        tipo_decisao="Súmula",
+        ementa="Enunciado da Súmula 53.",
+    )
+    record.validate()
+    assert "SÚMULA: 53" in record.to_index_text()
