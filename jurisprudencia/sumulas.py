@@ -36,7 +36,9 @@ def _tcu_record(numero: int, raw: bytes) -> JurisprudenciaRecord | None:
         return None
     return JurisprudenciaRecord(
         tribunal="TCU",
+        tipo_documento="sumula",
         numero_processo=f"Súmula TCU {numero}",
+        numero_sumula=str(numero),
         numero_decisao=str(numero),
         tipo_decisao="Súmula",
         orgao_julgador="Plenário",
@@ -112,7 +114,9 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
             continue
         records.append(JurisprudenciaRecord(
             tribunal="TCESP",
+            tipo_documento="sumula",
             numero_processo=f"Súmula TCESP {number}",
+            numero_sumula=str(number),
             numero_decisao=str(number),
             tipo_decisao="Súmula",
             orgao_julgador="Tribunal Pleno",
