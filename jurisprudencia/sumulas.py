@@ -271,21 +271,32 @@ def smoke_test_sumulas() -> None:
     print("Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | TCESP 1-53")
 
 
-def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRecord]]:
+def collect_sumulas(
+    *,
+    tribunals=("tcu", "tcesp"),
+    strict: bool = False,
+) -> dict[str, list[JurisprudenciaRecord]]:
+    requested = tuple(dict.fromkeys(str(tribunal).strip().casefold() for tribunal in tribunals))
+    unknown = sorted(set(requested) - {"tcu", "tcesp"})
+    if unknown:
+        raise ValueError("tribunais de súmulas inválidos: " + ", ".join(unknown))
+
     result: dict[str, list[JurisprudenciaRecord]] = {"tcu": [], "tcesp": []}
     failures = []
 
-    try:
-        result["tcu"] = collect_tcu_sumulas()
-    except Exception as exc:
-        failures.append(f"TCU: {type(exc).__name__}: {exc}")
+    if "tcu" in requested:
+        try:
+            result["tcu"] = collect_tcu_sumulas()
+        except Exception as exc:
+            failures.append(f"TCU: {type(exc).__name__}: {exc}")
 
-    try:
-        result["tcesp"] = collect_tcesp_sumulas()
-    except Exception as exc:
-        failures.append(f"TCESP: {type(exc).__name__}: {exc}")
+    if "tcesp" in requested:
+        try:
+            result["tcesp"] = collect_tcesp_sumulas()
+        except Exception as exc:
+            failures.append(f"TCESP: {type(exc).__name__}: {exc}")
 
-    if strict:
+    if strict and "tcu" in requested:
         tcu_numbers = {
             int(item.numero_sumula)
             for item in result["tcu"]
@@ -299,6 +310,7 @@ def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRec
         if missing:
             failures.append(f"TCU: súmulas essenciais ausentes={missing}")
 
+    if strict and "tcesp" in requested:
         tcesp_numbers = {
             int(item.numero_sumula)
             for item in result["tcesp"]
