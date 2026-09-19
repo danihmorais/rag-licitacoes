@@ -1387,7 +1387,6 @@ def adapters(session):
         'tcesp': TCESPAdapter(session),
         'stj': STJAdapter(session),
         'stf': STFAdapter(session),
-        'tcm-sp': TCMSPAdapter(session),
         'tjsp': TJSPAdapter(session),
     }
 
@@ -1402,7 +1401,6 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
         'TCESP': 'tcesp-jurisprudencia',
         'STJ': 'stj-jurisprudencia-estruturada',
         'STF': 'stf-jurisprudencia-estruturada',
-        'TCM-SP': 'tcm-sp-jurisprudencia',
         'TJSP': 'tjsp-jurisprudencia-estruturada',
     }.get(record.tribunal, f'{record.tribunal.lower()}-jurisprudencia')
     basename = f'jurisprudencia__{record.tribunal.lower()}__{record.document_key}__{record.version_sha256[:10]}'
@@ -1414,9 +1412,9 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
         'document_id': basename,
         'source_id': source_id,
         'parent_source_id': source_id,
-        'source_role': 'jurisprudencia_controle' if record.tribunal in {'TCU', 'TCESP', 'TCM-SP'} else 'jurisprudencia',
-        'jurisdicao': 'municipal_sp' if record.tribunal == 'TCM-SP' else ('estadual_sp' if record.tribunal in {'TCESP', 'TJSP'} else 'federal'),
-        'esfera': 'municipal' if record.tribunal == 'TCM-SP' else ('estadual' if record.tribunal in {'TCESP', 'TJSP'} else 'federal'),
+        'source_role': 'jurisprudencia_controle' if record.tribunal in {'TCU', 'TCESP'} else 'jurisprudencia',
+        'jurisdicao': 'estadual_sp' if record.tribunal in {'TCESP', 'TJSP'} else 'federal',
+        'esfera': 'estadual' if record.tribunal in {'TCESP', 'TJSP'} else 'federal',
         'orgao': record.tribunal,
         'tribunal': record.tribunal,
         'tipo_documento': 'jurisprudencia',
