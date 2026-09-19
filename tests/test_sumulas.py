@@ -196,3 +196,12 @@ def test_tcesp_sumula_parser_accepts_plain_number_and_en_dash():
     )
     assert len(records) == 1
     assert records[0].numero_sumula == "53"
+
+
+def test_tcesp_parser_accepts_heading_embedded_in_text():
+    from jurisprudencia.sumulas import _parse_tcesp_sumulas_text
+    records = _parse_tcesp_sumulas_text(
+        "Texto do portal. SÚMULA Nº 53 - Enunciado da Súmula 53. Veja histórico e fundamento"
+    )
+    assert len(records) == 1
+    assert records[0].numero_sumula == "53"
