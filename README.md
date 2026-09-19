@@ -73,11 +73,11 @@ Padrões atuais:
 
 ~~~text
 RAG_CANDIDATES_K=60
-RAG_FINAL_K=8
+RAG_FINAL_K=6
 RAG_CHUNK_SIZE=1000
 RAG_CHUNK_OVERLAP=150
 RAG_CONTEXT_NEIGHBORS=1
-RAG_MAX_CONTEXT_CHARS=26000
+RAG_MAX_CONTEXT_CHARS=16000
 
 RAG_RERANK_RELEVANCE_WEIGHT=0.68
 RAG_RERANK_AUTHORITY_WEIGHT=0.20
@@ -387,6 +387,12 @@ Consulta direta:
 python query.py --query "Quais são os requisitos do ETP?"
 ~~~
 
+### Contexto jurídico-base obrigatório
+
+Toda consulta recupera, além das evidências relevantes para a pergunta, pelo menos um trecho da **Lei nº 14.133/2021** e um trecho do **Manual de Licitações e Contratos do TCU**. Essas fontes são âncoras de contexto e não devem ser tratadas automaticamente como aplicáveis à pergunta. A Lei é fonte normativa; o Manual é orientação oficial do TCU e mantém nível de autoridade distinto.
+
+Caso uma dessas duas fontes ainda não esteja indexada, a consulta falha explicitamente e orienta sincronizar as fontes e executar o ingest. Isso evita uma resposta que aparente ter sido fundamentada com uma fonte obrigatória que não está realmente presente no contexto.
+
 Saída JSON:
 
 ~~~bash
@@ -426,6 +432,71 @@ Filtros numéricos também aceitam intervalos:
 
 Consultas que mencionam regimes históricos, como Lei nº 8.666/1993 ou Lei nº 10.520/2002, recebem tratamento específico para evitar mistura silenciosa entre regimes jurídicos.
 
+## Integração prevista com o LICITA.AI
+
+A integração futura deve ocorrer **no backend**, e não diretamente do navegador para o Qdrant ou para o servidor do LLM.
+
+Fluxo previsto:
+
+~~~text
+LICITA.AI (frontend)
+        │
+        ▼
+Backend do LICITA.AI
+        │
+        ├──► RAG: recuperação de evidências
+        │       ├── filtros jurídicos
+        │       ├── Lei 14.133/2021 + Manual TCU
+        │       ├── jurisprudência
+        │       └── contexto + fontes [F#]
+        │
+        ▼
+Prompt específico de DFD / ETP / TR
+        │
+        ▼
+Servidor LLM OpenAI-compatible
+        │
+        ▼
+Documento gerado
+~~~
+
+O contrato recomendado para o RAG é de **retrieval-first**: o serviço deve conseguir devolver o pacote de evidências sem chamar o LLM. Isso permite ao LICITA.AI reutilizar o mesmo contexto em DFD, ETP e TR, mantendo um único ponto de recuperação e evitando chamadas duplicadas ao modelo.
+
+Contrato HTTP previsto:
+
+~~~text
+POST /v1/retrieve
+
+{
+  "query": "...",
+  "filters": {
+    "jurisdicao": "estadual_sp"
+  },
+  "max_context_chars": 16000
+}
+
+→
+
+{
+  "query": "...",
+  "context": "...",
+  "sources": [
+    {
+      "citation": "[F1]",
+      "source": "...",
+      "title": "...",
+      "page": 1,
+      "authority_level": 1,
+      "mandatory_context": true
+    }
+  ]
+}
+~~~
+
+O endpoint de geração de resposta pode permanecer separado. O LICITA.AI deve enviar ao RAG apenas os dados necessários à recuperação e receber evidências estruturadas; o navegador nunca deve receber credenciais do Qdrant ou do servidor LLM.
+
+O código atual mantém a separação lógica entre recuperação e geração em `query.py`, permitindo transformar essa camada em serviço HTTP sem acoplar o índice ao pipeline de documentos do LICITA.AI. O RAG também não deve assumir que o backend se chama Unsloth: o contrato externo continua sendo OpenAI-compatible, permitindo trocar o servidor local sem modificar a camada de recuperação.
+
 ## Temporalidade e vigência
 
 O corpus preserva metadados como:
@@ -452,7 +523,7 @@ Configuração padrão:
 
 ~~~text
 RAG_LLM_PROVIDER=openai_compatible
-RAG_OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+RAG_OPENAI_BASE_URL=http://127.0.0.1:8888/v1
 RAG_LLM_MODEL=local
 ~~~
 
