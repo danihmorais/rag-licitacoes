@@ -62,7 +62,7 @@ O LLM é desacoplado do índice. Trocar somente o gerador não exige reindexaç�
 
 A consulta combina:
 
-1. embedding denso com **intfloat/multilingual-e5-large**;
+1. embedding denso com **intfloat/multilingual-e5-large**, usando `query:` para perguntas e `passage:` para documentos;
 2. BM25 com **Qdrant/bm25**;
 3. fusão **RRF**;
 4. reranking com **BAAI/bge-reranker-base**;
@@ -618,6 +618,21 @@ RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL=150
 RAG_JURISPRUDENCIA_DETAIL=0
 RAG_JURISPRUDENCIA_WITH_CONTENT=0
 RAG_JURISPRUDENCIA_STRICT=1
+~~~
+
+### Indexação e Qdrant
+
+O embedding denso usa limite explícito de **512 tokens**. Antes de gerar o vetor, o pipeline conta os tokens sem truncagem e interrompe a indexação ou consulta quando o limite é excedido. Isso evita que um texto seja cortado silenciosamente pelo tokenizer.
+
+A coleção usa distância **Cosine** para o vetor denso. O Qdrant normaliza automaticamente vetores em coleções Cosine, portanto não há uma normalização manual redundante no código.
+
+Os campos utilizados pelos filtros do retrieval recebem índices de payload tipados (`keyword`, `integer` ou `bool`) na criação da coleção. O carregamento de pontos também é particionado em lotes pequenos para evitar upserts excessivamente grandes.
+
+Configuração padrão:
+
+~~~text
+RAG_DENSE_MAX_TOKENS=512
+RAG_QDRANT_UPSERT_BATCH_SIZE=100
 ~~~
 
 ### Sincronização

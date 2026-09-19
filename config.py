@@ -10,9 +10,10 @@ SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 QDRANT_PATH = DB_DIR / 'qdrant'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
-INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '12')
+INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '13')
 DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
+DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', '512'))
 SPARSE_MODEL = os.getenv('RAG_SPARSE_MODEL', 'Qdrant/bm25')
 RERANK_MODEL = os.getenv('RAG_RERANK_MODEL', 'BAAI/bge-reranker-base')
 RERANK_SCORE_MODE = os.getenv('RAG_RERANK_SCORE_MODE', 'sigmoid').strip().lower()
@@ -25,6 +26,15 @@ CANDIDATES_K = int(os.getenv('RAG_CANDIDATES_K', '60'))
 FINAL_K = int(os.getenv('RAG_FINAL_K', '6'))
 CONTEXT_NEIGHBORS = int(os.getenv('RAG_CONTEXT_NEIGHBORS', '1'))
 MAX_CONTEXT_CHARS = int(os.getenv('RAG_MAX_CONTEXT_CHARS', '16000'))
+QDRANT_UPSERT_BATCH_SIZE = int(os.getenv('RAG_QDRANT_UPSERT_BATCH_SIZE', '100'))
+QDRANT_PAYLOAD_INDEXES = {
+    'doc_id': 'keyword', 'source_id': 'keyword', 'source': 'keyword', 'unit_id': 'keyword',
+    'jurisdicao': 'keyword', 'esfera': 'keyword', 'orgao': 'keyword', 'tribunal': 'keyword',
+    'tipo_documento': 'keyword', 'source_role': 'keyword', 'status': 'keyword', 'municipio': 'keyword',
+    'modalidade': 'keyword', 'tipo': 'keyword', 'regime_juridico': 'keyword',
+    'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
+    'revogado': 'bool',
+}
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
 FASTEMBED_PROVIDERS = tuple(x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', 'CUDAExecutionProvider').split(',') if x.strip())
@@ -57,11 +67,13 @@ def parse_bool(value: str) -> bool:
 def validate_config() -> None:
     checks = (
         (DENSE_DIM > 0, 'RAG_DENSE_DIM deve ser maior que zero.'),
+        (DENSE_MAX_TOKENS > 0, 'RAG_DENSE_MAX_TOKENS deve ser maior que zero.'),
         (CHUNK_SIZE > 0, 'RAG_CHUNK_SIZE deve ser maior que zero.'),
         (0 <= CHUNK_OVERLAP < CHUNK_SIZE, 'RAG_CHUNK_OVERLAP deve estar entre zero e RAG_CHUNK_SIZE-1.'),
         (CANDIDATES_K > 0, 'RAG_CANDIDATES_K deve ser maior que zero.'),
         (0 < FINAL_K <= CANDIDATES_K, 'RAG_FINAL_K deve ser maior que zero e não exceder RAG_CANDIDATES_K.'),
         (MAX_CONTEXT_CHARS > 0, 'RAG_MAX_CONTEXT_CHARS deve ser maior que zero.'),
+        (QDRANT_UPSERT_BATCH_SIZE > 0, 'RAG_QDRANT_UPSERT_BATCH_SIZE deve ser maior que zero.'),
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
         (0 <= EVIDENCE_TOKEN_OVERLAP <= 1, 'RAG_EVIDENCE_TOKEN_OVERLAP deve estar entre zero e um.'),
         (OLLAMA_NUM_CTX >= 16384, 'RAG_OLLAMA_NUM_CTX deve ser maior ou igual a 16384.'),

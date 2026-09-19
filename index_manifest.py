@@ -19,7 +19,7 @@ def chunking_algorithm_sha256():
 COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
-    'chunking_algorithm_sha256', 'schema',
+    'chunking_algorithm_sha256', 'dense_max_tokens', 'payload_indexes', 'schema',
     'manifest_schema_version',
 )
 
@@ -39,8 +39,10 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'context_neighbors': config.CONTEXT_NEIGHBORS,
         'max_context_chars': config.MAX_CONTEXT_CHARS,
         'chunking_algorithm_sha256': chunking_algorithm_sha256(),
-        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/page_content',
-        'manifest_schema_version': 2,
+        'dense_max_tokens': config.DENSE_MAX_TOKENS,
+        'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
+        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/page_content/embedding_text',
+        'manifest_schema_version': 3,
         'documents': documents or {},
         'deletions': deletions or [],
         'revocations': revocations or [],

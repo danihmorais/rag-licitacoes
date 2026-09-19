@@ -12,6 +12,7 @@ from qdrant_client import QdrantClient, models
 import config
 from index_manifest import IndexCompatibilityError, validate_manifest
 from llm.factory import get_llm_provider
+from embedding_utils import validate_embedding_inputs
 
 SYSTEM_PROMPT = '''Você é um assistente especializado em licitações, contratos administrativos e Direito Público brasileiro, com foco em São Paulo.
 
@@ -21,7 +22,7 @@ REGRAS DE AUTORIDADE E TEMPO:
 - Priorize norma vigente e fonte oficial. A recuperação já pondera relevância, nível de autoridade e jurisdição antes do corte de contexto. Dentro das normas, Constituição > lei > decreto > ato infralegal; fora do bloco normativo, jurisprudência/controle > orientação oficial > doutrina.
 - Nunca trate jurisprudência, manual, guia ou doutrina como se fosse texto legal.
 - Respeite jurisdição, esfera, status e vigência. Se houver conflito temporal, prefira a norma vigente para a data perguntada; se a data não estiver clara, informe a limitação.
-- Não misture regime federal, estadual paulista e municipal paulista sem explicar a aplicação; TCM-SP pertence à jurisdição municipal_sp e TCESP à estadual_sp.
+- Não misture regime federal e estadual paulista sem explicar a aplicação.
 - Normas com status "revogado", "historico" ou "vacatio_legis" não podem ser apresentadas como regra atualmente vigente sem explicar a condição temporal.
 - Em jurisprudência, considere também a data da decisão e, quando houver múltiplas versões do mesmo registro, dê preferência ao conteúdo mais recente sem apagar o valor histórico.
 
@@ -56,6 +57,11 @@ NUMERIC_FILTERS = {'ano', 'norm_ano', 'authority_level', 'normative_rank'}
 
 
 def _coerce_filter_value(key, value):
+    if key == 'jurisdicao':
+        value = str(value).strip().casefold()
+        if value not in {'federal', 'estadual_sp'}:
+            raise ValueError('@jurisdicao aceita somente federal ou estadual_sp neste corpus.')
+        return value
     if key == 'regime_juridico':
         normalized = _normalize_query_text(value)
         regime_aliases = {
@@ -201,7 +207,9 @@ def embedding_kwargs():
 
 def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
     if dense_vector is None:
-        dense_vector = list(dense.embed(['query: ' + query]))[0]
+        query_embedding_text = 'query: ' + query
+        validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
+        dense_vector = list(dense.embed([query_embedding_text]))[0]
     sparse_vector = list(sparse.embed([query]))[0]
     return client.query_points(
         collection_name=config.COLLECTION_NAME,
@@ -219,7 +227,9 @@ def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
 
 def mandatory_context_points(client, dense, query, *, dense_vector=None):
     if dense_vector is None:
-        dense_vector = list(dense.embed(['query: ' + query]))[0]
+        query_embedding_text = 'query: ' + query
+        validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
+        dense_vector = list(dense.embed([query_embedding_text]))[0]
     selected = []
     missing = []
     for source_id in MANDATORY_CONTEXT_SOURCE_IDS:
@@ -397,24 +407,20 @@ def _normalize_query_text(value):
 def _query_jurisdiction(query, filters=None):
     filters = filters or {}
     explicit = filters.get('jurisdicao')
-    if isinstance(explicit, str) and explicit in {'federal', 'estadual_sp', 'municipal_sp'}:
+    if isinstance(explicit, str) and explicit in {'federal', 'estadual_sp'}:
         return explicit
     if isinstance(explicit, list):
-        values = [item for item in explicit if item in {'federal', 'estadual_sp', 'municipal_sp'}]
+        values = [item for item in explicit if item in {'federal', 'estadual_sp'}]
         if len(values) == 1:
             return values[0]
     text = _normalize_query_text(query)
-    municipal = ('municipio' in text or 'municipal' in text or 'prefeitura' in text or
-                 'tcm-sp' in text or 'tcms' in text or 'cidade de sao paulo' in text)
     state = ('estadual' in text or 'estado de sao paulo' in text or 'tcesp' in text or
              'tce-sp' in text or 'pge-sp' in text)
     federal = ('federal' in text or 'uniao' in text or 'tcu' in text or 'stj' in text or
                'stf' in text or 'agu' in text or 'pncp' in text or 'compras.gov.br' in text)
-    if municipal and not state:
-        return 'municipal_sp'
-    if state and not municipal:
+    if state and not federal:
         return 'estadual_sp'
-    if federal and not municipal and not state:
+    if federal and not state:
         return 'federal'
     return None
 
@@ -433,13 +439,9 @@ def jurisdiction_score(payload, query_jurisdiction):
     actual = str(payload.get('jurisdicao') or '')
     if actual == query_jurisdiction:
         return 1.0
-    if query_jurisdiction == 'municipal_sp' and actual == 'estadual_sp':
-        return 0.35
-    if query_jurisdiction == 'estadual_sp' and actual == 'municipal_sp':
-        return 0.35
-    if query_jurisdiction == 'federal' and actual in {'estadual_sp', 'municipal_sp'}:
+    if query_jurisdiction == 'federal' and actual == 'estadual_sp':
         return 0.25
-    if query_jurisdiction in {'estadual_sp', 'municipal_sp'} and actual == 'federal':
+    if query_jurisdiction == 'estadual_sp' and actual == 'federal':
         return 0.25
     return 0.5
 
@@ -461,7 +463,7 @@ def combined_retrieval_score(payload, query_jurisdiction):
 def rerank(reranker, query, points, filters=None):
     if not points:
         return []
-    texts = [p.payload.get('text', '') for p in points]
+    texts = [p.payload.get('page_content') or p.payload.get('text', '') for p in points]
     raw_scores = list(reranker.rerank(query, texts))
     if len(raw_scores) != len(points):
         raise RuntimeError(f'reranker retornou {len(raw_scores)} scores para {len(points)} candidatos.')
@@ -573,7 +575,9 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     query, filters = parse_filters(raw)
     if not query:
         return '', [], []
-    dense_vector = list(dense.embed(['query: ' + query]))[0]
+    query_embedding_text = 'query: ' + query
+    validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
+    dense_vector = list(dense.embed([query_embedding_text]))[0]
     points = rerank(
         reranker,
         query,
@@ -617,7 +621,7 @@ def build_runtime():
     client = QdrantClient(path=str(config.QDRANT_PATH))
     if not client.collection_exists(config.COLLECTION_NAME):
         raise RuntimeError(f'Coleção Qdrant não encontrada: {config.COLLECTION_NAME}. Rode python ingest.py.')
-    dense = TextEmbedding(model_name=config.DENSE_MODEL, **embedding_kwargs())
+    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     reranker = TextCrossEncoder(model_name=config.RERANK_MODEL, **embedding_kwargs())
     llm = get_llm_provider()
