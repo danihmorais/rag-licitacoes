@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: jurisprudencia-health-${{ github.event.pull_request.head.sha || github.sha }}
+  group: jurisprudencia-health-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
