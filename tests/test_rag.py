@@ -129,6 +129,11 @@ def test_config_accepts_cpu_fastembed_provider_when_cuda_is_optional(monkeypatch
     config.validate_config()
 
 
+def test_validate_gpu_runtime_skips_cuda_probe_when_optional(monkeypatch):
+    monkeypatch.setattr(config, 'FASTEMBED_REQUIRE_CUDA', False)
+    config.validate_gpu_runtime()
+
+
 def test_config_rejects_unknown_fastembed_provider(monkeypatch):
     monkeypatch.setattr(config, 'FASTEMBED_PROVIDERS', ('UnknownExecutionProvider',))
     with pytest.raises(ValueError, match='somente CUDAExecutionProvider'):
