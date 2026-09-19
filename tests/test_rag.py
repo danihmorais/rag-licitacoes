@@ -19,7 +19,8 @@ def source_module():
 
 def test_core_official_sources_exist():
     ids = {item['id'] for item in source_module().SOURCES}
-    assert {'lei14133','tcu-manual-licitacoes','cf1988','sp-const','tcesp-srp','decreto11462','decreto11878','in65','in58','in81','sp-pca','lei14770','lei15190','lei15266','lei15471','decreto13031','decreto13106','lei4717','lei7347','lc131','decreto7724','lei6019','lei12016','lc182','sp-lai','spm-decreto62100','spm-decreto62436','spm-decreto64863','sp-pge-pareceres'} <= ids
+    assert {'lei14133','tcu-manual-licitacoes','cf1988','sp-const','tcesp-srp','decreto11462','decreto11878','in65','in58','in81','sp-pca','lei14770','lei15190','lei15266','lei15471','decreto13031','decreto13106','lei4717','lei7347','lc131','decreto7724','lei6019','lei12016','lc182','sp-lai','sp-pge-pareceres'} <= ids
+    assert not any(item['jurisdicao'] == 'municipal_sp' for item in source_module().SOURCES)
 
 
 def test_sources_have_urls_and_metadata():
