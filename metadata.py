@@ -202,10 +202,12 @@ def extract_metadata(text, pdf_path):
     tribunal = str(metadata.get('tribunal') or '').upper()
     if tribunal:
         inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2}.get(tribunal)
-        if inferred_authority is not None:
+        if inferred_authority is None:
+            metadata['metadata_ambiguous'] = True
+        else:
             metadata['authority_level'] = inferred_authority
-        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
-        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+            metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+            metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     if metadata.get('classificacao_ambigua'):
         metadata['metadata_ambiguous'] = True
     regime_key, regime_label = _detect_regime(sample, {**source_values, **metadata})
