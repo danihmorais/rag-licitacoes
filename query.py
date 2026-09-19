@@ -662,7 +662,7 @@ def main():
         except Exception as error:
             print(f'Erro: {error}')
             return 1
-        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'extraction_quality': round(point.payload.get('_extraction_quality_score', 1.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False)), 'mandatory_context': bool(point.payload.get('_mandatory_context', False))} for index, point in enumerate(points, 1)]}
+        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'text_origin': point.payload.get('text_origin'), 'extraction_confidence': round(point.payload.get('extraction_confidence', 0.0), 6), 'extraction_quality': round(point.payload.get('_extraction_quality_score', 1.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False)), 'mandatory_context': bool(point.payload.get('_mandatory_context', False))} for index, point in enumerate(points, 1)]}
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
