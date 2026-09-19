@@ -164,11 +164,11 @@ def _native_extraction_confidence(text):
     if not text.strip():
         return 0.0
     non_whitespace = len(''.join(text.split()))
-    visible = sum(character.isprintable() or character in '\\r\\n\\t' for character in text)
+    visible = sum(character.isprintable() or character in '\r\n\t' for character in text)
     visible_ratio = visible / max(1, len(text))
     alpha_numeric = sum(character.isalnum() for character in text)
     alpha_ratio = alpha_numeric / max(1, non_whitespace)
-    replacement_ratio = text.count('\\ufffd') / max(1, len(text))
+    replacement_ratio = text.count('\ufffd') / max(1, len(text))
     density = min(1.0, non_whitespace / 180.0)
     confidence = visible_ratio * min(1.0, alpha_ratio * 1.15) * density * (1.0 - replacement_ratio)
     return round(max(0.0, min(1.0, confidence)), 4)
@@ -354,7 +354,7 @@ def build_chunks(document, pages, page_records=None):
         page_content = prefix
         if hierarchy_label:
             page_content += f' [HIERARQUIA: {hierarchy_label}]'
-        page_content += '\\n' + chunk.get('page_content', chunk['text'])
+        page_content += '\n' + chunk.get('page_content', chunk['text'])
         embedding_text = 'passage: ' + page_content
         output.append({
             **chunk,
