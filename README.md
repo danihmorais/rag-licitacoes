@@ -1,6 +1,6 @@
 # RAG de Licitações
 
-RAG especializado em **licitações, contratos administrativos e Direito Público brasileiro**, com atenção especial ao **Estado e ao Município de São Paulo**.
+RAG especializado em **licitações, contratos administrativos e Direito Público brasileiro**, com atenção especial ao **Estado de São Paulo**.
 
 O projeto separa as evidências em três grupos:
 
@@ -171,10 +171,6 @@ O catálogo estadual inclui, entre outros:
 - Compras SP;
 - Marketplace.SP;
 - orientações e pareceres da PGE-SP.
-
-### Município de São Paulo
-
-Também são indexadas normas municipais relevantes para contratações públicas, incluindo o Decreto nº 62.100/2022, suas alterações e demais atos diretamente relacionados ao regime municipal de compras e contratos.
 
 ## Jurisprudência e controle
 
