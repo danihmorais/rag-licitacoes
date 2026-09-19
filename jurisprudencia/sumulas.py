@@ -363,7 +363,7 @@ def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRe
                         except Exception:
                             continue
                         haystack = f"{label} {href}".casefold()
-                        if "s[úu]mula" in haystack or "sumula" in haystack:
+                        if "súmula" in haystack or "sumula" in haystack:
                             print(f"    TCESP link: {label[:180]} -> {href[:300]}")
                     for line in body_text.splitlines():
                         if re.search(r"s[úu]mula.*(?:53|5|[0-9])|\b53\b", line, re.I):
