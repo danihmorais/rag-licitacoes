@@ -72,31 +72,6 @@ def _sp(id_: str, title: str, url: str, *, tipo_documento: str = "decreto", requ
     return item
 
 
-def _municipal_sp(id_: str, title: str, url: str, *, tipo_documento: str = "decreto", required: bool = False,
-                  source_role: str = "norma", authority_level: int = 1, follow_links: bool = False,
-                  follow_patterns: tuple[str, ...] = (), max_follow: int = 12, **extra):
-    item = {
-        "id": id_,
-        "title": title,
-        "urls": [url],
-        "jurisdicao": "municipal_sp",
-        "esfera": "municipal",
-        "orgao": extra.pop("orgao", "Município de São Paulo"),
-        "tipo_documento": tipo_documento,
-        "source_role": source_role,
-        "authority_level": authority_level,
-        "status": "vigente",
-    }
-    if required:
-        item["required"] = True
-    if follow_links:
-        item.update(follow_links=True, follow_patterns=list(follow_patterns), max_follow=max_follow)
-    item.update(extra)
-    if "normative_rank" not in item:
-        item["normative_rank"] = _normative_rank(item.get("source_role"), item.get("tipo_documento"))
-    return item
-
-
 SOURCES = [
     _federal("cf1988", "Constituição Federal de 1988", "https://www2.camara.leg.br/legin/fed/consti/1988/constituicao-1988-5-outubro-1988-322142-normaatualizada-pl.html", tipo_documento="constituicao", required=True, ramo_direito="Constitucional", fallback_urls=("https://www4.planalto.gov.br/legislacao/legis-federal/constituicao",)),
     _federal("lei14133", "Lei nº 14.133/2021 — Licitações e Contratos Administrativos", "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2021/lei/l14133.htm", required=True, ramo_direito="Administrativo", fallback_urls=("https://www2.camara.leg.br/legin/fed/lei/2021/lei-14133-1-abril-2021-791222-normaatualizada-pl.html",)),
@@ -214,11 +189,6 @@ SOURCES = [
     _federal("lei12016", "Lei nº 12.016/2009 — Mandado de Segurança", "https://www.planalto.gov.br/ccivil_03/_ato2007-2010/2009/lei/l12016.htm", ramo_direito="Processual Público"),
     _federal("lc182", "Lei Complementar nº 182/2021 — Marco Legal das Startups e Contrato Público para Solução Inovadora", "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp182.htm", tipo_documento="lei_complementar", ramo_direito="Ciência, Tecnologia e Inovação"),
     _sp("sp-lai", "Decreto SP nº 68.155/2023 — regulamenta a Lei de Acesso à Informação no Estado de São Paulo", "https://www.al.sp.gov.br/repositorio/legislacao/decreto/2023/decreto-68155-09.12.2023.html", tipo_documento="decreto", required=True, ramo_direito="Transparência e Controle"),
-    _municipal_sp("spm-decreto62100", "Decreto Municipal SP nº 62.100/2022 — licitações e contratos administrativos", "https://legislacao.prefeitura.sp.gov.br/leis/decreto-62100-de-27-de-dezembro-de-2022", tipo_documento="decreto", required=True, ramo_direito="Contratações Públicas"),
-    _municipal_sp("spm-decreto62436", "Decreto Municipal SP nº 62.436/2023 — regime de transição para a Lei nº 14.133/2021", "https://legislacao.prefeitura.sp.gov.br/decreto-62436-de-26-de-maio-de-2023", tipo_documento="decreto", required=True, ramo_direito="Contratações Públicas"),
-    _municipal_sp("spm-decreto64863", "Decreto Municipal SP nº 64.863/2025 — alterações no Decreto nº 62.100/2022", "https://legislacao.prefeitura.sp.gov.br/decreto-64863-de-22-de-dezembro-de-2025", tipo_documento="decreto", required=True, ramo_direito="Contratações Públicas"),
-    _municipal_sp("spm-in-seges6-2023", "IN SEGES nº 6/2023 — pesquisa de preços no Município de São Paulo", "https://legislacao.prefeitura.sp.gov.br/instrucao-normativa-secretaria-municipal-de-gestao-seges-6-de-10-de-novembro-de-2023/consolidado", tipo_documento="instrucao_normativa", ramo_direito="Contratações Públicas"),
-    _municipal_sp("spm-pgm38-2025", "Portaria PGM nº 38/2025 — Comissão de Padronização de Editais de Licitação", "https://legislacao.prefeitura.sp.gov.br/portaria-procuradoria-geral-do-municipio-pgm-38-de-2-de-abril-de-2025/consolidado", tipo_documento="portaria", source_role="orientacao_oficial", authority_level=3, ramo_direito="Contratações Públicas"),
     _sp("sp-pge-pareceres", "PGE-SP — pareceres e orientações jurídicas", "https://revistas.pge.sp.gov.br/boletins", tipo_documento="pareceres_e_orientacoes", source_role="orientacao_oficial", authority_level=3, required=True, follow_links=True, follow_patterns=(r"\\.pdf(?:$|\\?)",), max_follow=80, index_only=True, ramo_direito="Advocacia Pública e Orientação"),
     _federal("lei5172", "Lei nº 5.172/1966 — Código Tributário Nacional", "https://www.planalto.gov.br/ccivil_03/leis/l5172compilado.htm", ramo_direito="Tributário"),
     _federal("lei8662", "Lei nº 8.662/1993 — regulamenta a profissão de assistente social", "https://www.planalto.gov.br/ccivil_03/leis/l8662.htm", ramo_direito="Assistência Social"),
