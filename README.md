@@ -143,6 +143,9 @@ O corpus federal inclui, entre outros:
 - pesquisa de preços, ETP e Termo de Referência;
 - concessões e PPP;
 - Direito Financeiro e responsabilidade fiscal;
+- assinaturas eletrônicas;
+- anticorrupção e integridade;
+- contratação de serviços sob execução indireta e técnica e preço;
 - transparência, LAI e LGPD;
 - governo digital;
 - servidores públicos;
@@ -175,6 +178,8 @@ O catálogo estadual inclui, entre outros:
 ## Jurisprudência e controle
 
 A jurisprudência possui pipeline próprio em **jurisprudencia/**.
+
+Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
 
 O conjunto padrão utiliza:
 
