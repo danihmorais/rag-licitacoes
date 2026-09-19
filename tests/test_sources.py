@@ -71,16 +71,27 @@ def test_prefeitura_sp_sources_are_absent():
 def test_historical_nllc_value_decrees_use_official_camara_fallback_series():
     catalog = {item["id"]: item for item in SOURCES}
     expected = {
-        "decreto10922": "https://www2.camara.leg.br/legin/fed/decret/2021/decreto-10922-30-dezembro-2021-792190-publicacaooriginal-164267-pe.html",
-        "decreto11317": "https://www2.camara.leg.br/legin/fed/decret/2022/decreto-11317-29-dezembro-2022-793592-publicacaooriginal-166702-pe.html",
-        "decreto11871": "https://www2.camara.leg.br/legin/fed/decret/2023/decreto-11871-29-dezembro-2023-795201-publicacaooriginal-170740-pe.html",
-        "decreto12343": "https://www2.camara.leg.br/legin/fed/decret/2024/decreto-12343-30-dezembro-2024-796843-publicacaooriginal-173988-pe.html",
+        "decreto10922": (
+            "https://www2.camara.leg.br/legin/fed/decret/2021/decreto-10922-30-dezembro-2021-792190-publicacaooriginal-164267-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2021/decreto/d10922.htm",
+        ),
+        "decreto11317": (
+            "https://www2.camara.leg.br/legin/fed/decret/2022/decreto-11317-29-dezembro-2022-793592-publicacaooriginal-166702-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2022/decreto/d11317.htm",
+        ),
+        "decreto11871": (
+            "https://www2.camara.leg.br/legin/fed/decret/2023/decreto-11871-29-dezembro-2023-795201-publicacaooriginal-170740-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2023/decreto/d11871.htm",
+        ),
+        "decreto12343": (
+            "https://www2.camara.leg.br/legin/fed/decret/2024/decreto-12343-30-dezembro-2024-796843-publicacaooriginal-173988-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2024/decreto/d12343.htm",
+        ),
     }
-    for source_id, url in expected.items():
+    for source_id, (primary_url, fallback_url) in expected.items():
         source = catalog[source_id]
-        assert source["urls"] == [url]
-        assert source["fallback_urls"] == (source["fallback_urls"][0],)
-        assert source["fallback_urls"][0].startswith("https://www.planalto.gov.br/")
+        assert source["urls"] == [primary_url]
+        assert source["fallback_urls"] == (fallback_url,)
 
 
 def test_current_source_endpoints():
