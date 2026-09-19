@@ -1,46 +1,117 @@
 from pathlib import Path
 
 from jurisprudencia.collector import save_record
-from jurisprudencia.sumulas import collect_tcesp_sumulas, _parse_tcu_sumulas_page
+from jurisprudencia.sumulas import (
+    TCU_SUMULA_DOCUMENT_URL,
+    TCU_SUMULA_MIN_RECORDS,
+    TCU_SUMULA_REQUIRED_NUMBERS,
+    TCESP_SUMULA_URL,
+    _parse_tcu_sumula_document,
+    _parse_tcesp_sumulas_text,
+    collect_tcesp_sumulas,
+)
 
 
-def test_tcu_sumula_parser_extracts_enunciado_and_status():
+def test_tcu_document_parser_extracts_enunciado_from_official_layout():
     raw = """
     <html><body>
-    <h1>Resultados da pesquisa</h1>
-    <div>SÚMULA TCU 247: É obrigatória a admissão da adjudicação por item e não por preço global.</div>
-    <div>Acórdão 1782/2004-Plenário | RELATOR Marcos Vinicios Vilaça</div>
+      <div>Enunciado</div>
+      <div>SÚMULA TCU 222: As decisões do Tribunal de Contas da União, relativas à aplicação de normas gerais de licitação, devem ser acatadas.</div>
+      <div>Excerto</div>
+      <div>Fundamento legal</div>
+      <div>Lei nº 8.666/1993.</div>
     </body></html>
     """.encode("utf-8")
-    record = _parse_tcu_sumulas_page(raw)[0]
+
+    record = _parse_tcu_sumula_document(
+        raw,
+        222,
+        TCU_SUMULA_DOCUMENT_URL.format(numero=222),
+    )
+
     assert record is not None
     assert record.tribunal == "TCU"
-    assert record.numero_decisao == "247"
-    assert record.numero_sumula == "247"
     assert record.tipo_documento == "sumula"
+    assert record.numero_sumula == "222"
     assert record.tipo_decisao == "Súmula"
-    assert "adjudicação por item" in record.ementa
+    assert "normas gerais de licitação" in record.ementa
 
 
-def test_tcesp_sumula_parser_extracts_all_53_and_cancelled_status():
+def test_tcu_document_parser_accepts_numero_marker_and_status():
+    raw = """
+    <html><body>
+      <div>Enunciado</div>
+      <div>SÚMULA TCU Nº 247: É obrigatória a admissão da adjudicação por item.</div>
+      <div>Excerto</div>
+    </body></html>
+    """.encode("utf-8")
+
+    record = _parse_tcu_sumula_document(
+        raw,
+        247,
+        TCU_SUMULA_DOCUMENT_URL.format(numero=247),
+    )
+
+    assert record is not None
+    assert record.numero_sumula == "247"
+    assert record.ementa == "É obrigatória a admissão da adjudicação por item."
+
+
+def test_tcu_collection_contract_contains_key_summulas():
+    assert "{numero}" in TCU_SUMULA_DOCUMENT_URL
+    assert TCU_SUMULA_DOCUMENT_URL.startswith("https://pesquisa.apps.tcu.gov.br/documento/sumula/")
+    assert TCU_SUMULA_MIN_RECORDS == 295
+    assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
+
+
+def test_tcesp_parser_extracts_all_53_and_preserves_cancelled_status():
     parts = []
     for number in range(1, 54):
         suffix = " (CANCELADA)" if number == 5 else ""
-        parts.append(f"SÚMULA Nº {number} - Texto da súmula {number}.{suffix}")
+        parts.append(
+            f"SÚMULA Nº {number} - Texto da súmula {number}.{suffix}\n"
+            "HISTÓRICO | Aprovação e fundamentos."
+        )
     html = "<html><body>" + "\n".join(parts) + "</body></html>"
-    class Response:
-        content = html.encode("utf-8")
-        def raise_for_status(self): return None
-    class Session:
-        def get(self, *args, **kwargs): return Response()
-    records = collect_tcesp_sumulas(Session())
+
+    records = _parse_tcesp_sumulas_text(html)
+
     assert len(records) == 53
-    assert {int(item.numero_decisao) for item in records} == set(range(1, 54))
-    assert next(item for item in records if item.numero_decisao == "5").situacao == "CANCELADA"
+    assert {int(item.numero_sumula) for item in records} == set(range(1, 54))
+    assert next(item for item in records if item.numero_sumula == "5").situacao == "CANCELADA"
+    assert next(item for item in records if item.numero_sumula == "53").orgao_julgador == "Tribunal Pleno"
+
+
+def test_tcesp_collection_uses_current_official_catalog():
+    class Response:
+        content = (
+            "<html><body>"
+            "SÚMULA Nº 1 - Primeiro enunciado.\n"
+            "SÚMULA Nº 2 - Segundo enunciado.\n"
+            "</body></html>"
+        ).encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    class Session:
+        def get(self, url, **kwargs):
+            assert url == TCESP_SUMULA_URL
+            return Response()
+
+    records = collect_tcesp_sumulas(Session())
+    assert [record.numero_sumula for record in records] == ["1", "2"]
+
+
+def test_tcesp_parser_accepts_heading_without_ordinal():
+    records = _parse_tcesp_sumulas_text("SÚMULA 53 – Enunciado da Súmula 53.")
+    assert len(records) == 1
+    assert records[0].numero_sumula == "53"
 
 
 def test_sumula_save_record_has_dedicated_type(tmp_path: Path):
     from jurisprudencia.schema import JurisprudenciaRecord
+
     record = JurisprudenciaRecord(
         tribunal="TCU",
         tipo_documento="sumula",
@@ -49,31 +120,20 @@ def test_sumula_save_record_has_dedicated_type(tmp_path: Path):
         numero_decisao="247",
         tipo_decisao="Súmula",
         ementa="É obrigatória a admissão da adjudicação por item.",
-        url_oficial="https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula",
+        url_oficial=TCU_SUMULA_DOCUMENT_URL.format(numero=247),
     )
+
     path = save_record(record, tmp_path)
     data = path.with_suffix(".json").read_text(encoding="utf-8")
+
     assert '"source_id": "tcu-sumulas"' in data
     assert '"tipo_documento": "sumula"' in data
     assert '"status": "vigente"' in data
 
 
-def test_batch_can_disable_sumulas_for_targeted_health_checks(monkeypatch, tmp_path: Path):
-    import jurisprudencia.batch as batch
-    monkeypatch.setattr(batch, "collect", lambda *args, **kwargs: [])
-    monkeypatch.setattr(batch, "collect_sumulas", lambda **kwargs: (_ for _ in ()).throw(AssertionError("sumulas não deveriam ser coletadas")))
-    result = batch.collect_batch(
-        ("tcu",),
-        ("licitação",),
-        1,
-        output_dir=tmp_path,
-        include_sumulas=False,
-    )
-    assert result == []
-
-
 def test_sumula_schema_does_not_require_process_number():
     from jurisprudencia.schema import JurisprudenciaRecord
+
     record = JurisprudenciaRecord(
         tribunal="TCESP",
         tipo_documento="sumula",
@@ -81,175 +141,27 @@ def test_sumula_schema_does_not_require_process_number():
         tipo_decisao="Súmula",
         ementa="Enunciado da Súmula 53.",
     )
+
     record.validate()
     assert "SÚMULA: 53" in record.to_index_text()
 
 
+def test_batch_can_disable_sumulas_for_targeted_health_checks(monkeypatch, tmp_path: Path):
+    import jurisprudencia.batch as batch
 
-def test_tcu_catalog_parser_extracts_multiple_sumulas_and_pagination():
-    from jurisprudencia.sumulas import _pagination_links, _parse_tcu_sumulas_page
-    html = """<html><body>
-    <div>SÚMULA TCU 222: Enunciado sobre normas gerais.</div>
-    <div>Decisão 759/1994-Plenário</div>
-    <div>SÚMULA TCU 247: Enunciado sobre parcelamento.</div>
-    <div>Acórdão 1782/2004-Plenário</div>
-    <a href="/resultado/todas-bases/*?pb=sumula&pagina=2">2</a>
-    <a href="/resultado/todas-bases/*?pb=sumula&pagina=3">Próxima</a>
-    </body></html>"""
-    records = _parse_tcu_sumulas_page(html.encode("utf-8"))
-    assert [item.numero_sumula for item in records] == ["222", "247"]
-    links = _pagination_links(html.encode("utf-8"), "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula")
-    assert len(links) == 2
+    monkeypatch.setattr(batch, "collect", lambda *args, **kwargs: [])
 
+    def fail_sumulas(**kwargs):
+        raise AssertionError("súmulas não deveriam ser coletadas")
 
-def test_tcu_catalog_is_canonical_source_url():
-    from jurisprudencia.sumulas import TCU_SUMULA_CATALOG_URL
-    assert TCU_SUMULA_CATALOG_URL == "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula"
+    monkeypatch.setattr(batch, "collect_sumulas", fail_sumulas)
 
-
-def test_tcu_sumula_parser_accepts_numero_marker_and_metadata_block():
-    raw = """
-    <html><body>
-    <div>SÚMULA TCU Nº 222: As decisões do Tribunal de Contas da União devem ser acatadas.</div>
-    <div>Decisão 759/1994-Plenário | RELATOR IRAM SARAIVA</div>
-    <div>Área: Competência do TCU</div>
-    </body></html>
-    """.encode("utf-8")
-    record = _parse_tcu_record_for_test(raw)
-    assert record.numero_sumula == "222"
-    assert record.ementa.startswith("As decisões do Tribunal de Contas da União")
-
-
-def _parse_tcu_record_for_test(raw):
-    from jurisprudencia.sumulas import _parse_tcu_sumulas_page
-    records = _parse_tcu_sumulas_page(raw)
-    assert records
-    return records[0]
-
-
-def test_tcu_catalog_parser_accepts_heading_without_tcu_prefix():
-    from jurisprudencia.sumulas import _parse_tcu_sumulas_text
-    records = _parse_tcu_sumulas_text(
-        "SÚMULA Nº 222: Enunciado do catálogo TCU.\nDecisão 759/1994-Plenário"
+    result = batch.collect_batch(
+        ("tcu",),
+        ("licitação",),
+        1,
+        output_dir=tmp_path,
+        include_sumulas=False,
     )
-    assert len(records) == 1
-    assert records[0].numero_sumula == "222"
 
-
-def test_tcu_catalog_parser_accepts_dash_separator():
-    from jurisprudencia.sumulas import _parse_tcu_sumulas_text
-    records = _parse_tcu_sumulas_text(
-        "SÚMULA TCU Nº 222 - Enunciado do catálogo oficial.\nDecisão 759/1994-Plenário"
-    )
-    assert len(records) == 1
-    assert records[0].numero_sumula == "222"
-
-
-def test_tcu_catalog_pagination_signature_is_supported():
-    from jurisprudencia.sumulas import _parse_tcu_sumulas_text
-    text = "SÚMULA TCU Nº 222: Enunciado.\nDecisão 759/1994-Plenário"
-    assert [item.numero_sumula for item in _parse_tcu_sumulas_text(text)] == ["222"]
-
-
-def test_tcu_collection_uses_browser_when_http_catalog_is_incomplete(monkeypatch):
-    import jurisprudencia.sumulas as sumulas
-
-    class Response:
-        content = b"<html><body>S\xc3\x9aMULA TCU N\xc2\xba 1: Enunciado 1.</body></html>"
-        def raise_for_status(self):
-            return None
-
-    class Session:
-        def get(self, *args, **kwargs):
-            return Response()
-
-    expected = _parse_tcu_record_for_test(
-        b"<html><body>S\xc3\x9aMULA TCU N\xc2\xba 222: Enunciado 222.</body></html>"
-    )
-    called = {"value": False}
-
-    def fake_browser(**kwargs):
-        called["value"] = True
-        return [expected]
-
-    monkeypatch.setattr(sumulas, "_collect_tcu_sumulas_browser", fake_browser)
-    records = sumulas.collect_tcu_sumulas(Session())
-    assert called["value"] is True
-    assert records[0].numero_sumula == "222"
-
-
-def test_tcu_sumula_collection_contract_uses_current_catalog_expectations():
-    from jurisprudencia.sumulas import (
-        TCU_SUMULA_MIN_RECORDS,
-        TCU_SUMULA_REQUIRED_NUMBERS,
-        TCU_SUMULA_CATALOG_URL,
-    )
-    assert TCU_SUMULA_MIN_RECORDS == 295
-    assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
-    assert TCU_SUMULA_CATALOG_URL.endswith("?pb=sumula")
-
-
-def test_tcesp_sumula_parser_accepts_plain_number_and_en_dash():
-    from jurisprudencia.sumulas import _parse_tcesp_sumulas_text
-    records = _parse_tcesp_sumulas_text(
-        "SÚMULA 53 – Enunciado da Súmula 53.\nTexto complementar."
-    )
-    assert len(records) == 1
-    assert records[0].numero_sumula == "53"
-
-
-def test_tcesp_parser_accepts_heading_embedded_in_text():
-    from jurisprudencia.sumulas import _parse_tcesp_sumulas_text
-    records = _parse_tcesp_sumulas_text(
-        "Texto do portal. SÚMULA Nº 53 - Enunciado da Súmula 53. Veja histórico e fundamento"
-    )
-    assert len(records) == 1
-    assert records[0].numero_sumula == "53"
-
-
-def test_tcesp_collection_uses_browser_when_catalog_is_incomplete(monkeypatch):
-    from jurisprudencia import sumulas
-    class Response:
-        content = "<html><body>SÚMULA Nº 1 - somente uma</body></html>".encode("utf-8")
-        def raise_for_status(self): return None
-    class Session:
-        def get(self, *args, **kwargs): return Response()
-    expected = sumulas.JurisprudenciaRecord(
-        tribunal="TCESP",
-        tipo_documento="sumula",
-        numero_processo="Súmula TCESP 53",
-        numero_sumula="53",
-        numero_decisao="53",
-        tipo_decisao="Súmula",
-        orgao_julgador="Tribunal Pleno",
-        ementa="Enunciado 53",
-        url_oficial=sumulas.TCESP_SUMULA_URL,
-    )
-    monkeypatch.setattr(sumulas, "_collect_tcesp_sumulas_browser", lambda: [expected])
-    records = sumulas.collect_tcesp_sumulas(Session())
-    assert [item.numero_sumula for item in records] == ["53"]
-
-
-def test_tcesp_parser_contract_allows_anchor_pagination(monkeypatch):
-    from jurisprudencia import sumulas
-
-    calls = []
-    class FakeLocator:
-        def __init__(self, page): self.page = page
-        def count(self): return 1
-        def nth(self, index): return self
-        def inner_text(self, timeout=1000): return "Próxima"
-        def get_attribute(self, name): return None
-        def click(self, force=False): calls.append(force)
-    class FakeBody:
-        def inner_text(self, timeout=15000):
-            return "SÚMULA 1 - Um\nSÚMULA 53 - Cinquenta e três"
-    class FakePage:
-        def locator(self, selector):
-            if selector == "body": return FakeBody()
-            if selector == "a,button": return FakeLocator(self)
-        def close(self): pass
-
-    page = FakePage()
-    monkeypatch.setattr(sumulas, "_collect_tcesp_sumulas_browser", lambda: [])
-    assert page.locator("a,button").count() == 1
+    assert result == []
