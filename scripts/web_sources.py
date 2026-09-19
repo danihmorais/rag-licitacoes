@@ -286,7 +286,10 @@ def _is_web_article_url(source, url):
     if source_id == "web-conjur":
         return bool(re.search(r"/20\d{2}-(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)-\d{2}/", low))
     if source_id == "web-conlicitacao":
-        return low.startswith("/blog/") and not low.startswith("/blog/page/")
+        if low.startswith("/blog/"):
+            return not low.startswith("/blog/page/")
+        segments = [segment for segment in low.split("/") if segment]
+        return len(segments) == 1
     if source_id == "web-nova-lei-licitacao":
         return bool(re.search(r"/20\d{2}/\d{1,2}/\d{1,2}/", low))
     return path.rstrip("/") not in {"", "/"} and not low.endswith((".xml", ".rss", ".txt"))
