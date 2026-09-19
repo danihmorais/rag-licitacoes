@@ -33,6 +33,7 @@ def test_collect_batch_treats_limit_as_total_per_tribunal(monkeypatch, tmp_path)
         output_dir=tmp_path,
         strict=True,
         min_records_per_tribunal=8,
+        include_sumulas=False,
     )
 
     assert len(records) == 16
@@ -67,6 +68,7 @@ def test_collect_batch_strict_enforces_minimum_per_tribunal(monkeypatch, tmp_pat
             output_dir=tmp_path,
             strict=True,
             min_records_per_tribunal=2,
+            include_sumulas=False,
         )
     except RuntimeError as exc:
         assert "tcu=1" in str(exc)
