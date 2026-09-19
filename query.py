@@ -26,6 +26,7 @@ REGRAS DE AUTORIDADE E TEMPO:
 - Em jurisprudência, considere também a data da decisão e, quando houver múltiplas versões do mesmo registro, dê preferência ao conteúdo mais recente sem apagar o valor histórico.
 
 REGRAS DE EVIDÊNCIA:
+- Independentemente da pergunta, o contexto deve conter pelo menos uma evidência da Lei nº 14.133/2021 e uma evidência do Manual de Licitações e Contratos do TCU. Essas duas fontes são referências-base obrigatórias; não devem ser tratadas como automaticamente aplicáveis à pergunta nem como equivalentes em autoridade.
 - O texto recuperado pode conter trechos vizinhos do mesmo artigo/unidade para completar o contexto. Eles continuam sendo fontes independentes e devem ser citados pelo respectivo [F#].
 - Não transforme inferência em citação: a fonte deve sustentar a afirmação feita.
 - Se duas fontes discordarem, apresente a divergência e explique jurisdição, hierarquia e temporalidade em vez de escolher silenciosamente.
@@ -579,10 +580,8 @@ def retrieve_context(client, dense, sparse, reranker, raw):
         hybrid(client, dense, sparse, query, qfilter(filters), dense_vector=dense_vector),
         filters,
     )
-    if not points:
-        return query, [], []
     mandatory = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
-    context_points = expand_context(client, points)
+    context_points = expand_context(client, points) if points else []
     mandatory_ids = {point.id for point in mandatory}
     ordered = mandatory + [point for point in context_points if point.id not in mandatory_ids]
     context_text, context_sources = context_with_sources(ordered)
