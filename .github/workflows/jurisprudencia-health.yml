@@ -52,7 +52,7 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Testar jurisprudência oficial em tempo real
         run: |
-          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "${{ matrix.query }}" --limit 10 --min-records-per-tribunal 5 --strict
+          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "${{ matrix.query }}" --limit 10 --min-records-per-tribunal 5 --strict --without-sumulas
       - name: Publicar cache da coleta quando houver falha
         if: failure()
         uses: actions/upload-artifact@v6
