@@ -54,7 +54,7 @@ def test_expanded_sources_are_present():
 
 
 def test_config_uses_expanded_jurisprudence_collection_defaults():
-    assert config.INDEX_VERSION == '13'
+    assert config.INDEX_VERSION == '14'
     assert len(config.JURISPRUDENCIA_QUERIES) >= 8
     assert config.JURISPRUDENCIA_LIMIT >= 10
 
