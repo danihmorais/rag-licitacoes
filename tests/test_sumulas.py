@@ -7,6 +7,7 @@ from jurisprudencia.sumulas import (
     TCU_SUMULA_DOCUMENT_URL,
     TCU_SUMULA_MIN_RECORDS,
     TCU_SUMULA_REQUIRED_NUMBERS,
+    TCESP_SUMULA_MIN_RECORDS,
     TCESP_SUMULA_URL,
     _parse_tcu_sumula_document,
     _parse_tcesp_sumulas_text,
@@ -66,9 +67,9 @@ def test_tcu_collection_contract_contains_key_summulas():
     assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
 
 
-def test_tcesp_parser_extracts_all_53_and_preserves_cancelled_status():
+def test_tcesp_parser_extracts_current_catalog_and_preserves_cancelled_status():
     parts = []
-    for number in range(1, 54):
+    for number in range(1, TCESP_SUMULA_MIN_RECORDS + 1):
         suffix = " (CANCELADA)" if number == 5 else ""
         parts.append(
             f"SÚMULA Nº {number} - Texto da súmula {number}.{suffix}\n"
@@ -78,10 +79,12 @@ def test_tcesp_parser_extracts_all_53_and_preserves_cancelled_status():
 
     records = _parse_tcesp_sumulas_text(html)
 
-    assert len(records) == 53
-    assert {int(item.numero_sumula) for item in records} == set(range(1, 54))
-    assert next(item for item in records if item.numero_sumula == "5").situacao == "CANCELADA"
-    assert next(item for item in records if item.numero_sumula == "53").orgao_julgador == "Tribunal Pleno"
+    assert len(records) == TCESP_SUMULA_MIN_RECORDS
+    assert {int(item.numero_sumula) for item in records} == set(range(1, TCESP_SUMULA_MIN_RECORDS + 1))
+    cancelled = next(item for item in records if item.numero_sumula == "5")
+    assert cancelled.situacao == "CANCELADA"
+    assert "(CANCELADA)" not in cancelled.ementa
+    assert next(item for item in records if item.numero_sumula == str(TCESP_SUMULA_MIN_RECORDS)).orgao_julgador == "Tribunal Pleno"
 
 
 def test_tcesp_collection_uses_current_official_catalog():
@@ -209,3 +212,20 @@ def test_collect_sumulas_strict_only_validates_requested_tribunals(monkeypatch):
 
     assert len(result["tcu"]) == 295
     assert result["tcesp"] == []
+
+
+def test_tcesp_strict_validation_accepts_current_catalog_size(monkeypatch):
+    records = [
+        sumulas.JurisprudenciaRecord(
+            tribunal="TCESP",
+            tipo_documento="sumula",
+            numero_sumula=str(number),
+            tipo_decisao="Súmula",
+            ementa=f"Enunciado {number}.",
+        )
+        for number in range(1, TCESP_SUMULA_MIN_RECORDS + 1)
+    ]
+    monkeypatch.setattr(sumulas, "collect_tcesp_sumulas", lambda: records)
+    monkeypatch.setattr(sumulas, "collect_tcu_sumulas", lambda: [])
+    result = sumulas.collect_sumulas(tribunals=("tcesp",), strict=True)
+    assert len(result["tcesp"]) == TCESP_SUMULA_MIN_RECORDS
