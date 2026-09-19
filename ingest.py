@@ -130,6 +130,7 @@ def cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
         and indexed_count > 0
     )
 
+
 def read_cache():
     if not CACHE_PATH.exists():
         return {}
