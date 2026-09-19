@@ -50,7 +50,7 @@ def collect_batch(
     min_records_per_tribunal=1,
     per_query_limit=25,
     dlq_path=None,
-    include_sumulas=False,
+    include_sumulas=True,
 ):
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     output = []
