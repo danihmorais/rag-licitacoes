@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "description": "Perguntas de referência para regressão da recuperação jurídica. As fontes esperadas são IDs do catálogo versionado.",
+  "cases": [
+    {
+      "id": "lei-14133-modalidades",
+      "query": "Quais são as modalidades de licitação previstas na Lei nº 14.133/2021?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "registro-precos",
+      "query": "Como funciona o Sistema de Registro de Preços no âmbito federal?",
+      "expected_source_ids": [
+        "decreto11462"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "etp-federal",
+      "query": "Quais elementos e requisitos devem ser considerados no Estudo Técnico Preliminar?",
+      "expected_source_ids": [
+        "in58"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "termo-referencia",
+      "query": "Quais requisitos devem constar no Termo de Referência de uma contratação pública?",
+      "expected_source_ids": [
+        "in81"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "pesquisa-precos",
+      "query": "Quais parâmetros devem ser observados na pesquisa de preços para contratação pública?",
+      "expected_source_ids": [
+        "in65"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "processo-sp",
+      "query": "Como é disciplinado o processo administrativo no Estado de São Paulo?",
+      "expected_source_ids": [
+        "sp-lei10177"
+      ],
+      "expected_jurisdicao": "estadual_sp"
+    },
+    {
+      "id": "cadin-sp",
+      "query": "Qual é a disciplina do CADIN Estadual de São Paulo?",
+      "expected_source_ids": [
+        "sp-lei12799",
+        "sp-decreto53455"
+      ],
+      "expected_jurisdicao": "estadual_sp"
+    },
+    {
+      "id": "lei-8666-historico",
+      "query": "Qual era o regime histórico da Lei nº 8.666/1993 em dezembro de 2023?",
+      "expected_source_ids": [
+        "lei8666"
+      ],
+      "expected_jurisdicao": "federal",
+      "temporal": {
+        "effective_on": "2023-12-15"
+      }
+    },
+    {
+      "id": "valores-2025",
+      "query": "Quais valores da Lei nº 14.133/2021 foram atualizados para 2025?",
+      "expected_source_ids": [
+        "decreto12343"
+      ],
+      "expected_jurisdicao": "federal",
+      "temporal": {
+        "effective_on": "2025-06-15"
+      }
+    },
+    {
+      "id": "valores-2026",
+      "query": "Quais valores da Lei nº 14.133/2021 são aplicáveis em 2026?",
+      "expected_source_ids": [
+        "decreto12807"
+      ],
+      "expected_jurisdicao": "federal",
+      "temporal": {
+        "effective_on": "2026-06-15"
+      }
+    }
+  ]
+}
