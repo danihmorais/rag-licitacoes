@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from jurisprudencia.collector import save_record
-from jurisprudencia.sumulas import _tcu_record, collect_tcesp_sumulas
+from jurisprudencia.sumulas import collect_tcesp_sumulas, _parse_tcu_sumulas_page
 
 
 def test_tcu_sumula_parser_extracts_enunciado_and_status():
@@ -12,7 +12,7 @@ def test_tcu_sumula_parser_extracts_enunciado_and_status():
     <div>Acórdão 1782/2004-Plenário | RELATOR Marcos Vinicios Vilaça</div>
     </body></html>
     """.encode("utf-8")
-    record = _tcu_record(247, raw)
+    record = _parse_tcu_sumulas_page(raw)[0]
     assert record is not None
     assert record.tribunal == "TCU"
     assert record.numero_decisao == "247"
@@ -43,11 +43,13 @@ def test_sumula_save_record_has_dedicated_type(tmp_path: Path):
     from jurisprudencia.schema import JurisprudenciaRecord
     record = JurisprudenciaRecord(
         tribunal="TCU",
+        tipo_documento="sumula",
         numero_processo="Súmula TCU 247",
+        numero_sumula="247",
         numero_decisao="247",
         tipo_decisao="Súmula",
         ementa="É obrigatória a admissão da adjudicação por item.",
-        url_oficial="https://pesquisa.apps.tcu.gov.br/resultado/sumula/247",
+        url_oficial="https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula",
     )
     path = save_record(record, tmp_path)
     data = path.with_suffix(".json").read_text(encoding="utf-8")
