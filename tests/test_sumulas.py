@@ -205,3 +205,26 @@ def test_tcesp_parser_accepts_heading_embedded_in_text():
     )
     assert len(records) == 1
     assert records[0].numero_sumula == "53"
+
+
+def test_tcesp_collection_uses_browser_when_catalog_is_incomplete(monkeypatch):
+    from jurisprudencia import sumulas
+    class Response:
+        content = b"<html><body>SÚMULA Nº 1 - somente uma</body></html>"
+        def raise_for_status(self): return None
+    class Session:
+        def get(self, *args, **kwargs): return Response()
+    expected = sumulas.JurisprudenciaRecord(
+        tribunal="TCESP",
+        tipo_documento="sumula",
+        numero_processo="Súmula TCESP 53",
+        numero_sumula="53",
+        numero_decisao="53",
+        tipo_decisao="Súmula",
+        orgao_julgador="Tribunal Pleno",
+        ementa="Enunciado 53",
+        url_oficial=sumulas.TCESP_SUMULA_URL,
+    )
+    monkeypatch.setattr(sumulas, "_collect_tcesp_sumulas_browser", lambda: [expected])
+    records = sumulas.collect_tcesp_sumulas(Session())
+    assert [item.numero_sumula for item in records] == ["53"]
