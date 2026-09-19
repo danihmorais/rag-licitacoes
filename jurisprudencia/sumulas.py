@@ -68,7 +68,7 @@ def _thread_session():
 def _parse_tcu_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
     lines = [line.strip() for line in text.replace("\xa0", " ").splitlines() if line.strip()]
     heading = re.compile(
-        r"^S[ÚU]MULA(?:\s+TCU)?\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:\(([^)]*)\))?\s*:?[ \t]*(.*)$",
+        r"^S[ÚU]MULA(?:\s+TCU)?\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:\(([^)]*)\))?\s*(?:\s*(?::|-)[ \t]*)?(.*)$",
         re.IGNORECASE,
     )
     records = []
