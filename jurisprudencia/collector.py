@@ -1396,7 +1396,7 @@ def save_record(record: JurisprudenciaRecord, output_dir: Path) -> Path:
     record.validate()
     record.retrieved_at = record.retrieved_at or datetime.now(timezone.utc).isoformat()
     record.version_sha256 = record.version_sha256 or record.calculate_version_sha256()
-    is_sumula = str(record.tipo_decisao or '').strip().casefold() == 'súmula'
+    is_sumula = str(record.tipo_documento or '').strip().casefold() == 'sumula' or str(record.tipo_decisao or '').strip().casefold() == 'súmula'
     source_id = {
         'TCU': 'tcu-jurisprudencia',
         'TCESP': 'tcesp-jurisprudencia',
