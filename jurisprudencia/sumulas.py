@@ -344,6 +344,30 @@ def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRe
                             print(f"  aviso: documento de Súmula TCESP não processado {href}: {type(exc).__name__}: {exc}")
                     if 53 in by_number:
                         break
+                    print("  diagnóstico TCESP: Súmula 53 ainda ausente; links relacionados:")
+                    anchors = page.locator("a")
+                    for anchor_index in range(anchors.count()):
+                        anchor = anchors.nth(anchor_index)
+                        try:
+                            label = " ".join(
+                                filter(
+                                    None,
+                                    [
+                                        anchor.inner_text(timeout=1000),
+                                        anchor.get_attribute("aria-label"),
+                                        anchor.get_attribute("title"),
+                                    ],
+                                )
+                            ).strip()
+                            href = str(anchor.get_attribute("href") or "").strip()
+                        except Exception:
+                            continue
+                        haystack = f"{label} {href}".casefold()
+                        if "s[úu]mula" in haystack or "sumula" in haystack:
+                            print(f"    TCESP link: {label[:180]} -> {href[:300]}")
+                    for line in body_text.splitlines():
+                        if re.search(r"s[úu]mula.*(?:53|5|[0-9])|\b53\b", line, re.I):
+                            print(f"    TCESP texto: {line[:300]}")
 
                 controls = page.locator("a,button")
                 next_index = None
