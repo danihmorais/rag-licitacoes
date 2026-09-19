@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import concurrent.futures
 import re
-from pathlib import Path
 
 import requests
+import threading
 from bs4 import BeautifulSoup
 
 import config
@@ -47,9 +47,20 @@ def _tcu_record(numero: int, raw: bytes) -> JurisprudenciaRecord | None:
     )
 
 
-def _fetch_tcu_sumula(session, numero: int) -> JurisprudenciaRecord | None:
+_thread_state = threading.local()
+
+
+def _thread_session():
+    session = getattr(_thread_state, 'session', None)
+    if session is None:
+        session = make_session()
+        _thread_state.session = session
+    return session
+
+
+def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
     url = TCU_SUMULA_URL.format(numero=numero)
-    response = session.get(url, timeout=(8, 45), allow_redirects=True)
+    response = _thread_session().get(url, timeout=(8, 45), allow_redirects=True)
     if response.status_code == 404:
         return None
     response.raise_for_status()
@@ -60,13 +71,13 @@ def collect_tcu_sumulas(session=None, max_number: int = 400) -> list[Jurispruden
     session = session or make_session()
     numbers = range(1, max_number + 1)
     records: list[JurisprudenciaRecord] = []
-    workers = 8
+    workers = 4
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(_fetch_tcu_sumula, session, number): number for number in numbers}
         for future in concurrent.futures.as_completed(futures):
             try:
                 record = future.result()
-            except (requests.RequestException, ValueError) as exc:
+            except (requests.RequestException, ValueError, RuntimeError) as exc:
                 number = futures[future]
                 print(f"  aviso: Súmula TCU {number} indisponível: {type(exc).__name__}: {exc}")
                 continue
@@ -126,10 +137,19 @@ def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRec
     except Exception as exc:
         failures.append(f"TCESP: {type(exc).__name__}: {exc}")
     if strict:
-        if len(result["tcu"]) < 290:
-            failures.append(f"TCU: apenas {len(result['tcu'])} súmulas estruturadas; esperado pelo menos 290")
-        if len(result["tcesp"]) < 53:
-            failures.append(f"TCESP: apenas {len(result['tcesp'])} súmulas estruturadas; esperado 53")
+        tcu_numbers = {int(item.numero_decisao) for item in result['tcu'] if item.numero_decisao and item.numero_decisao.isdigit()}
+        if not tcu_numbers:
+            failures.append('TCU: nenhuma súmula estruturada foi encontrada')
+        else:
+            tcu_max = max(tcu_numbers)
+            missing = sorted(set(range(1, tcu_max + 1)) - tcu_numbers)
+            if tcu_max < 290 or missing:
+                detail = f'; ausentes={missing[:10]}' if missing else ''
+                failures.append(f'TCU: cobertura estrutural incompleta até a súmula {tcu_max}{detail}')
+        tcesp_numbers = {int(item.numero_decisao) for item in result['tcesp'] if item.numero_decisao and item.numero_decisao.isdigit()}
+        if tcesp_numbers != set(range(1, 54)):
+            missing = sorted(set(range(1, 54)) - tcesp_numbers)
+            failures.append(f'TCESP: cobertura estrutural incompleta; ausentes={missing}')
     if failures:
         raise RuntimeError("Falhas na coleta estruturada de súmulas: " + "; ".join(failures))
     return result
