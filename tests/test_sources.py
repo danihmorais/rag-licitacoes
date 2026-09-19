@@ -25,12 +25,13 @@ def test_source_catalog_is_unique_and_broad():
     assert {"Constitucional","Administrativo","Processual Público","Tributário","Financeiro e Orçamentário","Ambiental","Urbanístico","Saúde Pública","Educação Pública","Assistência Social","Pessoal e Servidores","Serviços Públicos","Contratações Públicas"} <= areas
 
 
-def test_in5_2017_uses_current_official_page_and_is_not_required():
+def test_in5_2017_uses_current_official_page_and_remains_blocking():
     source = next(item for item in SOURCES if item["id"] == "in5-2017")
     assert source["urls"] == [
         "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-no-5-de-26-de-maio-de-2017-atualizada"
     ]
-    assert source["required"] is False
+    assert source["fallback_urls"] == ("https://siscon.agu.gov.br/in5/",)
+    assert source["required"] is True
     assert source["status"] == "vigente"
     assert source["jurisdicao"] == "federal"
 
