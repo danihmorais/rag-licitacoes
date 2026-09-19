@@ -210,10 +210,12 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
 
 def smoke_test_sumulas() -> None:
     session = make_session()
+    tcu_records = collect_tcu_sumulas(session)
+    by_number = {int(item.numero_sumula): item for item in tcu_records if item.numero_sumula and item.numero_sumula.isdigit()}
     for number in (222, 247, 259, 263, 292):
-        record = _fetch_tcu_sumula(session, number)
+        record = by_number.get(number)
         if record is None:
-            raise RuntimeError(f"Súmula TCU {number} não foi encontrada no portal oficial.")
+            raise RuntimeError(f"Súmula TCU {number} não foi encontrada no catálogo oficial.")
         if not record.ementa or record.tipo_decisao != "Súmula" or record.numero_sumula != str(number):
             raise RuntimeError(f"Súmula TCU {number} retornou registro estrutural inválido.")
     records = collect_tcesp_sumulas(session)
