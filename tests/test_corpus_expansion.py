@@ -75,7 +75,7 @@ def test_batch_deduplicates_same_record_across_queries(monkeypatch, tmp_path: Pa
         return records
 
     monkeypatch.setattr(batch, 'collect', fake_collect)
-    output = batch.collect_batch(('tcu',), ('licitação', 'pregão'), 2, output_dir=tmp_path)
+    output = batch.collect_batch(('tcu',), ('licitação', 'pregão'), 2, output_dir=tmp_path, include_sumulas=False)
     assert len(calls) == 2
     assert len(output) == 1
 
