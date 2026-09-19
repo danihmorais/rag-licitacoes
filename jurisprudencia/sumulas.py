@@ -52,9 +52,9 @@ def _make_tcu_record(numero: int, enunciado: str, *, source_url: str, context: s
     return JurisprudenciaRecord(
         tribunal="TCU",
         tipo_documento="sumula",
-        numero_processo=f"Súmula TCU {numero}",
+        numero_processo="",
         numero_sumula=str(numero),
-        numero_decisao=str(numero),
+        numero_decisao=None,
         tipo_decisao="Súmula",
         orgao_julgador="Plenário",
         ementa=_strip_markup(clean_text(enunciado)),
@@ -221,9 +221,9 @@ def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
             JurisprudenciaRecord(
                 tribunal="TCESP",
                 tipo_documento="sumula",
-                numero_processo=f"Súmula TCESP {number}",
+                numero_processo="",
                 numero_sumula=str(number),
-                numero_decisao=str(number),
+                numero_decisao=None,
                 tipo_decisao="Súmula",
                 orgao_julgador="Tribunal Pleno",
                 ementa=clean_text(body),
