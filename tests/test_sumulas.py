@@ -16,6 +16,8 @@ def test_tcu_sumula_parser_extracts_enunciado_and_status():
     assert record is not None
     assert record.tribunal == "TCU"
     assert record.numero_decisao == "247"
+    assert record.numero_sumula == "247"
+    assert record.tipo_documento == "sumula"
     assert record.tipo_decisao == "Súmula"
     assert "adjudicação por item" in record.ementa
 
