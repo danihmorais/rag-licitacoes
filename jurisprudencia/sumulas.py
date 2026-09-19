@@ -237,6 +237,57 @@ def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -
     return _collect_tcu_sumulas_browser(max_number=max_number)
 
 
+def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
+    lines = [line.strip() for line in text.replace(" ", " ").splitlines() if line.strip()]
+    heading = re.compile(
+        r"^S[ÚU]MULA\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:[-–—:]\s*)?(.*)$",
+        re.IGNORECASE,
+    )
+    raw_records = []
+    current = None
+    for line in lines:
+        match = heading.match(line)
+        if match:
+            if current is not None:
+                raw_records.append(current)
+            current = {
+                "numero": int(match.group(1)),
+                "parts": [match.group(2).strip()] if match.group(2).strip() else [],
+            }
+            continue
+        if current is not None:
+            current["parts"].append(line)
+    if current is not None:
+        raw_records.append(current)
+
+    records = []
+    for item in raw_records:
+        number = item["numero"]
+        block = " ".join(part for part in item["parts"] if part)
+        block = re.sub(r"\(Veja histórico e fundamento\)", "", block, flags=re.I)
+        cancelled = bool(re.search(r"\bCANCELADA\b", block, re.I))
+        block = re.sub(r"\s*\(CANCELADA\)\s*", " ", block, flags=re.I)
+        enunciado = _strip_markup(clean_text(block))
+        if not enunciado:
+            continue
+        records.append(
+            JurisprudenciaRecord(
+                tribunal="TCESP",
+                tipo_documento="sumula",
+                numero_processo=f"Súmula TCESP {number}",
+                numero_sumula=str(number),
+                numero_decisao=str(number),
+                tipo_decisao="Súmula",
+                orgao_julgador="Tribunal Pleno",
+                ementa=enunciado,
+                situacao="CANCELADA" if cancelled else "VIGENTE",
+                url_oficial=TCESP_SUMULA_URL,
+                origem="TCESP — Repertório de Súmulas",
+            )
+        )
+    return sorted(records, key=lambda item: int(item.numero_decisao or 0))
+
+
 def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     session = session or make_session()
     response = session.get(TCESP_SUMULA_URL, timeout=(8, 45), allow_redirects=True)
@@ -244,36 +295,8 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     soup = BeautifulSoup(response.content, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
         tag.decompose()
-    text = "\n".join(line.strip() for line in soup.get_text("\n").splitlines() if line.strip())
-    matches = list(re.finditer(
-        r"(?ims)^S[ÚU]MULA\s+N[ºO°]?\s*(\d+)\s*-\s*(.*?)(?=^S[ÚU]MULA\s+N[ºO°]?\s*\d+\s*-|\Z)",
-        text,
-    ))
-    records = []
-    for match in matches:
-        number = int(match.group(1))
-        block = match.group(2).strip()
-        block = re.sub(r"\(Veja histórico e fundamento\)", "", block, flags=re.I)
-        cancelled = bool(re.search(r"\bCANCELADA\b", block, re.I))
-        enunciado = re.sub(r"\s+", " ", block).strip()
-        enunciado = re.sub(r"\s*\(CANCELADA\)\s*", " ", enunciado, flags=re.I)
-        enunciado = _strip_markup(enunciado)
-        if not enunciado:
-            continue
-        records.append(JurisprudenciaRecord(
-            tribunal="TCESP",
-            tipo_documento="sumula",
-            numero_processo=f"Súmula TCESP {number}",
-            numero_sumula=str(number),
-            numero_decisao=str(number),
-            tipo_decisao="Súmula",
-            orgao_julgador="Tribunal Pleno",
-            ementa=enunciado,
-            situacao="CANCELADA" if cancelled else "VIGENTE",
-            url_oficial=TCESP_SUMULA_URL,
-            origem="TCESP — Repertório de Súmulas",
-        ))
-    return sorted(records, key=lambda item: int(item.numero_decisao or 0))
+    return _parse_tcesp_sumulas_text(soup.get_text("
+"))
 
 
 def smoke_test_sumulas() -> None:
