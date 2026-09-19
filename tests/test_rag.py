@@ -123,9 +123,15 @@ def test_catalog_uses_consistent_authority_tiers():
     )
 
 
-def test_config_rejects_cpu_fastembed_provider(monkeypatch):
+def test_config_accepts_cpu_fastembed_provider_when_cuda_is_optional(monkeypatch):
     monkeypatch.setattr(config, 'FASTEMBED_PROVIDERS', ('CPUExecutionProvider',))
-    with pytest.raises(ValueError, match='exclusivamente CUDAExecutionProvider'):
+    monkeypatch.setattr(config, 'FASTEMBED_REQUIRE_CUDA', False)
+    config.validate_config()
+
+
+def test_config_rejects_unknown_fastembed_provider(monkeypatch):
+    monkeypatch.setattr(config, 'FASTEMBED_PROVIDERS', ('UnknownExecutionProvider',))
+    with pytest.raises(ValueError, match='somente CUDAExecutionProvider'):
         config.validate_config()
 
 
