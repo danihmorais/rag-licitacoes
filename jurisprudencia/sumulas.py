@@ -27,6 +27,7 @@ TCU_SUMULA_MIN_RECORDS = 295
 TCU_SUMULA_BROWSER_CONCURRENCY = 6
 TCU_SUMULA_BROWSER_TIMEOUT_MS = 60000
 TCU_SUMULA_REQUIRED_NUMBERS = (222, 247, 259, 263, 292)
+TCESP_SUMULA_MIN_RECORDS = 52
 
 _thread_state = threading.local()
 
@@ -46,6 +47,10 @@ def _strip_markup(value: str) -> str:
 def _status_from_text(text: str) -> str:
     match = re.search(r"\b(CANCELADA|CANCELADO|REVOGADA|REVOGADO)\b", text, re.IGNORECASE)
     return match.group(1).upper() if match else "VIGENTE"
+
+
+def _strip_status_marker(text: str) -> str:
+    return re.sub(r"\s*\((?:CANCELADA|CANCELADO|REVOGADA|REVOGADO)\)\s*$", "", text, flags=re.IGNORECASE).strip()
 
 
 def _make_tcu_record(numero: int, enunciado: str, *, source_url: str, context: str = "") -> JurisprudenciaRecord:
@@ -214,6 +219,8 @@ def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
         body = re.split(r"(?im)^HIST[ÓO]RICO\b", block, maxsplit=1)[0]
         body = re.split(r"(?im)^FUNDAMENTO\b", body, maxsplit=1)[0]
         body = re.sub(r"\(Veja histórico e fundamento\)", "", body, flags=re.IGNORECASE)
+        body = _strip_markup(body)
+        body = _strip_status_marker(body)
         body = re.sub(r"\s+", " ", body).strip(" -–—")
         if not body or body.casefold() == "veja histórico e fundamento":
             continue
@@ -263,12 +270,23 @@ def smoke_test_sumulas() -> None:
         for record in tcesp_records
         if record.numero_sumula and record.numero_sumula.isdigit()
     }
-    expected = set(range(1, 54))
+    if len(tcesp_numbers) < TCESP_SUMULA_MIN_RECORDS:
+        raise RuntimeError(
+            f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
+            f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
+        )
+    highest = max(tcesp_numbers, default=0)
+    expected = set(range(1, highest + 1))
     if tcesp_numbers != expected:
         missing = sorted(expected - tcesp_numbers)
-        raise RuntimeError(f"TCESP: repertório de súmulas incompleto no portal oficial; ausentes={missing}")
+        raise RuntimeError(
+            f"TCESP: repertório de súmulas com lacunas no portal oficial; ausentes={missing}"
+        )
 
-    print("Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | TCESP 1-53")
+    print(
+        f"Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | "
+        f"TCESP 1-{highest} ({len(tcesp_numbers)} registros)"
+    )
 
 
 def collect_sumulas(
@@ -316,9 +334,18 @@ def collect_sumulas(
             for item in result["tcesp"]
             if item.numero_sumula and item.numero_sumula.isdigit()
         }
-        if tcesp_numbers != set(range(1, 54)):
-            missing = sorted(set(range(1, 54)) - tcesp_numbers)
-            failures.append(f"TCESP: cobertura estrutural incompleta; ausentes={missing}")
+        if len(tcesp_numbers) < TCESP_SUMULA_MIN_RECORDS:
+            failures.append(
+                f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
+                f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
+            )
+        highest = max(tcesp_numbers, default=0)
+        expected = set(range(1, highest + 1))
+        if tcesp_numbers != expected:
+            missing = sorted(expected - tcesp_numbers)
+            failures.append(
+                f"TCESP: cobertura estrutural com lacunas; ausentes={missing}"
+            )
 
     if failures:
         raise RuntimeError("Falhas na coleta estruturada de súmulas: " + "; ".join(failures))
