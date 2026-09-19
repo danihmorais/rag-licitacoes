@@ -84,7 +84,7 @@ def test_essential_legal_sources_cover_requested_federal_and_state_rules():
     sources = {item['id']: item for item in SOURCES}
     required = {
         'decreto10922', 'decreto11317', 'decreto11871', 'decreto12343', 'decreto12807',
-        'decreto11246', 'decreto11462', 'in67', 'in65', 'in58', 'in81', 'in5-2017',
+        'decreto11246', 'decreto11461', 'decreto11462', 'in67', 'in65', 'in58', 'in81', 'in5-2017',
         'in98-2022', 'in2-2023', 'lc123', 'lindb', 'lei13655', 'lei12846', 'lei14063',
         'sp-lei10177', 'sp-lei12799', 'sp-decreto53455', 'sp-pca', 'sp-precos',
         'sp-etp', 'sp-tr', 'sp-agentes', 'sp-direta', 'sp-leilao',
