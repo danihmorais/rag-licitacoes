@@ -9,6 +9,7 @@ from scripts.web_sources import (
     _web_link_candidates,
     _web_topic_matches,
     extract_web_article,
+    extract_web_pdf,
 )
 
 
@@ -80,16 +81,16 @@ def test_web_article_url_policy_avoids_archive_and_accepts_article_paths():
     assert not _is_web_article_url(mig, "https://www.migalhas.com.br/tour_juridico")
 
 
-def test_web_article_url_policy_rejects_static_assets_and_image_directories():
+def test_web_article_url_policy_rejects_static_assets_but_keeps_pdfs():
     source = next(item for item in SOURCES if item["id"] == "web-licitacoes-publicas-blog")
     for url in (
         "https://licitacoespublicas.blog.br/imagens/comentarios_pp005.png",
         "https://licitacoespublicas.blog.br/imagens/consultoria_15.png",
         "https://licitacoespublicas.blog.br/imagens/logo_LP_600x151.png",
         "https://licitacoespublicas.blog.br/assets/site.js",
-        "https://licitacoespublicas.blog.br/arquivo.pdf",
     ):
         assert not _is_web_article_url(source, url)
+    assert _is_web_article_url(source, "https://licitacoespublicas.blog.br/documentos/artigo-licitacao.pdf")
     assert _is_web_article_url(
         source,
         "https://licitacoespublicas.blog.br/licitacoes/dispensa-eletronica-exemplo/",
@@ -157,3 +158,44 @@ def test_nova_lei_licitacao_does_not_configure_known_404_sitemap():
     source = next(item for item in SOURCES if item["id"] == "web-nova-lei-licitacao")
     assert "https://www.novaleilicitacao.com.br/sitemap_index.xml" not in source["sitemap_urls"]
     assert "https://www.novaleilicitacao.com.br/wp-sitemap.xml" in source["sitemap_urls"]
+
+
+def test_extract_web_pdf_reads_text_metadata_and_date():
+    from io import BytesIO
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.add_metadata({
+        "/Title": "Artigo sobre licitação",
+        "/Author": "Autor PDF",
+        "/CreationDate": "D:20260918120000-03'00'",
+    })
+    buffer = BytesIO()
+    writer.write(buffer)
+
+    class FakePage:
+        def extract_text(self):
+            return "Fundamentação jurídica sobre licitações e contratos. " * 30
+
+    class FakeReader:
+        def __init__(self, _stream):
+            self.metadata = {
+                "/Title": "Artigo sobre licitação",
+                "/Author": "Autor PDF",
+                "/CreationDate": "D:20260918120000-03'00'",
+            }
+            self.pages = [FakePage()]
+
+    import scripts.web_sources as module
+    original = module.PdfReader
+    try:
+        module.PdfReader = FakeReader
+        article = extract_web_pdf(buffer.getvalue(), "https://example.com/documento.pdf")
+    finally:
+        module.PdfReader = original
+
+    assert article["title"] == "Artigo sobre licitação"
+    assert article["autor"] == "Autor PDF"
+    assert article["date_publicacao"] == date(2026, 9, 18)
+    assert len(article["texto"]) >= 800
