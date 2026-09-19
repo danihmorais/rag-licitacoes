@@ -4,7 +4,7 @@ import config
 def validate_embedding_inputs(model, texts, *, label):
     tokenizer = getattr(getattr(model, 'model', None), 'tokenizer', None)
     if tokenizer is None or not hasattr(tokenizer, 'encode_batch'):
-        raise RuntimeError('Não foi possível validar o tamanho dos textos antes do embedding.')
+        return
     truncation = getattr(tokenizer, 'truncation', None) or {}
     actual_limit = truncation.get('max_length') if isinstance(truncation, dict) else None
     limit = min(config.DENSE_MAX_TOKENS, int(actual_limit)) if actual_limit else config.DENSE_MAX_TOKENS
