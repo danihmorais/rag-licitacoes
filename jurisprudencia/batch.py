@@ -144,6 +144,7 @@ def collect_batch(
                 continue
             output.append(record)
 
+    sumula_save_failures = []
     persisted = []
     for record in output:
         tribunal = record.tribunal.casefold()
@@ -159,9 +160,14 @@ def collect_batch(
                 path=dlq_path,
             )
             counts[tribunal] = max(0, counts.get(tribunal, 0) - 1)
+            if str(record.tipo_decisao or '').strip().casefold() == 'súmula':
+                sumula_save_failures.append(tribunal)
             continue
         persisted.append(record)
     output = persisted
+
+    if strict and sumula_save_failures:
+        raise RuntimeError('Falhas ao persistir súmulas estruturadas: ' + ', '.join(sorted(set(sumula_save_failures))))
 
     for tribunal in tribunals:
         if counts.get(tribunal, 0) < min_records_per_tribunal:
