@@ -1,209 +1,659 @@
 # RAG de Licitações
 
-RAG híbrido para licitações, contratos administrativos, Direito Público e regulamentação de São Paulo, com busca densa + BM25, RRF, reranking, recuperação estrutural por unidade jurídica, jurisprudência estruturada e LLM intercambiável.
+RAG especializado em **licitações, contratos administrativos e Direito Público brasileiro**, com atenção especial ao **Estado e ao Município de São Paulo**.
+
+O projeto separa as evidências em três grupos:
+
+- **normas**: Constituição, leis, decretos e atos normativos;
+- **jurisprudência e controle**: registros estruturados de tribunais;
+- **doutrina/conteúdo secundário**: matérias públicas de sites jurídicos selecionados.
+
+A recuperação combina busca semântica e lexical, reranking, filtros jurídicos e expansão estrutural do contexto antes de chamar o LLM.
+
+> Jurisprudência, doutrina, pareceres e orientações não são tratados como texto legal. A resposta deve permanecer vinculada às evidências recuperadas e aos metadados de jurisdição, autoridade e temporalidade.
 
 ## Arquitetura
 
-```text
-fontes oficiais HTML/PDF -> sincronização -> cache local -> metadados/versionamento
-                                      -> jurisprudência estruturada
-                                      -> chunking jurídico -> dense + BM25
-                                      -> Qdrant -> RRF -> reranker
-                                      -> expansão de vizinhança -> contexto -> LLM
-```
+~~~text
+Fontes HTML / PDF / APIs / web
+            │
+            ▼
+Sincronização e coleta
+retry + validação + hash
+            │
+            ▼
+Cache local estruturado
+texto + metadados + versões
+            │
+            ├──────────────► jurisprudência estruturada
+            │
+            ▼
+Chunking jurídico estrutural
+artigo / súmula / blocos
+            │
+        ┌───┴───┐
+        ▼       ▼
+     Dense    BM25
+        └───┬───┘
+            ▼
+           RRF
+            │
+            ▼
+         Reranker
+relevância + autoridade + jurisdição
+            │
+            ▼
+Expansão de vizinhança estrutural
+            │
+            ▼
+     Evidências + [F#]
+            │
+            ▼
+           LLM
+~~~
 
-O LLM é desacoplado do índice e pode ser trocado sem reindexação quando somente o gerador muda. A execução local deste projeto exige GPU para embeddings e reranking; não há perfil de execução por CPU.
+O índice é local e usa **Qdrant**. Embeddings, recuperação sparse e reranking usam o stack **FastEmbed com CUDA**.
 
-## Melhorias de confiabilidade
+O LLM é desacoplado do índice. Trocar somente o gerador não exige reindexação.
 
-- **Ingestão versionada e segura:** uma nova versão do documento é inserida primeiro; a versão anterior só é removida depois do `upsert` bem-sucedido. Uma falha de embedding/indexação não destrói a evidência que já funcionava.
-- **Hash do documento no payload:** cada chunk recebe `document_hash`, permitindo coexistência transitória de versões e limpeza seletiva de versões antigas.
-- **Chunking jurídico estrutural:** artigos e súmulas são identificados antes do split por tamanho.
-- **Expansão de vizinhança pós-reranking:** depois de selecionar as melhores evidências, o sistema recupera chunks adjacentes da mesma unidade jurídica. Isso ajuda quando incisos, parágrafos ou alíneas ficaram separados pelo limite de tamanho sem permitir que o vizinho altere o ranking de relevância.
-- **Filtros controlados:** filtros desconhecidos são rejeitados em vez de serem enviados silenciosamente ao Qdrant.
-- **Manifesto de compatibilidade:** mudanças de modelo, chunking ou estratégia de contexto invalidam explicitamente um índice antigo e exigem reindexação.
-- **Citações rastreáveis:** o contexto informa fonte, página, unidade, papel da fonte, autoridade, jurisdição, status e vigência.
+## O que o projeto faz
+
+### Recuperação híbrida
+
+A consulta combina:
+
+1. embedding denso com **intfloat/multilingual-e5-large**;
+2. BM25 com **Qdrant/bm25**;
+3. fusão **RRF**;
+4. reranking com **BAAI/bge-reranker-base**;
+5. ponderação explícita de relevância, autoridade e jurisdição;
+6. expansão de chunks vizinhos da mesma unidade jurídica.
+
+Padrões atuais:
+
+~~~text
+RAG_CANDIDATES_K=60
+RAG_FINAL_K=8
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=150
+RAG_CONTEXT_NEIGHBORS=1
+RAG_MAX_CONTEXT_CHARS=26000
+
+RAG_RERANK_RELEVANCE_WEIGHT=0.68
+RAG_RERANK_AUTHORITY_WEIGHT=0.20
+RAG_RERANK_JURISDICTION_WEIGHT=0.12
+~~~
+
+### Integridade da evidência
+
+Cada fragmento pode carregar, entre outros:
+
+~~~text
+source_id
+unit_id
+unit_ref
+chunk_index
+document_hash
+página
+jurisdição
+esfera
+órgão
+papel da fonte
+nível de autoridade
+status
+vigência
+~~~
+
+O sistema também:
+
+- rejeita filtros desconhecidos;
+- mantém versões por hash;
+- evita remover a versão anterior antes de a nova ser indexada com sucesso;
+- valida a compatibilidade do índice por manifesto;
+- pode bloquear o LLM quando a evidência não atinge o mínimo configurado;
+- exige citações [F#] para afirmações jurídicas relevantes;
+- trata o conteúdo recuperado como **dados**, não como instruções para o modelo.
 
 ## Corpus jurídico
 
-Legislação pública não fica congelada em PDFs no Git. `scripts/sources.py` mantém o catálogo jurídico unificado, com metadados de jurisdição, esfera, órgão, papel da fonte, autoridade, status e ramo do Direito. `scripts/sync_sources.py` consulta as URLs, usa retry/backoff, valida o conteúdo e grava o cache local em `db/source_cache/`, que é ignorado pelo Git. Páginas de índice/discovery podem ser usadas para localizar atos novos, mas não entram no corpus como evidência jurídica (`index_only=True`).
+O catálogo principal fica em **scripts/sources.py**.
 
-A sincronização também descobre PDFs diretamente linkados por páginas oficiais selecionadas. PDFs manuais continuam permitidos em `pdfs/` e, quando versionados, devem terminar em `.DDMMAAAA.pdf`, por exemplo `.27082026.pdf`.
+Cada fonte possui metadados de jurisdição, esfera, órgão, tipo documental, papel, autoridade, status, vigência e ramo do Direito.
 
-```bash
-python scripts/sync_sources.py
-python ingest.py
-```
+A escala de autoridade é:
 
-Para somente verificar as fontes obrigatórias, sem gravar cache:
+| Nível | Papel |
+|---|---|
+| 1 | Norma |
+| 2 | Jurisprudência / controle |
+| 3 | Orientação oficial |
+| 4 | Doutrina / conteúdo secundário |
 
-```bash
-python scripts/sync_sources.py --check --required-only
-```
+Dentro das normas, **normative_rank** diferencia Constituição, lei, decreto e atos infralegais.
 
-### Federal
+### Cobertura federal
 
-O núcleo cobre Constituição e controle de constitucionalidade; Administração Pública, processo administrativo e LINDB; servidores e responsabilização; licitações e contratos; controle e precedentes; Direito Financeiro e Orçamentário; Direito Tributário; concessões, PPPs, regulação e serviços públicos; consórcios e federalismo cooperativo; transparência, proteção de dados e governo digital; urbanismo e patrimônio; meio ambiente; saúde, educação e assistência social; direitos de grupos protegidos; defesa civil; ciência, tecnologia e inovação; e legislação eleitoral. A Lei 14.133/2021 permanece como núcleo de contratações públicas, mas deixa de ser o limite temático do RAG.
+O corpus federal inclui, entre outros:
 
-Leis 8.666/1993, 10.520/2002 e RDC permanecem como corpus histórico e são marcadas como `revogado`. A Lei paulista 6.544/1989 é preservada como `historico`, para evitar que o modelo a trate automaticamente como regime geral atual.
+- Constituição Federal;
+- Lei nº 14.133/2021;
+- LINDB e processo administrativo;
+- improbidade e responsabilização;
+- licitações, contratos, contratação direta e registro de preços;
+- pesquisa de preços, ETP e Termo de Referência;
+- concessões e PPP;
+- Direito Financeiro e responsabilidade fiscal;
+- transparência, LAI e LGPD;
+- governo digital;
+- servidores públicos;
+- controle e responsabilização;
+- urbanismo e patrimônio;
+- meio ambiente;
+- saúde, educação e assistência social;
+- ciência, tecnologia e inovação.
 
-### São Paulo
+Leis e regimes históricos de contratação, como as Leis nº 8.666/1993, 10.520/2002 e o RDC, permanecem disponíveis com metadados próprios para não serem apresentados automaticamente como regime vigente.
 
-Constituição Estadual; Lei 10.177/1998; LC 709/1993; Lei 6.544/1989; regulamentação paulista da Lei 14.133/2021; PCA; pesquisa de preços; ETP; catálogo; TR; agentes; contratação direta; leilão; AUDESP; integridade; responsabilização; Marketplace.SP; Compras SP e TCESP.
+### Estado de São Paulo
 
-### Controle, orientação e jurisprudência
+O catálogo estadual inclui, entre outros:
 
-TCU, TCESP, STJ, STF, TCM-SP e TJSP são tratados pelo coletor estruturado de jurisprudência. As pesquisas usam as bases oficiais de cada órgão e salvam registros individuais como documentos indexáveis; páginas genéricas de pesquisa não entram no índice como evidência. O inteiro teor é opcional: com `--with-content`, o coletor tenta recuperar o documento integral quando a própria fonte oferece PDF ou página de detalhe. Jurisprudência, parecer, manual, guia e orientação nunca são tratados como texto legal.
+- Constituição do Estado;
+- Lei nº 10.177/1998;
+- regulamentação paulista da Lei nº 14.133/2021;
+- PCA, pesquisa de preços e ETP;
+- catálogo e Termo de Referência;
+- agentes, gestores e fiscais;
+- contratação direta;
+- leilão eletrônico;
+- AUDESP;
+- integridade e responsabilização;
+- Compras SP;
+- Marketplace.SP;
+- orientações e pareceres da PGE-SP.
 
-| Fonte | Coletor | Indexação | Inteiro teor |
-|---|---|---|---|
+### Município de São Paulo
+
+Também são indexadas normas municipais relevantes para contratações públicas, incluindo o Decreto nº 62.100/2022, suas alterações e demais atos diretamente relacionados ao regime municipal de compras e contratos.
+
+## Jurisprudência e controle
+
+A jurisprudência possui pipeline próprio em **jurisprudencia/**.
+
+O conjunto padrão utiliza:
+
+| Tribunal | Coleta | Registro estruturado | Inteiro teor |
+|---|---:|---:|---:|
 | TCU | Sim | Sim | Opcional |
 | TCESP | Sim | Sim | Opcional |
 | STJ | Sim | Sim | Opcional |
 | STF | Sim | Sim | Opcional |
-| TCM-SP | Sim | Sim | Opcional |
 | TJSP | Sim | Sim | Opcional |
 
-**TCU** usa a API REST pública atual de pesquisa de acórdãos em `pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo`, com `documentosResumidos` para a busca e `documento` para o conteúdo completo. O adaptador não usa mais o endpoint legado de dados abertos, que pode responder sem aplicar os filtros esperados. **TCESP** usa a pesquisa oficial por GET, com os marcadores e caixas booleanas que o portal realmente exige. **STJ** usa o portal oficial de Dados Abertos (`dadosabertos.web.stj.jus.br`) e os espelhos mensais de acórdãos em JSON; isso substitui o scraping do SCON e cobre o período publicado pelo próprio portal. **STF** usa a API oficial da aplicação Angular (`/api/search/search`); como o portal atual aplica AWS WAF, a resolução do desafio é feita pelo Chromium via Playwright, sem desativar a verificação TLS. **TCM-SP** usa a consulta de Julgados no portal atual (`/Acordao/Index`) por automação de navegador porque a interface de pesquisa é dinâmica. **TJSP** usa a Consulta Completa de segundo grau via e-SAJ; quando o tribunal apresenta CAPTCHA/antibot, a coleta falha explicitamente em vez de tratar a página de bloqueio como zero resultados.
+Os resultados são convertidos em registros individuais com informações como processo, tribunal, órgão julgador, relator, data, ementa, tese/decisão, assunto, URL oficial, situação e hash de versão.
 
-Doutrina comercial protegida não deve ser copiada integralmente sem licença. Prefira materiais públicos, licenciados e referências temáticas.
+Páginas genéricas de pesquisa não são usadas como evidência jurídica. Quando a fonte oferece o documento integral, ele pode ser recuperado com **--with-content**.
 
-## Matérias jurídicas e de licitação
+### Coleta temática
 
-O sincronizador também coleta matérias públicas na web como **doutrina/conteúdo secundário**, separadas das normas e da jurisprudência:
+As consultas padrão abrangem temas como:
 
-- **Licitação:** Nova Lei de Licitação, Licitações Públicas, ConLicitação e Zênite. Essas fontes são tratadas como dedicadas ao tema de licitações e contratos.
-- **Direito Administrativo/Direito Público:** Migalhas e ConJur. Nessas duas fontes, somente matérias cujo título, seção, palavras-chave ou conteúdo apresentem relação suficiente com Direito Administrativo ou Direito Público são aceitas.
+- Lei nº 14.133/2021;
+- contratação direta;
+- edital e habilitação;
+- ETP e Termo de Referência;
+- registro de preços;
+- sanções;
+- equilíbrio econômico-financeiro;
+- fiscalização contratual;
+- ato e processo administrativo;
+- controle de constitucionalidade;
+- servidores públicos;
+- improbidade;
+- responsabilidade do Estado;
+- transparência e LGPD;
+- concessões e PPP;
+- temas específicos de São Paulo.
 
-O filtro temporal considera somente publicações a partir de **01/01/2021**. O limite inicial é de **250 matérias por fonte dedicada a licitações** e **300 por Migalhas e ConJur**, priorizando as publicações mais recentes. Assim, o corpus fica grande o suficiente para ter diversidade sem deixar conteúdo secundário dominar as normas e a jurisprudência.
+O limite é um **alvo total por tribunal**. As consultas são percorridas em lotes de até 25 resultados por tribunal e duplicidades são eliminadas por **document_key**.
 
-A coleta extrai título, data de publicação, autor, seção, palavras-chave, URL e corpo do artigo. Páginas de arquivo, categorias, paginação e navegação não entram como documentos. Conteúdo que não exponha uma data de publicação identificável é descartado, assim como páginas sem corpo substantivo suficiente ou páginas de bloqueio/casca de portal.
+Configuração padrão:
 
-Essas matérias recebem source_role=doutrina e authority_level=4. Portanto, não são tratadas como fonte oficial nem como norma vigente. A sincronização usa apenas conteúdo publicamente acessível e não tenta contornar login, paywall ou mecanismos de controle de acesso.
-
-Para testar somente essas seis fontes, use `python scripts/sync_sources.py --web-only --strict`. A atualização ocorre junto de `python scripts/sync_sources.py` e, por consequência, de `python ingest.py`.
-
-
-## Política de autoridade e jurisdição
-
-A recuperação usa uma escala única: authority_level=1 para norma, 2 para jurisprudência/controle, 3 para orientação oficial e 4 para doutrina. Dentro das normas, normative_rank distingue Constituição, lei, decreto e ato infralegal. O score final é ponderado por relevância (0.68), autoridade (0.20) e jurisdição (0.12) antes do limite de FINAL_K. A ponderação jurisdicional só atua quando a jurisdição pode ser determinada pelos filtros estruturados ou por indicadores explícitos da consulta; sem essa evidência, o componente permanece neutro. TCM-SP usa jurisdicao=municipal_sp e não é misturado com TCESP.
-
-## Cobertura jurídica ampliada
-
-O catálogo inclui as bases adicionais de controle e responsabilização (Lei nº 4.717/1965, Lei nº 7.347/1985 e LC nº 131/2009), transparência e LAI (Decreto nº 7.724/2012 e Decreto SP nº 68.155/2023), terceirização (Lei nº 6.019/1974), controle judicial (Lei nº 12.016/2009), inovação (LC nº 182/2021), além da regulamentação municipal de contratações de São Paulo e pareceres/orientações da PGE-SP. As leis 14.230/2021, LC 173/2020, Lei 12.232/2010 e Leis 10.973/2004 e 13.243/2016 já pertenciam ao catálogo e permanecem nele.
-
-## Coletor estruturado de jurisprudência
-
-A jurisprudência possui um esquema independente do LLM em `jurisprudencia/schema.py` e adaptadores dedicados em `jurisprudencia/collector.py`. Portais de pesquisa jurisprudencial não são indexados pelo sincronizador genérico de fontes. O objetivo é transformar resultados de pesquisa em registros com processo, órgão/tribunal, relator, data, ementa, tese/decisão, assunto, URL oficial, situação e hash de versão.
-
-O TCU é coletado pela interface oficial de dados abertos de acórdãos, o TCESP pela pesquisa oficial, o STJ pelo SCON, o STF pelo portal oficial e o TCM-SP pelo portal oficial de jurisprudência municipal. Quando a fonte oferece PDF de inteiro teor, o coletor pode preservá-lo como texto com `--with-content`.
-
-```bash
-python -m jurisprudencia.collector --query "licitação" --limit 25
-python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tcm-sp,tjsp --query "contrato administrativo" --limit 50 --detail --with-content --strict
-```
-
-Na execução normal de `ingest.py`, a coleta temática ocorre automaticamente. O limite é tratado como **alvo total por tribunal**, e não como limite independente para cada consulta. As consultas são percorridas em lotes de até 25 resultados por tribunal para ampliar a diversidade do corpus e evitar a coleta de centenas de registros de uma única consulta. Por padrão, o projeto tenta chegar a **200 registros por tribunal** e, em modo estrito, exige pelo menos **150 registros por tribunal**. Com os cinco tribunais padrão (TCU, TCESP, STJ, STF e TJSP), o alvo é de até 1.000 registros estruturados. Registros repetidos entre consultas são eliminados pelo `document_key`.
-
-```text
-RAG_SYNC_JURISPRUDENCIA=1
-RAG_JURISPRUDENCIA_QUERY=
+~~~text
 RAG_JURISPRUDENCIA_LIMIT=200
 RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL=150
 RAG_JURISPRUDENCIA_STRICT=1
-```
+~~~
 
-Para uma coleta focada em uma única consulta, `RAG_JURISPRUDENCIA_QUERY` continua disponível; nesse modo o limite é aplicado diretamente pelo coletor de cada tribunal.
+Consulta única:
 
-Cada registro recebe `version_sha256`, de modo que uma alteração do conteúdo não apaga silenciosamente a versão anterior.
+~~~bash
+python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50
+~~~
 
-## Recuperação jurídica
+Coleta temática completa:
 
-- Dense + BM25 + RRF.
-- Chunking estrutural por artigo/súmula antes do split por tamanho.
-- Cada fragmento mantém `source_id`, `unit_id`, `unit_ref`, `chunk_index`, `document_hash` e páginas quando aplicáveis.
-- Reranker independente do LLM.
-- O reranking combina relevância, autoridade e jurisdição antes do corte de FINAL_K; autoridade não é apenas um critério de desempate.
-- Após o reranking, chunks vizinhos da mesma `unit_id` podem completar o contexto sem influenciar a relevância inicial.
-- `RAG_MIN_EVIDENCE_SCORE` impede chamar o LLM quando não há evidência suficientemente relevante.
-- Citações `[F#]` para afirmações jurídicas relevantes.
-- Filtros: `@jurisdicao=estadual_sp @ano=2026 ...`.
-- `RAG_RERANK_SCORE_MODE=sigmoid` interpreta o score padrão do cross-encoder como logit; `identity` fica disponível para rerankers que já devolvem score normalizado entre 0 e 1.
-- Documentos recuperados são tratados como dados, não como instruções; ordens inseridas no texto do documento não devem alterar o comportamento do modelo.
+~~~bash
+python -m jurisprudencia.batch --strict --limit 200 --min-records-per-tribunal 150
+~~~
 
-## Integridade do índice
+Com **--detail** e **--with-content**, o coletor tenta obter informações adicionais e o inteiro teor quando disponibilizados pelo tribunal.
 
-O manifesto registra modelo, dimensão, parâmetros de chunking, reranker e esquema. Alterações incompatíveis interrompem a consulta e exigem reindexação. Manifesto e cache de ingestão são gravados atomicamente.
+## Matérias jurídicas e de licitação
 
-O cache de ingestão usa versão própria e guarda `sha256` e quantidade de chunks. Um documento é reindexado quando mudou ou quando sua quantidade indexada não confere com o cache. Por padrão, `RAG_PRUNE_STALE=1` remove do Qdrant fontes que já não pertencem ao corpus atual, evitando documentos órfãos.
+O sincronizador também coleta conteúdo público secundário de seis fontes:
 
-O ingest também valida a dimensão dos embeddings densos antes de substituir os pontos existentes. Assim, falhas de modelo/embedding não destroem o índice válido anterior.
+### Fontes dedicadas a licitações
 
-## Consulta não interativa
+- **Nova Lei de Licitação**
+- **Licitações Públicas**
+- **ConLicitação**
+- **Zênite**
 
-Para integração com scripts e serviços, a consulta pode ser executada sem modo interativo:
+### Direito Administrativo e Direito Público
 
-```bash
+- **Migalhas**
+- **ConJur**
+
+As quatro primeiras são consideradas fontes dedicadas a licitações e contratos.
+
+Migalhas e ConJur passam por filtro temático para restringir o corpus a Direito Administrativo e Direito Público, além dos assuntos diretamente relacionados a licitações e contratos.
+
+Política atual:
+
+~~~text
+publicações a partir de 01/01/2021
+
+Nova Lei de Licitação: até 250 matérias
+Licitações Públicas: até 250 matérias
+ConLicitação: até 250 matérias
+Zênite: até 250 matérias
+Migalhas: até 300 matérias
+ConJur: até 300 matérias
+~~~
+
+A coleta registra título, data, autor, seção, palavras-chave, URL e texto substantivo.
+
+Páginas de arquivo, categorias, paginação, navegação e assets estáticos não entram como matérias.
+
+**PDFs públicos podem ser candidatos válidos.** Quando um link web aponta para PDF, o sistema pode baixar o arquivo, extrair texto e metadados e armazená-lo como documento de origem web. Imagens, JavaScript, CSS e outros recursos estáticos continuam fora do corpus.
+
+As matérias web recebem:
+
+~~~text
+source_role=doutrina
+authority_level=4
+is_official=false
+status=orientativo
+~~~
+
+O projeto utiliza apenas conteúdo publicamente acessível e não tenta contornar login, paywall ou controles de acesso.
+
+Para validar somente as fontes web:
+
+~~~bash
+python scripts/sync_sources.py --web-only --strict
+~~~
+
+## Sincronização
+
+A sincronização baixa, descobre, valida e versiona o conteúdo jurídico.
+
+~~~bash
+python scripts/sync_sources.py
+~~~
+
+Modo estrito:
+
+~~~bash
+python scripts/sync_sources.py --strict
+~~~
+
+Verificação apenas das fontes obrigatórias:
+
+~~~bash
+python scripts/sync_sources.py --check --required-only
+~~~
+
+O sincronizador usa retry/backoff, validação de conteúdo e gravação atômica.
+
+O cache de fontes fica em:
+
+~~~text
+db/source_cache/
+~~~
+
+O catálogo versionado continua sendo **scripts/sources.py**; o cache é somente dado de execução.
+
+## PDFs locais
+
+PDFs fornecidos manualmente podem ser colocados em:
+
+~~~text
+pdfs/
+~~~
+
+Quando versionados no repositório, a identificação de versão utiliza o sufixo:
+
+~~~text
+.DDMMAAAA.pdf
+~~~
+
+Exemplo:
+
+~~~text
+.27082026.pdf
+~~~
+
+## Indexação
+
+Depois da sincronização:
+
+~~~bash
+python ingest.py
+~~~
+
+O pipeline de ingestão:
+
+1. sincroniza fontes configuradas;
+2. coleta jurisprudência quando habilitada;
+3. lê textos e PDFs;
+4. extrai e normaliza metadados;
+5. cria chunks estruturais;
+6. gera embeddings dense e sparse;
+7. indexa no Qdrant;
+8. atualiza o manifesto e o cache de ingestão;
+9. remove fontes obsoletas quando **RAG_PRUNE_STALE=1**.
+
+O índice local fica em:
+
+~~~text
+db/qdrant/
+~~~
+
+Não é necessário executar um servidor Qdrant separado no uso local padrão.
+
+## Consulta
+
+Consulta interativa:
+
+~~~bash
+python query.py
+~~~
+
+Consulta direta:
+
+~~~bash
 python query.py --query "Quais são os requisitos do ETP?"
+~~~
+
+Saída JSON:
+
+~~~bash
 python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP" --json
-```
+~~~
 
-`--json` retorna apenas o objeto da consulta, com resposta e fontes recuperadas. O uso normal continua disponível com `python query.py`.
+### Filtros
 
-## Temporalidade
+São aceitos filtros como:
 
-O corpus carrega `status`, `effective_from`, `effective_to`, `revogado`, `data_vigencia` e `retrieved_at`. A resposta deve distinguir regra vigente, regra histórica e `vacatio_legis`.
+~~~text
+@jurisdicao=estadual_sp
+@esfera=federal
+@orgao=TCESP
+@tribunal=tjsp
+@tipo_documento=decreto
+@source_role=norma
+@authority_level=1
+@status=vigente
+@revogado=false
+@ano=2026
+@norm_ano=2026
+@municipio=...
+@modalidade=...
+@tipo=...
+@source_id=...
+@regime_juridico=lei_14133
+~~~
 
-O histórico de alterações é controlado por hash dos documentos. A ingestão não substitui uma versão antiga antes de concluir a indexação da nova.
+Filtros numéricos também aceitam intervalos:
 
-## RTX 5060 Ti 16 GB
+~~~text
+@ano>=2025
+@ano<=2026
+@authority_level<3
+~~~
 
-O runtime é GPU-only. A instalação oficial do FastEmbed em GPU usa `fastembed-gpu` e o provedor `CUDAExecutionProvider`; o projeto rejeita configuração com provedor CPU ou sem CUDA disponível.
+Consultas que mencionam regimes históricos, como Lei nº 8.666/1993 ou Lei nº 10.520/2002, recebem tratamento específico para evitar mistura silenciosa entre regimes jurídicos.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install chromium
+## Temporalidade e vigência
+
+O corpus preserva metadados como:
+
+~~~text
+status
+revogado
+effective_from
+effective_to
+data_publicacao
+data_vigencia
+retrieved_at
+~~~
+
+Isso permite distinguir norma vigente, norma histórica, vacatio legis e versões anteriores do mesmo documento.
+
+O histórico é protegido por hash e a ingestão preserva a versão anterior até que a nova versão seja indexada com sucesso.
+
+## LLM
+
+O gerador é independente da recuperação.
+
+Configuração padrão:
+
+~~~text
+RAG_LLM_PROVIDER=openai_compatible
+RAG_OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+RAG_LLM_MODEL=local
+~~~
+
+O adaptador OpenAI-compatible usa **/v1/chat/completions**, permitindo conectar qualquer servidor compatível com essa interface.
+
+O projeto também possui adapters adicionais de provedor. A troca do LLM não altera o índice vetorial.
+
+Configuração inicial:
+
+~~~bash
 cp .env.example .env
-```
+~~~
 
-O `.env.example` já define:
+Nunca versione chaves de API.
 
-```text
+## GPU
+
+A execução local do retrieval foi projetada para **GPU**.
+
+O stack de embeddings usa:
+
+~~~text
+fastembed-gpu
+CUDAExecutionProvider
+~~~
+
+A configuração padrão exige:
+
+~~~text
 RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
-```
+~~~
 
-`requirements.txt` e `requirements-gpu.txt` usam a mesma base GPU e não instalam o pacote CPU `fastembed` nem `onnxruntime`. O runtime verifica a presença de `CUDAExecutionProvider` antes de criar os modelos. Trocar o modelo de embedding exige reindexação e atualização do manifesto.
+O runtime verifica se **CUDAExecutionProvider** está disponível antes de inicializar os modelos.
 
 ## Instalação
 
-```bash
+O CI utiliza **Python 3.12**.
+
+~~~bash
+git clone https://github.com/danihmorais/rag-licitacoes.git
+cd rag-licitacoes
+
 python -m venv .venv
 source .venv/bin/activate
+
 pip install -r requirements.txt
+
+python -m playwright install chromium
+
 cp .env.example .env
-python scripts/sync_sources.py
+~~~
+
+Execução inicial:
+
+~~~bash
+python scripts/sync_sources.py --strict
 python ingest.py
 python query.py
-```
+~~~
 
-O projeto é validado em Python 3.12 no CI. O runtime local exige o perfil GPU do FastEmbed e `CUDAExecutionProvider`; os coletores STF/TCM-SP também exigem o Chromium do Playwright, instalado com `python -m playwright install chromium`. A versão do Python é mantida fixa no CI para reprodutibilidade.
+Os coletores que dependem de automação de navegador precisam do Chromium instalado pelo Playwright.
 
-## GitHub Actions
+## Configuração
 
-`ci.yml` compila e testa apenas lógica determinística; não depende de sites jurídicos externos.
+As variáveis disponíveis estão em **.env.example**.
 
-`sync-sources.yml` é um health-check separado das fontes legislativas. `jurisprudencia-health.yml` executa semanalmente e também manualmente `python -m jurisprudencia.batch --strict --limit 1` contra os seis portais oficiais de jurisprudência; falhas de rede, mudança estrutural e ausência de resultados bloqueiam o job e ficam visíveis no GitHub Actions. A suíte `ci.yml` continua determinística e offline.
+### Modelos
 
-O CI cobre chunking estrutural, filtros, política de autoridade/jurisdição, catálogo de fontes, regressão de conteúdo jurídico, parsing dos adaptadores de jurisprudência (incluindo TCM-SP), compatibilidade de configuração, cache de ingestão, limpeza de fontes obsoletas e respostas OpenAI-compatible.
+~~~text
+RAG_DENSE_MODEL=intfloat/multilingual-e5-large
+RAG_DENSE_DIM=1024
+RAG_SPARSE_MODEL=Qdrant/bm25
+RAG_RERANK_MODEL=BAAI/bge-reranker-base
+RAG_RERANK_SCORE_MODE=sigmoid
+~~~
 
-Foi corrigido o caso de regex de PDF com escape duplicado que fazia `discover_links()` ignorar PDFs oficiais. O normalizador aceita regex normal e duplamente escapado.
+### Recuperação
 
-## Verificações
+~~~text
+RAG_CANDIDATES_K=60
+RAG_FINAL_K=8
+RAG_CONTEXT_NEIGHBORS=1
+RAG_MAX_CONTEXT_CHARS=26000
+RAG_MIN_EVIDENCE_SCORE=0.20
+RAG_EVIDENCE_TOKEN_OVERLAP=0.25
+~~~
 
-```bash
+### Jurisprudência
+
+~~~text
+RAG_SYNC_JURISPRUDENCIA=1
+RAG_JURISPRUDENCIA_QUERY=
+RAG_JURISPRUDENCIA_QUERIES=...
+RAG_JURISPRUDENCIA_LIMIT=200
+RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL=150
+RAG_JURISPRUDENCIA_DETAIL=0
+RAG_JURISPRUDENCIA_WITH_CONTENT=0
+RAG_JURISPRUDENCIA_STRICT=1
+~~~
+
+### Sincronização
+
+~~~text
+RAG_SYNC_SOURCES=1
+RAG_PRUNE_STALE=1
+~~~
+
+### Reranking
+
+~~~text
+RAG_RERANK_SCORE_MODE=sigmoid
+RAG_RERANK_RELEVANCE_WEIGHT=0.68
+RAG_RERANK_AUTHORITY_WEIGHT=0.20
+RAG_RERANK_JURISDICTION_WEIGHT=0.12
+~~~
+
+## Estrutura
+
+~~~text
+.
+├── config.py
+├── ingest.py
+├── query.py
+├── metadata.py
+├── chunking.py
+├── index_manifest.py
+│
+├── jurisprudencia/
+│   ├── batch.py
+│   ├── collector.py
+│   ├── queries.py
+│   └── schema.py
+│
+├── llm/
+│   ├── base.py
+│   ├── factory.py
+│   ├── gemini.py
+│   ├── ollama.py
+│   └── openai_compatible.py
+│
+├── scripts/
+│   ├── sources.py
+│   ├── sync_sources.py
+│   └── web_sources.py
+│
+├── tests/
+├── pdfs/
+└── db/
+    ├── qdrant/
+    ├── source_cache/
+    ├── ingest_cache.json
+    └── index_manifest.json
+~~~
+
+Os diretórios de cache e o índice local são dados de execução e não substituem o código ou o catálogo versionado.
+
+## Integridade do índice
+
+O manifesto registra parâmetros necessários para verificar compatibilidade do índice.
+
+Alterações em itens como modelo de embedding, dimensão, chunking ou reranker podem exigir reindexação.
+
+O cache de ingestão registra hash e quantidade de chunks por documento.
+
+Quando **RAG_PRUNE_STALE=1**, documentos que deixaram de pertencer ao corpus atual são removidos depois da atualização bem-sucedida.
+
+## Testes e GitHub Actions
+
+Verificações locais:
+
+~~~bash
 python -m compileall -q .
 python -m pytest -q
 python scripts/sync_sources.py --check --required-only
-```
+~~~
+
+Os workflows são separados por responsabilidade:
+
+- **ci.yml**: testes determinísticos e verificação de sintaxe;
+- **sync-sources.yml**: health-check das fontes jurídicas;
+- **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência;
+- **legal-ingestion.yml**: execução do pipeline de ingestão.
+
+O CI cobre regressões de chunking, filtros, autoridade e jurisdição, catálogo de fontes, temporalidade, cache, versionamento, sincronização, adaptadores de jurisprudência, recuperação e integração OpenAI-compatible.
+
+A suíte principal não depende de sites externos para passar.
+
+## Limitações
+
+Falhas de rede, CAPTCHA, WAF, mudanças estruturais dos portais ou retirada de documentos não significam ausência de jurisprudência ou legislação. O sistema deve registrar a falha de coleta explicitamente.
+
+Da mesma forma, ausência de resultado na recuperação não deve ser interpretada como inexistência da norma, decisão ou entendimento procurado.
+
+Conteúdo web, pareceres, manuais e decisões judiciais também não substituem a conferência da fonte primária aplicável.
+
+Para uso jurídico real, a resposta deve ser conferida na fonte oficial correspondente, especialmente quando vigência, redação consolidada ou jurisprudência recente forem determinantes.
+
+## Finalidade
+
+Este repositório é um projeto técnico de recuperação e indexação de informação jurídica.
+
+O uso de cada fonte deve respeitar seus termos, direitos autorais e eventuais restrições de acesso. O projeto prioriza fontes oficiais e conteúdo público.
+
+**Repositório:** https://github.com/danihmorais/rag-licitacoes
