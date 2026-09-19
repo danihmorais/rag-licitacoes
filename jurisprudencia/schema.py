@@ -105,6 +105,7 @@ class JurisprudenciaRecord(BaseModel):
             "key",
             "id",
         )
+        _coalesce(data, "numero_sumula", "NUMSUMULA", "numeroSumula", "sumula_numero")
         _coalesce(data, "numero_decisao", "NUMACORDAO", "numeroAcordao", "NUMACORDAOINT", "numeroDecisao", "acordao_numero")
         _coalesce(data, "orgao_julgador", "COLEGIADO", "colegiado", "CODCOLEGIADO", "orgaoJulgador", "nomeOrgaoJulgador")
         _coalesce(data, "relator", "RELATOR", "relator_nome", "ministroRelator", "relator_processo_nome", "relator_acordao_nome")
