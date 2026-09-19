@@ -50,6 +50,7 @@ def collect_batch(
     min_records_per_tribunal=1,
     per_query_limit=25,
     dlq_path=None,
+    include_sumulas=True,
 ):
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
     output = []
@@ -117,34 +118,35 @@ def collect_batch(
                 if tribunal_key in counts:
                     counts[tribunal_key] += 1
 
-    try:
-        sumulas = collect_sumulas(strict=strict)
-    except Exception as exc:
-        if strict:
-            raise
-        print(f"Aviso: coleta de súmulas terminou com falha: {type(exc).__name__}: {exc}")
-        sumulas = {"tcu": [], "tcesp": []}
-    for tribunal in ("tcu", "tcesp"):
-        for record in sumulas.get(tribunal, []):
-            key = record.document_key
-            if key in seen:
-                continue
-            seen.add(key)
-            try:
-                record.validate()
-            except Exception as exc:
-                _write_dlq(
-                    tribunal=tribunal,
-                    query="<sumulas>",
-                    stage="validate",
-                    error=exc,
-                    record=record,
-                    path=dlq_path,
-                )
-                continue
-            output.append(record)
+    sumulas = {"tcu": [], "tcesp": []}
+    if include_sumulas:
+        try:
+            sumulas = collect_sumulas(strict=strict)
+        except Exception as exc:
+            if strict:
+                raise
+            print(f"Aviso: coleta de súmulas terminou com falha: {type(exc).__name__}: {exc}")
+            sumulas = {"tcu": [], "tcesp": []}
+        for tribunal in ("tcu", "tcesp"):
+            for record in sumulas.get(tribunal, []):
+                key = record.document_key
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    record.validate()
+                except Exception as exc:
+                    _write_dlq(
+                        tribunal=tribunal,
+                        query="<sumulas>",
+                        stage="validate",
+                        error=exc,
+                        record=record,
+                        path=dlq_path,
+                    )
+                    continue
+                output.append(record)
 
-    sumula_save_failures = []
     persisted = []
     for record in output:
         tribunal = record.tribunal.casefold()
@@ -198,6 +200,7 @@ def main() -> int:
     parser.add_argument('--strict', action='store_true', help='Falha se algum tribunal solicitado ficar abaixo do mínimo de registros.')
     parser.add_argument('--min-records-per-tribunal', type=int, default=config.JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL)
     parser.add_argument('--per-query-limit', type=int, default=25, help='Máximo coletado por tribunal em cada consulta temática.')
+    parser.add_argument('--without-sumulas', action='store_false', dest='include_sumulas', help='Não coleta as Súmulas do TCU e do TCESP; útil para health-checks pontuais.')
     parser.add_argument('--output-dir', type=Path, default=None)
     args = parser.parse_args()
     if args.min_records_per_tribunal < 1:
@@ -222,6 +225,7 @@ def main() -> int:
         strict=args.strict,
         min_records_per_tribunal=args.min_records_per_tribunal,
         per_query_limit=args.per_query_limit,
+        include_sumulas=args.include_sumulas,
     )
     print(f'Consultas: {len(queries)} | Registros únicos: {len(records)}')
     return 0 if records else 1
