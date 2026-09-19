@@ -33,7 +33,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Instalar runtime do OCR
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-por
       - name: Verificar sintaxe
         run: python -m compileall -q .
+      - name: Verificar OCR
+        run: python -c "import fitz, pytesseract; print(pytesseract.get_tesseract_version())"
       - name: Testes offline
         run: python -m pytest -v

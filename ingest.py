@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import json
 import math
@@ -26,7 +27,7 @@ PAYLOAD_INDEX_TYPES = {
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def sync_sources():
@@ -99,6 +100,37 @@ def file_hash(path):
     return digest.hexdigest()
 
 
+def metadata_fingerprint(document):
+    digest = hashlib.sha256()
+    metadata_path = Path(__file__).with_name('metadata.py')
+    digest.update(b'metadata.py\0')
+    digest.update(metadata_path.read_bytes())
+    config_values = (
+        config.OCR_ENABLED,
+        config.OCR_REQUIRED,
+        config.OCR_MIN_NATIVE_CHARS_PER_PAGE,
+        config.OCR_MIN_NATIVE_CONFIDENCE,
+        config.OCR_DPI,
+        config.OCR_LANGUAGE,
+    )
+    digest.update(json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    sidecar = document.with_suffix('.json')
+    if sidecar.exists():
+        digest.update(b'sidecar.json\0')
+        digest.update(sidecar.read_bytes())
+    return digest.hexdigest()
+
+
+def cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
+    return (
+        isinstance(entry, dict)
+        and entry.get('sha256') == digest
+        and entry.get('metadata_fingerprint') == metadata_digest
+        and int(entry.get('chunks') or 0) == indexed_count
+        and indexed_count > 0
+    )
+
+
 def read_cache():
     if not CACHE_PATH.exists():
         return {}
@@ -127,10 +159,125 @@ def write_cache(cache):
             os.unlink(temp_name)
 
 
+def _native_extraction_confidence(text):
+    text = str(text or '')
+    if not text.strip():
+        return 0.0
+    non_whitespace = len(''.join(text.split()))
+    visible = sum(character.isprintable() or character in '\r\n\t' for character in text)
+    visible_ratio = visible / max(1, len(text))
+    alpha_numeric = sum(character.isalnum() for character in text)
+    alpha_ratio = alpha_numeric / max(1, non_whitespace)
+    replacement_ratio = text.count('\ufffd') / max(1, len(text))
+    density = min(1.0, non_whitespace / 180.0)
+    confidence = visible_ratio * min(1.0, alpha_ratio * 1.15) * density * (1.0 - replacement_ratio)
+    return round(max(0.0, min(1.0, confidence)), 4)
+
+
+def _ocr_page(pdf_document, page_number):
+    try:
+        import fitz
+        import pytesseract
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            'OCR necessário, mas PyMuPDF/pytesseract não estão instalados. '
+            'Instale as dependências do projeto e o Tesseract OCR.'
+        ) from exc
+    page = pdf_document.load_page(page_number - 1)
+    scale = config.OCR_DPI / 72.0
+    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    image = Image.frombytes('RGB', [pixmap.width, pixmap.height], pixmap.samples)
+    ocr_config = '--psm 6'
+    text = pytesseract.image_to_string(image, lang=config.OCR_LANGUAGE, config=ocr_config) or ''
+    data = pytesseract.image_to_data(
+        image,
+        lang=config.OCR_LANGUAGE,
+        config=ocr_config,
+        output_type=pytesseract.Output.DICT,
+    )
+    confidences = []
+    for raw_conf in data.get('conf', []):
+        try:
+            confidence = float(raw_conf)
+        except (TypeError, ValueError):
+            continue
+        if confidence >= 0:
+            confidences.append(confidence / 100.0)
+    extraction_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+    return text, round(max(0.0, min(1.0, extraction_confidence)), 4)
+
+
+def extract_page_records(path):
+    if path.suffix.lower() != '.pdf':
+        return [
+            {
+                'page': index,
+                'text': text,
+                'text_origin': 'native',
+                'extraction_confidence': _native_extraction_confidence(text),
+            }
+            for index, text in enumerate(path.read_text(encoding='utf-8').split(PAGE_BREAK), 1)
+        ]
+
+    records = []
+    pdf_reader = PdfReader(str(path))
+    ocr_document = None
+    try:
+        for page_number, page in enumerate(pdf_reader.pages, 1):
+            native_text = page.extract_text() or ''
+            native_confidence = _native_extraction_confidence(native_text)
+            needs_ocr = (
+                config.OCR_ENABLED
+                and (
+                    len(native_text.strip()) < config.OCR_MIN_NATIVE_CHARS_PER_PAGE
+                    or native_confidence < config.OCR_MIN_NATIVE_CONFIDENCE
+                )
+            )
+            text = native_text
+            origin = 'native'
+            confidence = native_confidence
+            if needs_ocr:
+                if ocr_document is None:
+                    try:
+                        import fitz
+                        ocr_document = fitz.open(str(path))
+                    except ImportError as exc:
+                        raise RuntimeError('OCR necessário, mas PyMuPDF não está instalado.') from exc
+                try:
+                    ocr_text, ocr_confidence = _ocr_page(ocr_document, page_number)
+                except Exception as exc:
+                    if config.OCR_REQUIRED:
+                        raise RuntimeError(
+                            f'Falha no OCR da página {page_number} de {path.name}: {exc}'
+                        ) from exc
+                    ocr_text, ocr_confidence = '', 0.0
+                if ocr_text.strip():
+                    text = ocr_text
+                    origin = 'ocr'
+                    confidence = ocr_confidence
+                elif config.OCR_REQUIRED:
+                    raise RuntimeError(
+                        f'OCR não produziu texto na página {page_number} de {path.name}.'
+                    )
+                else:
+                    confidence = min(native_confidence, 0.35)
+            records.append(
+                {
+                    'page': page_number,
+                    'text': text,
+                    'text_origin': origin,
+                    'extraction_confidence': round(confidence, 4),
+                }
+            )
+    finally:
+        if ocr_document is not None:
+            ocr_document.close()
+    return records
+
+
 def extract_pages(path):
-    if path.suffix.lower() == '.pdf':
-        return [page.extract_text() or '' for page in PdfReader(str(path)).pages]
-    return path.read_text(encoding='utf-8').split(PAGE_BREAK)
+    return [record['text'] for record in extract_page_records(path)]
 
 
 def _starts(pages):
@@ -160,11 +307,20 @@ def document_id_for(document, metadata=None):
     return f'{source_id}::{document.stem}'
 
 
-def build_chunks(document, pages):
+def build_chunks(document, pages, page_records=None):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     doc_id = document_id_for(document, meta)
     starts = _starts(pages)
+    quality_records = page_records or [
+        {
+            'page': index,
+            'text': text,
+            'text_origin': 'native',
+            'extraction_confidence': _native_extraction_confidence(text),
+        }
+        for index, text in enumerate(pages, 1)
+    ]
     prefix = embedding_metadata_prefix(meta)
     output = []
     for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP):
@@ -172,6 +328,27 @@ def build_chunks(document, pages):
             continue
         start = chunk['start']
         end = start + len(chunk['text'])
+        page_start = _page(start, starts)
+        page_end = _page(max(start, end - 1), starts)
+        page_details = [
+            {
+                'page': int(record.get('page', index + 1)),
+                'text_origin': str(record.get('text_origin') or 'native'),
+                'extraction_confidence': round(float(record.get('extraction_confidence') or 0.0), 4),
+            }
+            for index, record in enumerate(quality_records[page_start - 1:page_end], page_start - 1)
+        ]
+        origins = {item['text_origin'] for item in page_details}
+        if origins == {'native'}:
+            text_origin = 'native'
+        elif origins == {'ocr'}:
+            text_origin = 'ocr'
+        else:
+            text_origin = 'mixed'
+        extraction_confidence = (
+            sum(item['extraction_confidence'] for item in page_details) / len(page_details)
+            if page_details else 0.0
+        )
         hierarchy = chunk.get('hierarchy_path') or []
         hierarchy_label = ' > '.join(str(item) for item in hierarchy)
         page_content = prefix
@@ -187,8 +364,11 @@ def build_chunks(document, pages):
             'doc_id': doc_id,
             'source': document.name,
             'source_id': meta.get('source_id') or document.stem,
-            'page': _page(start, starts),
-            'page_end': _page(max(start, end - 1), starts),
+            'page': page_start,
+            'page_end': page_end,
+            'text_origin': text_origin,
+            'extraction_confidence': round(extraction_confidence, 4),
+            'page_extraction': page_details,
             **meta,
         })
     return output
@@ -422,6 +602,7 @@ def main():
 
     for document in files:
         digest = file_hash(document)
+        metadata_digest = metadata_fingerprint(document)
         document_meta = extract_metadata('', document)
         doc_id = document_id_for(document, document_meta)
         count_filter = _filter_for_doc_id(doc_id)
@@ -431,12 +612,7 @@ def main():
             count_filter=count_filter,
             exact=True,
         ).count
-        if (
-            isinstance(entry, dict)
-            and entry.get('sha256') == digest
-            and int(entry.get('chunks') or 0) == indexed_count
-            and indexed_count > 0
-        ):
+        if cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
             skipped += 1
             document_manifest[doc_id] = {
                 'sha256': digest,
@@ -445,13 +621,15 @@ def main():
                 'source_id': document_meta.get('source_id'),
                 'regime_juridico': document_meta.get('regime_juridico'),
                 'status': document_meta.get('status'),
+                'metadata_fingerprint': metadata_digest,
             }
             if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
                 revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
             continue
         try:
-            pages = extract_pages(document)
-            chunks = build_chunks(document, pages)
+            page_records = extract_page_records(document)
+            pages = [record['text'] for record in page_records]
+            chunks = build_chunks(document, pages, page_records=page_records)
             if not chunks:
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
@@ -487,7 +665,7 @@ def main():
                     )
                 )
             replace_document_points(client, doc_id, points, legacy_source=document.name)
-            cache[document.name] = {'sha256': digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
+            cache[document.name] = {'sha256': digest, 'metadata_fingerprint': metadata_digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
             document_manifest[doc_id] = {
                 'sha256': digest,
                 'chunks': len(points),
@@ -495,6 +673,7 @@ def main():
                 'source_id': document_meta.get('source_id'),
                 'regime_juridico': document_meta.get('regime_juridico'),
                 'status': document_meta.get('status'),
+                'metadata_fingerprint': metadata_digest,
             }
             if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
                 revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
@@ -519,7 +698,7 @@ def main():
         deleted_manifest.append({
             'doc_id': doc_id,
             'reason': 'stale',
-            'timestamp': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         })
     write_manifest(
         documents=document_manifest,

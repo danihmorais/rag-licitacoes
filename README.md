@@ -52,7 +52,7 @@ Expansão de vizinhança estrutural
            LLM
 ~~~
 
-O índice é local e usa **Qdrant**. Embeddings, recuperação sparse e reranking usam o stack **FastEmbed com CUDA**.
+O índice é local e usa **Qdrant**. Embeddings, recuperação sparse e reranking usam o stack **FastEmbed**. Por padrão, o projeto exige `CUDAExecutionProvider`; execução em CPU é suportada de forma explícita por configuração, sem alterar o código.
 
 O LLM é desacoplado do índice. Trocar somente o gerador não exige reindexação.
 
@@ -102,12 +102,16 @@ papel da fonte
 nível de autoridade
 status
 vigência
+text_origin
+extraction_confidence
+page_extraction
 ~~~
 
 O sistema também:
 
 - rejeita filtros desconhecidos;
 - mantém versões por hash;
+- invalida o cache por documento quando `metadata.py`, o sidecar ou a configuração de extração/OCR muda;
 - evita remover a versão anterior antes de a nova ser indexada com sucesso;
 - valida a compatibilidade do índice por manifesto;
 - pode bloquear o LLM quando a evidência não atinge o mínimo configurado;
@@ -500,6 +504,40 @@ O endpoint de geração de resposta pode permanecer separado. O LICITA.AI deve e
 
 O código atual mantém a separação lógica entre recuperação e geração em `query.py`, permitindo transformar essa camada em serviço HTTP sem acoplar o índice ao pipeline de documentos do LICITA.AI. O RAG também não deve assumir que o backend se chama Unsloth: o contrato externo continua sendo OpenAI-compatible, permitindo trocar o servidor local sem modificar a camada de recuperação.
 
+## Qualidade de extração e OCR
+
+PDFs são primeiro processados por extração nativa. Páginas com pouco texto ou baixa confiança heurística podem ser reprocessadas por OCR. Cada página recebe `text_origin` (`native` ou `ocr`) e `extraction_confidence`; chunks que atravessam mais de uma página registram ainda `page_extraction` e podem ser classificados como `mixed`.
+
+A confiança do reranking incorpora essa qualidade de extração: uma evidência OCR de baixa confiança não recebe o mesmo peso de relevância de um trecho nativo de alta confiança. O valor é exposto também no contexto e na saída JSON.
+
+Configuração:
+
+~~~text
+RAG_OCR_ENABLED=1
+RAG_OCR_REQUIRED=0
+RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE=80
+RAG_OCR_MIN_NATIVE_CONFIDENCE=0.60
+RAG_OCR_DPI=250
+RAG_OCR_LANGUAGE=por+eng
+~~~
+
+`RAG_OCR_REQUIRED=1` transforma uma falha do OCR necessário em erro de ingestão, em vez de preservar silenciosamente a extração nativa degradada. Para uso local, o Tesseract deve estar instalado com o pacote de idioma correspondente, além das dependências Python do projeto.
+
+## Avaliação da recuperação
+
+O repositório agora inclui um harness de avaliação em `evaluation.py` e um conjunto versionado de perguntas em `evaluation/dataset.json`. O dataset registra, para cada caso, as fontes esperadas, a jurisdição esperada e, quando pertinente, a data em que a regra deve ser avaliada.
+
+As métricas calculadas são `recall@k`, `nDCG@k`, MRR, acerto de jurisdição e acerto temporal. A avaliação reutiliza o pipeline real de dense + BM25 + RRF + reranker, sem chamar o LLM.
+
+Com um índice já construído:
+
+~~~bash
+python evaluation.py
+python evaluation.py --k 1 3 5 --strict --min-recall 0.80 --min-ndcg 0.60
+~~~
+
+Os limiares do modo `--strict` são fornecidos pelo chamador e não são codificados como uma suposta nota universal do corpus. A finalidade é permitir comparar sistematicamente alterações de embedding, reranker e pesos contra o mesmo conjunto de referência.
+
 ## Temporalidade e vigência
 
 O corpus preserva metadados como:
@@ -542,24 +580,25 @@ cp .env.example .env
 
 Nunca versione chaves de API.
 
-## GPU
+## Runtime de embeddings
 
-A execução local do retrieval foi projetada para **GPU**.
-
-O stack de embeddings usa:
-
-~~~text
-fastembed-gpu
-CUDAExecutionProvider
-~~~
-
-A configuração padrão exige:
+O pacote padrão usa `fastembed-gpu` e mantém CUDA como caminho recomendado. Para manter esse comportamento previsível, o padrão é:
 
 ~~~text
 RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
+RAG_FASTEMBED_REQUIRE_CUDA=1
 ~~~
 
-O runtime verifica se **CUDAExecutionProvider** está disponível antes de inicializar os modelos.
+O runtime verifica a presença de `CUDAExecutionProvider` quando `RAG_FASTEMBED_REQUIRE_CUDA=1`.
+
+Execução somente em CPU é suportada para CI, notebooks e máquinas sem GPU:
+
+~~~text
+RAG_FASTEMBED_REQUIRE_CUDA=0
+RAG_FASTEMBED_PROVIDERS=CPUExecutionProvider
+~~~
+
+Não use `CPUExecutionProvider` com `RAG_FASTEMBED_REQUIRE_CUDA=1`: nesse modo a configuração é rejeitada de propósito.
 
 ## Instalação
 
@@ -575,6 +614,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 python -m playwright install chromium
+
+# Linux: requerido para OCR de PDFs escaneados
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-por
 
 cp .env.example .env
 ~~~
@@ -607,9 +650,9 @@ RAG_RERANK_SCORE_MODE=sigmoid
 
 ~~~text
 RAG_CANDIDATES_K=60
-RAG_FINAL_K=8
+RAG_FINAL_K=6
 RAG_CONTEXT_NEIGHBORS=1
-RAG_MAX_CONTEXT_CHARS=26000
+RAG_MAX_CONTEXT_CHARS=16000
 RAG_MIN_EVIDENCE_SCORE=0.20
 RAG_EVIDENCE_TOKEN_OVERLAP=0.25
 ~~~
@@ -640,6 +683,7 @@ Configuração padrão:
 ~~~text
 RAG_DENSE_MAX_TOKENS=512
 RAG_QDRANT_UPSERT_BATCH_SIZE=100
+RAG_INDEX_VERSION=14
 ~~~
 
 ### Sincronização
@@ -647,6 +691,17 @@ RAG_QDRANT_UPSERT_BATCH_SIZE=100
 ~~~text
 RAG_SYNC_SOURCES=1
 RAG_PRUNE_STALE=1
+~~~
+
+### OCR
+
+~~~text
+RAG_OCR_ENABLED=1
+RAG_OCR_REQUIRED=0
+RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE=80
+RAG_OCR_MIN_NATIVE_CONFIDENCE=0.60
+RAG_OCR_DPI=250
+RAG_OCR_LANGUAGE=por+eng
 ~~~
 
 ### Reranking
@@ -668,6 +723,7 @@ RAG_RERANK_JURISDICTION_WEIGHT=0.12
 ├── metadata.py
 ├── chunking.py
 ├── index_manifest.py
+├── evaluation.py
 │
 ├── jurisprudencia/
 │   ├── batch.py
@@ -688,6 +744,8 @@ RAG_RERANK_JURISDICTION_WEIGHT=0.12
 │   └── web_sources.py
 │
 ├── tests/
+├── evaluation/
+│   └── dataset.json
 ├── pdfs/
 └── db/
     ├── qdrant/
@@ -704,7 +762,7 @@ O manifesto registra parâmetros necessários para verificar compatibilidade do 
 
 Alterações em itens como modelo de embedding, dimensão, chunking ou reranker podem exigir reindexação.
 
-O cache de ingestão registra hash e quantidade de chunks por documento.
+O cache de ingestão registra hash do documento, fingerprint de metadados/OCR e quantidade de chunks por documento. Assim, alterar a lógica de extração de metadados força a reindexação dos documentos afetados mesmo quando o PDF não mudou.
 
 Quando **RAG_PRUNE_STALE=1**, documentos que deixaram de pertencer ao corpus atual são removidos depois da atualização bem-sucedida.
 
@@ -718,16 +776,22 @@ python -m pytest -q
 python scripts/sync_sources.py --check --required-only
 ~~~
 
+Avaliação de recuperação, com índice já indexado:
+
+~~~bash
+python evaluation.py --k 1 3 5
+~~~
+
 Os workflows são separados por responsabilidade:
 
-- **ci.yml**: testes determinísticos e verificação de sintaxe;
+- **ci.yml**: testes determinísticos, verificação de sintaxe e presença do runtime OCR;
 - **sync-sources.yml**: health-check das fontes jurídicas;
 - **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência e dos catálogos oficiais de súmulas;
 - **legal-ingestion.yml**: execução do pipeline de ingestão.
 
 O CI cobre regressões de chunking, filtros, autoridade e jurisdição, catálogo de fontes, temporalidade, cache, versionamento, sincronização, adaptadores de jurisprudência, recuperação e integração OpenAI-compatible.
 
-A suíte principal não depende de sites externos para passar.
+A suíte principal não depende de sites externos para passar. O harness de avaliação é separado dos testes unitários: ele usa o índice local e dados de referência para medir a qualidade de recuperação antes/depois de alterações no pipeline.
 
 ## Limitações
 

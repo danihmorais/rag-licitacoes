@@ -123,9 +123,33 @@ def test_catalog_uses_consistent_authority_tiers():
     )
 
 
-def test_config_rejects_cpu_fastembed_provider(monkeypatch):
+def test_combined_retrieval_score_penalizes_low_extraction_quality(monkeypatch):
+    base = {
+        '_evidence_score': 0.8,
+        'authority_level': 1,
+        'normative_rank': 2,
+        'jurisdicao': 'federal',
+    }
+    high = dict(base, extraction_confidence=1.0)
+    low = dict(base, extraction_confidence=0.2)
+    high_score = __import__('query').combined_retrieval_score(high, 'federal')
+    low_score = __import__('query').combined_retrieval_score(low, 'federal')
+    assert low_score < high_score
+
+def test_config_accepts_cpu_fastembed_provider_when_cuda_is_optional(monkeypatch):
     monkeypatch.setattr(config, 'FASTEMBED_PROVIDERS', ('CPUExecutionProvider',))
-    with pytest.raises(ValueError, match='exclusivamente CUDAExecutionProvider'):
+    monkeypatch.setattr(config, 'FASTEMBED_REQUIRE_CUDA', False)
+    config.validate_config()
+
+
+def test_validate_gpu_runtime_skips_cuda_probe_when_optional(monkeypatch):
+    monkeypatch.setattr(config, 'FASTEMBED_REQUIRE_CUDA', False)
+    config.validate_gpu_runtime()
+
+
+def test_config_rejects_unknown_fastembed_provider(monkeypatch):
+    monkeypatch.setattr(config, 'FASTEMBED_PROVIDERS', ('UnknownExecutionProvider',))
+    with pytest.raises(ValueError, match='somente CUDAExecutionProvider'):
         config.validate_config()
 
 

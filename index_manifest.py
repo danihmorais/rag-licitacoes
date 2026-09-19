@@ -20,7 +20,7 @@ COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
     'chunking_algorithm_sha256', 'dense_max_tokens', 'payload_indexes', 'schema',
-    'manifest_schema_version',
+    'manifest_schema_version', 'ocr_settings',
 )
 
 
@@ -41,8 +41,16 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'chunking_algorithm_sha256': chunking_algorithm_sha256(),
         'dense_max_tokens': config.DENSE_MAX_TOKENS,
         'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
-        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/tipo_documento/numero_sumula/page_content/embedding_text',
-        'manifest_schema_version': 4,
+        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/tipo_documento/numero_sumula/text_origin/extraction_confidence/page_extraction/page_content/embedding_text',
+        'manifest_schema_version': 5,
+        'ocr_settings': {
+            'enabled': config.OCR_ENABLED,
+            'required': config.OCR_REQUIRED,
+            'min_native_chars_per_page': config.OCR_MIN_NATIVE_CHARS_PER_PAGE,
+            'min_native_confidence': config.OCR_MIN_NATIVE_CONFIDENCE,
+            'dpi': config.OCR_DPI,
+            'language': config.OCR_LANGUAGE,
+        },
         'documents': documents or {},
         'deletions': deletions or [],
         'revocations': revocations or [],
