@@ -17,7 +17,7 @@ def test_pdf_follow_pattern_accepts_normal_and_double_escaped_regex():
 def test_source_catalog_is_unique_and_broad():
     ids = [item["id"] for item in SOURCES]
     assert len(ids) == len(set(ids))
-    required = {"cf1988","lei14133","lei9784","lei8429","lei12846","lei12527","lei13709","lei13303","lei8987","lei11079","lrf","lei4320","lc123","lei13019","lei13460","lei14129","decreto11462","decreto11878","in65","in58","in81","sp-pca","lei14770","lei15190","lei15266","lei15471","decreto13031","decreto13106","pl-14230","pl-lc173","pl-12232","pl-13243","pl-10973","sp-const","sp-lei10177","sp-lai","tcesp-srp","lei4717","lei7347","lc131","decreto7724","lei6019","lei12016","lc182","spm-decreto62100","spm-decreto62436","spm-decreto64863","spm-in-seges6-2023","spm-pgm38-2025","sp-pge-pareceres"}
+    required = {"cf1988","lei14133","lei9784","lei8429","lei12846","lei12527","lei13709","lei13303","lei8987","lei11079","lrf","lei4320","lc123","lei13019","lei13460","lei14129","decreto11462","decreto11878","in65","in58","in81","sp-pca","lei14770","lei15190","lei15266","lei15471","decreto13031","decreto13106","pl-14230","pl-lc173","pl-12232","pl-13243","pl-10973","sp-const","sp-lei10177","sp-lai","tcesp-srp","lei4717","lei7347","lc131","decreto7724","lei6019","lei12016","lc182","sp-pge-pareceres"}
     assert required <= set(ids)
     retired = {"tcu","tcesp","tcu-dados-jurisprudencia","tcu-jurisprudencia-pesquisa","stj-jurisprudencia","stj-teses","stj-repetitivos-iacs","stj-sumulas-anotadas","stj-legislacao-aplicada","stj-informativos","stf-jurisprudencia","stf-repercussao-geral","stf-teses-rg","stf-tesauro","tjsp-jurisprudencia","tjsp-saj-jurisprudencia"}
     assert retired.isdisjoint(set(ids))
@@ -61,6 +61,12 @@ def test_validator_accepts_structured_normative_content():
 def test_validator_accepts_official_guidance_content():
     guidance = (ROOT / "tests" / "fixtures" / "pge_guidance.txt").read_text(encoding="utf-8")
     validate(next(item for item in SOURCES if item["id"] == "sp-pge-pareceres"), guidance, linked=True)
+
+def test_prefeitura_sp_sources_are_absent():
+    municipal = [item for item in SOURCES if item.get("jurisdicao") == "municipal_sp"]
+    assert municipal == []
+    assert not any(item["id"].startswith("spm-") for item in SOURCES)
+
 
 def test_current_source_endpoints():
     catalog = {item["id"]: item for item in SOURCES}

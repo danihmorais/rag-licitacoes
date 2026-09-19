@@ -241,6 +241,11 @@ def test_tcesp_missing_results_table_is_reported_as_structure_failure():
         TCESPAdapter(FakeSession([FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")])).search("licitação", 1)
 
 
+def test_default_jurisprudence_queries_exclude_prefeitura_sp():
+    from jurisprudencia.queries import DEFAULT_QUERIES
+    assert not any("prefeitura" in query.casefold() for query in DEFAULT_QUERIES)
+
+
 def test_query_terms_preserve_legal_numbers():
     from jurisprudencia.collector import _query_terms
     assert _query_terms("Lei 14.133 licitação contrato administrativo") == [
