@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime
 import hashlib
 import html
+import io
 import json
 import re
 from urllib.parse import unquote, urljoin, urlparse
 import xml.etree.ElementTree as ET
 
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 
 WEB_MONTHS = {
     "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4,
@@ -28,7 +30,7 @@ WEB_EXCLUDED_PATH_PARTS = (
 WEB_STATIC_EXTENSIONS = (
     ".7z", ".avi", ".bmp", ".css", ".csv", ".doc", ".docx", ".gif", ".gz",
     ".ico", ".jpeg", ".jpg", ".js", ".json", ".m4a", ".mp3", ".mp4",
-    ".mpeg", ".pdf", ".png", ".rss", ".svg", ".tar", ".tif", ".tiff", ".webm", ".webp",
+    ".mpeg", ".png", ".rss", ".svg", ".tar", ".tif", ".tiff", ".webm", ".webp",
     ".woff", ".woff2", ".xls", ".xlsx", ".zip",
 )
 
@@ -157,6 +159,27 @@ def _article_text_node(soup):
             return node
     return soup.body or soup
 
+
+def extract_web_pdf(raw_pdf, final_url):
+    reader = PdfReader(io.BytesIO(raw_pdf))
+    metadata = reader.metadata or {}
+    pages = [page.extract_text() or "" for page in reader.pages]
+    body = "\n\n".join(page.strip() for page in pages if page.strip()).strip()
+    title = str(metadata.get("/Title") or metadata.get("Title") or "").strip()
+    if not title:
+        name = unquote(urlparse(final_url).path.rsplit("/", 1)[-1])
+        title = re.sub(r"[_-]+", " ", re.sub(r"\\.[A-Za-z0-9]+$", "", name)).strip()
+    creation = metadata.get("/CreationDate") or metadata.get("CreationDate")
+    date_publicacao = _parse_web_date(str(creation or "")) or _parse_web_date(final_url)
+    return {
+        "title": html.unescape(title),
+        "date_publicacao": date_publicacao,
+        "autor": str(metadata.get("/Author") or metadata.get("Author") or "").strip(),
+        "secao": "",
+        "palavras_chave": "",
+        "texto": body,
+        "url": final_url,
+    }
 
 def extract_web_article(raw_html, final_url):
     soup = BeautifulSoup(raw_html, "html.parser")
@@ -458,8 +481,8 @@ def sync_web_articles(session, source, check=False):
             break
         fetched += 1
         try:
-            _, final, raw, _ = fetch(session, candidate)
-            article = extract_web_article(raw, final)
+            kind, final, raw, _ = fetch(session, candidate)
+            article = extract_web_pdf(raw, final) if kind == "pdf" else extract_web_article(raw, final)
             if not article["title"] or not _valid_article_text(article["texto"]) or not article["date_publicacao"]:
                 continue
             if article["date_publicacao"] < min_date:
