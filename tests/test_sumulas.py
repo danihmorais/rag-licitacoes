@@ -228,3 +228,28 @@ def test_tcesp_collection_uses_browser_when_catalog_is_incomplete(monkeypatch):
     monkeypatch.setattr(sumulas, "_collect_tcesp_sumulas_browser", lambda: [expected])
     records = sumulas.collect_tcesp_sumulas(Session())
     assert [item.numero_sumula for item in records] == ["53"]
+
+
+def test_tcesp_parser_contract_allows_anchor_pagination(monkeypatch):
+    from jurisprudencia import sumulas
+
+    calls = []
+    class FakeLocator:
+        def __init__(self, page): self.page = page
+        def count(self): return 1
+        def nth(self, index): return self
+        def inner_text(self, timeout=1000): return "Próxima"
+        def get_attribute(self, name): return None
+        def click(self, force=False): calls.append(force)
+    class FakeBody:
+        def inner_text(self, timeout=15000):
+            return "SÚMULA 1 - Um\nSÚMULA 53 - Cinquenta e três"
+    class FakePage:
+        def locator(self, selector):
+            if selector == "body": return FakeBody()
+            if selector == "a,button": return FakeLocator(self)
+        def close(self): pass
+
+    page = FakePage()
+    monkeypatch.setattr(sumulas, "_collect_tcesp_sumulas_browser", lambda: [])
+    assert page.locator("a,button").count() == 1
