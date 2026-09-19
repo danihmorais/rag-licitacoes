@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TCMSPAdapter, TJSPAdapter, TRIBUNALS, _discover_form, _query_matches, save_record
+from jurisprudencia.collector import STJAdapter, STFAdapter, TCESPAdapter, TCUAdapter, TJSPAdapter, TRIBUNALS, _discover_form, _query_matches, save_record
 from jurisprudencia.schema import JurisprudenciaRecord
 
 
@@ -97,21 +97,6 @@ def test_tcesp_adapter_falls_back_to_process_links_when_rows_are_not_structured(
     assert records[0].url_oficial == "https://www.tce.sp.gov.br/jurisprudencia/exibir?codigo=560098925"
 
 
-def test_tcm_sp_parser_handles_current_official_document_link():
-    html = '''<html><body>
-    <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação de serviços</a>
-    </body></html>'''.encode("utf-8")
-    records = TCMSPAdapter._parse_records(html, "https://portal.tcm.sp.gov.br/Acordao/Index", "licitação")
-    assert len(records) == 1
-    assert records[0].numero_processo == "TC/002198/2023"
-
-def test_tcm_sp_save_record_has_municipal_scope(tmp_path: Path):
-    record = JurisprudenciaRecord(tribunal="TCM-SP", numero_processo="1234/989/26", ementa="Licitação municipal.", url_oficial="https://jurisprudencia.tcm.sp.gov.br/Acordao/Detalhe/1234")
-    path = save_record(record, tmp_path)
-    data = path.with_suffix(".json").read_text(encoding="utf-8")
-    assert '"jurisdicao": "municipal_sp"' in data
-    assert '"esfera": "municipal"' in data
-    assert '"authority_level": 2' in data
 
 
 def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Path):
@@ -230,10 +215,6 @@ def test_query_matching_requires_half_terms_for_long_queries():
     assert not _query_matches("contrato administrativo equilíbrio financeiro público", "contrato administrativo")
 
 
-def test_tcm_sp_missing_browser_results_are_reported_as_failure(monkeypatch):
-    monkeypatch.setattr(TCMSPAdapter, "_browser_records", lambda self, query, limit: [])
-    with pytest.raises(RuntimeError, match="TCM-SP não retornou registros estruturados"):
-        TCMSPAdapter(FakeSession([])).search("licitação", 1)
 
 def test_tcesp_missing_results_table_is_reported_as_structure_failure():
     html = "<html><body><p>A página do TCESP foi redesenhada.</p></body></html>".encode("utf-8")
@@ -266,18 +247,6 @@ def test_tcesp_falls_back_from_long_query_to_meaningful_term():
     ])).search("Lei 14.133 licitação contrato administrativo", 1)
     assert len(records) == 1
     assert records[0].numero_processo == "1000/989/26"
-
-def test_tcm_sp_parses_current_portal_document_link():
-    html = '''<html><body>
-    <a href="/Management/AcordaoItem/Documento/TC0021982023">TC/002198/2023 — Licitação e contrato administrativo</a>
-    </body></html>'''.encode("utf-8")
-    records = TCMSPAdapter._parse_records(
-        html,
-        "https://portal.tcm.sp.gov.br/Acordao",
-        "licitação",
-    )
-    assert len(records) == 1
-    assert records[0].numero_processo == "TC/002198/2023"
 
 
 def test_tjsp_falls_back_from_long_query():
