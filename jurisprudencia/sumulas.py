@@ -157,3 +157,22 @@ def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRec
     if failures:
         raise RuntimeError("Falhas na coleta estruturada de súmulas: " + "; ".join(failures))
     return result
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Coleta as Súmulas do TCU e do TCESP em registros estruturados.")
+    parser.add_argument("--strict", action="store_true")
+    args = parser.parse_args()
+    try:
+        result = collect_sumulas(strict=args.strict)
+    except Exception as exc:
+        print(f"FAIL súmulas: {type(exc).__name__}: {exc}")
+        return 1
+    print(f"TCU: {len(result['tcu'])} súmulas | TCESP: {len(result['tcesp'])} súmulas")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
