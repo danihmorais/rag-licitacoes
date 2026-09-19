@@ -245,6 +245,19 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
     return [by_number[number] for number in sorted(by_number)]
 
 
+def _has_complete_tcu_coverage(records: list[JurisprudenciaRecord], max_number: int) -> bool:
+    numbers = {
+        int(record.numero_sumula)
+        for record in records
+        if record.numero_sumula and str(record.numero_sumula).isdigit()
+        and 1 <= int(record.numero_sumula) <= max_number
+    }
+    if not numbers:
+        return False
+    highest = max(numbers)
+    return highest >= min(290, max_number) and not (set(range(1, highest + 1)) - numbers)
+
+
 def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
     session = session or make_session()
     try:
@@ -253,14 +266,13 @@ def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -
         records = _parse_tcu_sumulas_page(response.content)
     except requests.RequestException:
         records = []
-    if records:
+    if records and _has_complete_tcu_coverage(records, max_number):
         by_number = {}
         for record in records:
             number = int(record.numero_sumula or 0)
             if 1 <= number <= max_number:
                 by_number[number] = record
-        if len(by_number) >= 1:
-            return [by_number[number] for number in sorted(by_number)]
+        return [by_number[number] for number in sorted(by_number)]
     return _collect_tcu_sumulas_browser(max_number=max_number)
 
 
