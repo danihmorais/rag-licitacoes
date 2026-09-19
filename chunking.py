@@ -71,18 +71,39 @@ def _article_children(article_text):
 
 
 def _split_text(text, max_size, overlap):
+    if max_size <= 0:
+        raise ValueError('max_size deve ser maior que zero')
     if len(text) <= max_size:
         return [text]
+    effective_overlap = min(overlap, max(0, max_size - 1))
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=max_size,
-        chunk_overlap=overlap,
+        chunk_overlap=effective_overlap,
         separators=['\n\n', '\n', '. ', '; ', ' ', ''],
     )
     return [piece for piece in splitter.split_text(text) if piece.strip()]
 
 
+def _fit_child_prefix(prefix, child_text, max_size):
+    if len(prefix) + len(child_text) + 1 <= max_size:
+        return prefix
+    header, _, caput = prefix.partition('\n')
+    body_budget = min(len(child_text), max(1, max_size // 2))
+    prefix_budget = max(1, max_size - body_budget - 1)
+    if len(header) > prefix_budget:
+        return header[:prefix_budget].rstrip()
+    if len(header) + 1 >= prefix_budget:
+        return header
+    remaining = prefix_budget - len(header) - 1
+    original_caput = caput
+    caput = caput[:remaining].rstrip()
+    if len(caput) < len(original_caput.rstrip()):
+        caput = caput.rstrip(' .,:;-') + '…'
+    return f'{header}\n{caput}'.strip()
+
 def _split_child(child_text, prefix, max_size, overlap):
-    available = max(1, max_size - len(prefix) - 2)
+    prefix = _fit_child_prefix(prefix, child_text, max_size)
+    available = max(1, max_size - len(prefix) - 1)
     if len(child_text) <= available:
         return [child_text]
     return _split_text(child_text, available, overlap)
