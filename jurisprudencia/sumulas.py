@@ -244,10 +244,14 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
 
 def smoke_test_sumulas() -> None:
     critical_numbers = (222, 247, 259, 263, 292)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(_fetch_tcu_sumula, number): number for number in critical_numbers}
-        tcu_records = [future.result() for future in futures]
-    for number, record in zip(critical_numbers, tcu_records):
+    tcu_records = _collect_tcu_sumulas(critical_numbers)
+    tcu_by_number = {
+        int(record.numero_sumula): record
+        for record in tcu_records
+        if record.numero_sumula and record.numero_sumula.isdigit()
+    }
+    for number in critical_numbers:
+        record = tcu_by_number.get(number)
         if record is None:
             raise RuntimeError(f"Súmula TCU {number} não foi encontrada no portal oficial.")
         if not record.ementa or record.numero_sumula != str(number) or record.tipo_documento != "sumula":
