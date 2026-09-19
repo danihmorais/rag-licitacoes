@@ -10,7 +10,7 @@ SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 QDRANT_PATH = DB_DIR / 'qdrant'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
-INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '13')
+INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '14')
 DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
 DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', '512'))
@@ -38,6 +38,13 @@ QDRANT_PAYLOAD_INDEXES = {
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
 FASTEMBED_PROVIDERS = tuple(x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', 'CUDAExecutionProvider').split(',') if x.strip())
+FASTEMBED_REQUIRE_CUDA = os.getenv('RAG_FASTEMBED_REQUIRE_CUDA', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+OCR_ENABLED = os.getenv('RAG_OCR_ENABLED', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+OCR_REQUIRED = os.getenv('RAG_OCR_REQUIRED', '0').strip().lower() not in {'0', 'false', 'no', 'off'}
+OCR_MIN_NATIVE_CHARS_PER_PAGE = int(os.getenv('RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE', '80'))
+OCR_MIN_NATIVE_CONFIDENCE = float(os.getenv('RAG_OCR_MIN_NATIVE_CONFIDENCE', '0.60'))
+OCR_DPI = int(os.getenv('RAG_OCR_DPI', '250'))
+OCR_LANGUAGE = os.getenv('RAG_OCR_LANGUAGE', 'por+eng')
 RAG_SYNC_SOURCES = os.getenv('RAG_SYNC_SOURCES', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_SYNC_JURISPRUDENCIA = os.getenv('RAG_SYNC_JURISPRUDENCIA', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 RAG_PRUNE_STALE = os.getenv('RAG_PRUNE_STALE', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
@@ -77,7 +84,11 @@ def validate_config() -> None:
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
         (0 <= EVIDENCE_TOKEN_OVERLAP <= 1, 'RAG_EVIDENCE_TOKEN_OVERLAP deve estar entre zero e um.'),
         (OLLAMA_NUM_CTX >= 16384, 'RAG_OLLAMA_NUM_CTX deve ser maior ou igual a 16384.'),
-        (FASTEMBED_PROVIDERS == ('CUDAExecutionProvider',), 'RAG_FASTEMBED_PROVIDERS deve ser exclusivamente CUDAExecutionProvider.'),
+        (FASTEMBED_PROVIDERS and all(provider in {'CUDAExecutionProvider', 'CPUExecutionProvider'} for provider in FASTEMBED_PROVIDERS), 'RAG_FASTEMBED_PROVIDERS deve conter somente CUDAExecutionProvider e/ou CPUExecutionProvider.'),
+        (not FASTEMBED_REQUIRE_CUDA or 'CUDAExecutionProvider' in FASTEMBED_PROVIDERS, 'RAG_FASTEMBED_REQUIRE_CUDA=1 exige CUDAExecutionProvider em RAG_FASTEMBED_PROVIDERS.'),
+        (OCR_MIN_NATIVE_CHARS_PER_PAGE >= 0, 'RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE não pode ser negativo.'),
+        (0 <= OCR_MIN_NATIVE_CONFIDENCE <= 1, 'RAG_OCR_MIN_NATIVE_CONFIDENCE deve estar entre zero e um.'),
+        (OCR_DPI > 0, 'RAG_OCR_DPI deve ser maior que zero.'),
         (RERANK_SCORE_MODE in {'sigmoid', 'identity'}, "RAG_RERANK_SCORE_MODE deve ser 'sigmoid' ou 'identity'."),
         (RERANK_RELEVANCE_WEIGHT >= 0, 'RAG_RERANK_RELEVANCE_WEIGHT não pode ser negativo.'),
         (RERANK_AUTHORITY_WEIGHT >= 0, 'RAG_RERANK_AUTHORITY_WEIGHT não pode ser negativo.'),
@@ -95,6 +106,8 @@ def validate_config() -> None:
 
 
 def validate_gpu_runtime() -> None:
+    if not FASTEMBED_REQUIRE_CUDA:
+        return
     try:
         import onnxruntime as ort
     except ImportError as exc:
@@ -103,7 +116,8 @@ def validate_gpu_runtime() -> None:
     if 'CUDAExecutionProvider' not in providers:
         raise RuntimeError(
             'Execução GPU obrigatória: CUDAExecutionProvider não está disponível no ONNX Runtime. '
-            f'Provedores disponíveis: {", ".join(providers) or "nenhum"}.'
+            f'Provedores disponíveis: {", ".join(providers) or "nenhum"}. '
+            'Para executar em CPU, defina RAG_FASTEMBED_REQUIRE_CUDA=0 e RAG_FASTEMBED_PROVIDERS=CPUExecutionProvider.'
         )
 
 
