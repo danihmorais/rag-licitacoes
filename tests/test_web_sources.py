@@ -207,3 +207,10 @@ def test_extract_web_pdf_reads_text_metadata_and_date():
     assert article["autor"] == "Autor PDF"
     assert article["date_publicacao"] == date(2026, 9, 18)
     assert len(article["texto"]) >= 800
+
+
+
+def test_conlicitacao_uses_redundant_discovery_seeds_and_longer_timeout():
+    source = next(item for item in SOURCES if item["id"] == "web-conlicitacao")
+    assert len(source["urls"]) >= 3
+    assert source["http_timeout"] == (10, 60)
