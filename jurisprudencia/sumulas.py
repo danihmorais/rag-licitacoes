@@ -325,7 +325,7 @@ def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRe
                         except Exception:
                             continue
                         haystack = f"{label} {href}".casefold()
-                        if re.search(r"s[úu]mulas?", haystack) and re.search(r"\b53\b", haystack):
+                        if re.search(r"s[úu]mulas?", haystack):
                             candidate_urls.append(href)
                     for href in dict.fromkeys(candidate_urls):
                         try:
