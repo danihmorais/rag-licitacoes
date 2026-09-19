@@ -25,6 +25,22 @@ def test_source_catalog_is_unique_and_broad():
     assert {"Constitucional","Administrativo","Processual Público","Tributário","Financeiro e Orçamentário","Ambiental","Urbanístico","Saúde Pública","Educação Pública","Assistência Social","Pessoal e Servidores","Serviços Públicos","Contratações Públicas"} <= areas
 
 
+def test_compras_in_discovers_normative_pages_not_supplier_pdfs():
+    source = next(item for item in SOURCES if item["id"] == "compras-in")
+    html = (
+        '<main>'
+        '<a href="/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-seges-mgi-no-129-de-30-de-marco-de-2026">IN 129/2026</a>'
+        '<a href="/compras/pt-br/temporario-compras-gov.br/fornecedor-1/defeso-guia-do-fornecedor-como-vender-para-governo.pdf">Guia do fornecedor</a>'
+        '</main>'
+    )
+    assert discover_links(html, source["urls"][0], source) == [
+        (
+            "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-seges-mgi-no-129-de-30-de-marco-de-2026",
+            "IN 129/2026",
+        )
+    ]
+
+
 def test_discovery_indexes_are_not_indexed_as_corpus_documents():
     index_ids = {"pl-discovery-camara","pl-discovery-lexml","pl-discovery-leis-2026","pl-discovery-leis-2025","pl-discovery-lc-atualizadas","pl-discovery-decretos-2026"}
     catalog = {item["id"]: item for item in SOURCES}
