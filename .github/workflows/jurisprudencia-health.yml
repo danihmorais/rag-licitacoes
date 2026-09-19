@@ -3,6 +3,21 @@ name: Saúde da jurisprudência oficial
 on:
   schedule:
     - cron: '15 7 * * 1'
+  pull_request:
+    paths:
+      - 'jurisprudencia/**'
+      - 'scripts/sources.py'
+      - 'tests/test_jurisprudencia*.py'
+      - 'requirements.txt'
+      - '.github/workflows/jurisprudencia-health.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'jurisprudencia/**'
+      - 'scripts/sources.py'
+      - 'requirements.txt'
+      - '.github/workflows/jurisprudencia-health.yml'
   workflow_dispatch:
 
 permissions:
