@@ -209,7 +209,7 @@ As consultas padrão abrangem temas como:
 - responsabilidade do Estado;
 - transparência e LGPD;
 - concessões e PPP;
-- temas específicos de São Paulo.
+- temas específicos do Estado de São Paulo.
 
 O limite é um **alvo total por tribunal**. As consultas são percorridas em lotes de até 25 resultados por tribunal e duplicidades são eliminadas por **document_key**.
 

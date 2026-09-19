@@ -46,16 +46,6 @@ NORMATIVE_HEADER_RE = re.compile(
     r'(?im)^\s*(?:LEI\s+COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLU[ÇC][ÃA]O|INSTRU[ÇC][ÃA]O\s+NORMATIVA|CONSTITUI[ÇC][ÃÃ]O)\b'
 )
 ARTICLE_RE = re.compile(r'(?im)\bArt(?:igo)?\.?\s+\d+[A-Za-zºª\-]*\b')
-RETIRED_SOURCE_IDS = {
-    'tcu', 'tcesp', 'stj-jurisprudencia', 'stj-teses', 'stj-repetitivos-iacs',
-    'stj-sumulas-anotadas', 'stj-legislacao-aplicada', 'stj-informativos',
-    'stf-repercussao-geral', 'stf-teses-rg', 'stf-tesauro', 'stf-jurisprudencia',
-    'tjsp-jurisprudencia', 'tjsp-saj-jurisprudencia', 'tcu-dados-jurisprudencia',
-    'tcu-jurisprudencia-pesquisa', 'tcm-sp-jurisprudencia',
-    'spm-decreto62100', 'spm-decreto62436', 'spm-decreto64863',
-    'spm-in-seges6-2023', 'spm-pgm38-2025',
-}
-
 
 def make_session():
     session = requests.Session()
@@ -357,24 +347,6 @@ def cleanup_source_cache(source_id, keep_document_ids):
 
 
 
-def purge_retired_source_cache():
-    removed = 0
-    if not CACHE.exists():
-        return removed
-    for sidecar in CACHE.glob('*.json'):
-        try:
-            meta = json.loads(sidecar.read_text(encoding='utf-8'))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if meta.get('source_id') not in RETIRED_SOURCE_IDS and meta.get('parent_source_id') not in RETIRED_SOURCE_IDS:
-            continue
-        sidecar.unlink(missing_ok=True)
-        sidecar.with_suffix('.txt').unlink(missing_ok=True)
-        removed += 1
-    return removed
-
-
-
 def sync_one(session, source, check=False, follow_links=True):
     last = ''
     for url in _source_urls(source):
@@ -438,10 +410,6 @@ def main():
         )
     ]
     session = make_session()
-    if not args.check:
-        removed_retired = purge_retired_source_cache()
-        if removed_retired:
-            print(f'Fontes jurisprudenciais legadas removidas do cache: {removed_retired}')
     failures = []
     ok = 0
     web_sync = None
