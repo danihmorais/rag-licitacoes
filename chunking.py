@@ -268,6 +268,7 @@ def build_structural_chunks(full_text, max_size, overlap):
         for child_index, (kind, child_ref, child_text, child_start) in enumerate(children):
             child_path = article_header + [f'{child_ref}']
             child_prefix = f"{' > '.join(article_header)} > {child_ref}\n{caput}".strip()
+            child_prefix = _fit_child_prefix(child_prefix, child_text, max_size)
             pieces = _split_child(child_text, child_prefix, max_size, overlap)
             position = 0
             for local_index, piece in enumerate(pieces):
