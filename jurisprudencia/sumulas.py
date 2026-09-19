@@ -13,10 +13,9 @@ from .schema import JurisprudenciaRecord
 
 TCU_SUMULA_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/{numero}"
 TCU_SUMULA_SEARCH_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/%2A/NUMERO%253A{numero}/sinonimos%253Dtrue"
+TCU_SUMULA_CATALOG_URL = "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula"
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 TCU_SUMULA_MAX_NUMBER = 400
-
-
 def _strip_markup(value: str) -> str:
     return re.sub(r"~~|\*\*", "", str(value or "")).strip()
 
@@ -62,6 +61,68 @@ def _thread_session():
     return session
 
 
+def _parse_tcu_sumulas_page(raw: bytes) -> list[JurisprudenciaRecord]:
+    soup = BeautifulSoup(raw, "html.parser")
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
+        tag.decompose()
+    text = "\n".join(line.strip() for line in soup.get_text("\n").splitlines() if line.strip())
+    records = []
+    pattern = re.compile(
+        r"(?is)S[ÚU]MULA\s+TCU\s+(\d+)\s*(?:\(([^)]+)\))?\s*:\s*(.+?)(?=\n\s*(?:Acórdão|Decisão)\b|\n\s*S[ÚU]MULA\s+TCU\s+\d+\s*(?:\(|:)|\Z)"
+    )
+    for match in pattern.finditer(text):
+        number = int(match.group(1))
+        status = clean_text(match.group(2) or "")
+        enunciado = _strip_markup(clean_text(match.group(3)))
+        if not enunciado:
+            continue
+        records.append(
+            JurisprudenciaRecord(
+                tribunal="TCU",
+                tipo_documento="sumula",
+                numero_processo=f"Súmula TCU {number}",
+                numero_sumula=str(number),
+                numero_decisao=str(number),
+                tipo_decisao="Súmula",
+                orgao_julgador="Plenário",
+                ementa=enunciado,
+                situacao=status or "VIGENTE",
+                url_oficial=TCU_SUMULA_CATALOG_URL,
+                origem="TCU — Repertório oficial de Súmulas",
+            )
+        )
+    return records
+
+
+def _pagination_links(raw: bytes, base_url: str) -> list[str]:
+    soup = BeautifulSoup(raw, "html.parser")
+    host = urlparse(base_url).netloc.casefold()
+    links = []
+    for anchor in soup.find_all("a", href=True):
+        href = urljoin(base_url, str(anchor["href"]).strip())
+        parsed = urlparse(href)
+        if parsed.scheme not in {"http", "https"} or parsed.netloc.casefold() != host:
+            continue
+        path = parsed.path.casefold()
+        query = parsed.query.casefold()
+        label = clean_text(anchor.get_text(" ", strip=True)).casefold()
+        aria = str(anchor.get("aria-label") or "").casefold()
+        title = str(anchor.get("title") or "").casefold()
+        pagination_hint = (
+            "todas-bases" in path
+            and (
+                "pb=sumula" in query
+                or "sumula" in label
+                or "sumula" in aria
+                or "sumula" in title
+                or bool(re.search(r"(?:pagina|page|offset)=?\d+", query))
+            )
+        )
+        if pagination_hint:
+            links.append(href.split("#", 1)[0])
+    return list(dict.fromkeys(links))
+
+
 def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
     session = _thread_session()
     urls = (
@@ -73,29 +134,36 @@ def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
         if response.status_code == 404:
             continue
         response.raise_for_status()
-        record = _tcu_record(numero, response.content)
-        if record is not None:
-            return record
+        records = _parse_tcu_sumulas_page(response.content)
+        for record in records:
+            if record.numero_sumula == str(numero):
+                return record
     return None
 
 
 def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
     session = session or make_session()
-    numbers = range(1, max_number + 1)
-    records: list[JurisprudenciaRecord] = []
-    workers = 4
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(_fetch_tcu_sumula, session, number): number for number in numbers}
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                record = future.result()
-            except (requests.RequestException, ValueError, RuntimeError) as exc:
-                number = futures[future]
-                print(f"  aviso: Súmula TCU {number} indisponível: {type(exc).__name__}: {exc}")
-                continue
-            if record is not None:
-                records.append(record)
-    records.sort(key=lambda item: int(item.numero_decisao or 0))
+    queue = [TCU_SUMULA_CATALOG_URL]
+    visited = set()
+    by_number = {}
+    while queue and len(visited) < 40:
+        url = queue.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+        response = session.get(url, timeout=(8, 60), allow_redirects=True)
+        response.raise_for_status()
+        page_records = _parse_tcu_sumulas_page(response.content)
+        for record in page_records:
+            number = int(record.numero_sumula or 0)
+            if 1 <= number <= max_number:
+                by_number[number] = record
+        for next_url in _pagination_links(response.content, response.url):
+            if next_url not in visited:
+                queue.append(next_url)
+        if not page_records and len(visited) > 1:
+            break
+    records = [by_number[number] for number in sorted(by_number)]
     return records
 
 
