@@ -80,6 +80,22 @@ def test_web_article_url_policy_avoids_archive_and_accepts_article_paths():
     assert not _is_web_article_url(mig, "https://www.migalhas.com.br/tour_juridico")
 
 
+def test_web_article_url_policy_rejects_static_assets_and_image_directories():
+    source = next(item for item in SOURCES if item["id"] == "web-licitacoes-publicas-blog")
+    for url in (
+        "https://licitacoespublicas.blog.br/imagens/comentarios_pp005.png",
+        "https://licitacoespublicas.blog.br/imagens/consultoria_15.png",
+        "https://licitacoespublicas.blog.br/imagens/logo_LP_600x151.png",
+        "https://licitacoespublicas.blog.br/assets/site.js",
+        "https://licitacoespublicas.blog.br/arquivo.pdf",
+    ):
+        assert not _is_web_article_url(source, url)
+    assert _is_web_article_url(
+        source,
+        "https://licitacoespublicas.blog.br/licitacoes/dispensa-eletronica-exemplo/",
+    )
+
+
 def test_web_sources_have_date_floor_and_bounded_corpus():
     web = [item for item in SOURCES if item.get("source_type") == "web_articles"]
     assert {item["id"] for item in web} == {
