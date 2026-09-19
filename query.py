@@ -208,8 +208,8 @@ def embedding_kwargs():
 def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
     if dense_vector is None:
         query_embedding_text = 'query: ' + query
-    validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
-    dense_vector = list(dense.embed([query_embedding_text]))[0]
+        validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
+        dense_vector = list(dense.embed([query_embedding_text]))[0]
     sparse_vector = list(sparse.embed([query]))[0]
     return client.query_points(
         collection_name=config.COLLECTION_NAME,
@@ -407,10 +407,10 @@ def _normalize_query_text(value):
 def _query_jurisdiction(query, filters=None):
     filters = filters or {}
     explicit = filters.get('jurisdicao')
-    if isinstance(explicit, str) and explicit in {'federal', 'estadual_sp', 'municipal_sp'}:
+    if isinstance(explicit, str) and explicit in {'federal', 'estadual_sp'}:
         return explicit
     if isinstance(explicit, list):
-        values = [item for item in explicit if item in {'federal', 'estadual_sp', 'municipal_sp'}]
+        values = [item for item in explicit if item in {'federal', 'estadual_sp'}]
         if len(values) == 1:
             return values[0]
     text = _normalize_query_text(query)
@@ -420,9 +420,7 @@ def _query_jurisdiction(query, filters=None):
              'tce-sp' in text or 'pge-sp' in text)
     federal = ('federal' in text or 'uniao' in text or 'tcu' in text or 'stj' in text or
                'stf' in text or 'agu' in text or 'pncp' in text or 'compras.gov.br' in text)
-    if municipal and not state:
-        return 'municipal_sp'
-    if state and not municipal:
+    if state and not federal:
         return 'estadual_sp'
     if federal and not municipal and not state:
         return 'federal'
