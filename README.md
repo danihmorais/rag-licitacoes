@@ -145,7 +145,8 @@ O corpus federal inclui, entre outros:
 - Direito Financeiro e responsabilidade fiscal;
 - assinaturas eletrônicas;
 - anticorrupção e integridade;
-- contratação de serviços sob execução indireta e técnica e preço;
+- contratação de serviços sob execução indireta, pesquisa de preços, ETP, Termo de Referência e técnica e preço;
+- assinaturas eletrônicas, anticorrupção, integridade e atualização anual dos valores da Lei nº 14.133/2021;
 - transparência, LAI e LGPD;
 - governo digital;
 - servidores públicos;
@@ -173,7 +174,8 @@ O catálogo estadual inclui, entre outros:
 - integridade e responsabilização;
 - Compras SP;
 - Marketplace.SP;
-- orientações e pareceres da PGE-SP.
+- orientações e pareceres da PGE-SP;
+- CADIN Estadual e sua regulamentação.
 
 ## Jurisprudência e controle
 
