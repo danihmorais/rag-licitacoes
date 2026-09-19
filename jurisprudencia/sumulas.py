@@ -295,8 +295,7 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     soup = BeautifulSoup(response.content, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
         tag.decompose()
-    return _parse_tcesp_sumulas_text(soup.get_text("
-"))
+    return _parse_tcesp_sumulas_text(soup.get_text("\n"))
 
 
 def smoke_test_sumulas() -> None:
