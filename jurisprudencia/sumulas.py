@@ -294,7 +294,13 @@ def smoke_test_sumulas() -> None:
     if numbers != expected:
         missing = sorted(expected - numbers)
         raise RuntimeError(f"TCESP: repertório de súmulas incompleto no portal oficial; ausentes={missing}")
-    if len(tcu_records) < TCU_SUMULA_MIN_RECORDS:\n        raise RuntimeError(f"TCU: catálogo retornou apenas {len(tcu_records)} súmulas; esperado pelo menos {TCU_SUMULA_MIN_RECORDS}.")\n    print(f"Smoke súmulas OK: TCU={len(tcu_records)} | TCU-chave=222,247,259,263,292 | TCESP={len(records)}")
+    if len(tcu_records) < TCU_SUMULA_MIN_RECORDS:
+        raise RuntimeError(
+            f"TCU: catálogo retornou apenas {len(tcu_records)} súmulas; esperado pelo menos {TCU_SUMULA_MIN_RECORDS}."
+        )
+    print(
+        f"Smoke súmulas OK: TCU={len(tcu_records)} | TCU-chave=222,247,259,263,292 | TCESP={len(records)}"
+    )
 
 
 def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRecord]]:
