@@ -55,9 +55,9 @@ def _text_density(text):
     return len(value), len(substantive)
 
 
-def _valid_article_text(text):
+def _valid_article_text(text, min_substantive=6):
     chars, substantive = _text_density(text)
-    return chars >= 800 and substantive >= 6
+    return chars >= 800 and substantive >= min_substantive
 
 
 def _parse_web_date(value):
@@ -171,6 +171,13 @@ def extract_web_pdf(raw_pdf, final_url):
         title = re.sub(r"[_-]+", " ", re.sub(r"\\.[A-Za-z0-9]+$", "", name)).strip()
     creation = metadata.get("/CreationDate") or metadata.get("CreationDate")
     date_publicacao = _parse_web_date(str(creation or "")) or _parse_web_date(final_url)
+    if not date_publicacao and creation:
+        match = re.search(r"D:(20\d{2})(\d{2})(\d{2})", str(creation))
+        if match:
+            try:
+                date_publicacao = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            except ValueError:
+                pass
     return {
         "title": html.unescape(title),
         "date_publicacao": date_publicacao,
@@ -483,8 +490,10 @@ def sync_web_articles(session, source, check=False):
         try:
             kind, final, raw, _ = fetch(session, candidate)
             article = extract_web_pdf(raw, final) if kind == "pdf" else extract_web_article(raw, final)
-            if not article["title"] or not _valid_article_text(article["texto"]) or not article["date_publicacao"]:
+            min_substantive = 1 if kind == "pdf" else 6
+            if not article["title"] or not _valid_article_text(article["texto"], min_substantive=min_substantive) or not article["date_publicacao"]:
                 continue
+            article["_kind"] = "web_pdf" if kind == "pdf" else "web_article"
             if article["date_publicacao"] < min_date:
                 continue
             if not _web_topic_matches(source, article):
@@ -519,7 +528,7 @@ def sync_web_articles(session, source, check=False):
             write_cache(
                 source,
                 article["url"],
-                "web_article",
+                article.get("_kind", "web_article"),
                 article["_raw"],
                 _article_cache_text(source, article),
                 document_id,
