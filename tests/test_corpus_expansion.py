@@ -78,3 +78,27 @@ def test_batch_deduplicates_same_record_across_queries(monkeypatch, tmp_path: Pa
     output = batch.collect_batch(('tcu',), ('licitação', 'pregão'), 2, output_dir=tmp_path)
     assert len(calls) == 2
     assert len(output) == 1
+
+
+def test_essential_legal_sources_cover_requested_federal_and_state_rules():
+    sources = {item['id']: item for item in SOURCES}
+    required = {
+        'decreto10922', 'decreto11317', 'decreto11871', 'decreto12343', 'decreto12807',
+        'decreto11246', 'decreto11462', 'in67', 'in65', 'in58', 'in81', 'in5-2017',
+        'in98-2022', 'in2-2023', 'lc123', 'lindb', 'lei13655', 'lei12846', 'lei14063',
+        'sp-lei10177', 'sp-lei12799', 'sp-decreto53455', 'sp-pca', 'sp-precos',
+        'sp-etp', 'sp-tr', 'sp-agentes', 'sp-direta', 'sp-leilao',
+    }
+    assert required <= sources
+    for source_id in ('decreto10922', 'decreto11317', 'decreto11871', 'decreto12343'):
+        assert sources[source_id]['status'] == 'historico'
+        assert sources[source_id]['revogado'] is True
+    assert sources['decreto12807']['required'] is True
+    assert sources['in2-2023']['title'].startswith('IN SEGES/MGI nº 2/2023')
+    assert sources['sp-lei12799']['required'] is True
+
+
+def test_misclassified_state_decree_numbers_are_not_in_catalog():
+    titles = ' '.join(item['title'] for item in SOURCES)
+    assert '67.607/2023' not in titles
+    assert '68.423/2024' not in titles
