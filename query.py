@@ -414,15 +414,13 @@ def _query_jurisdiction(query, filters=None):
         if len(values) == 1:
             return values[0]
     text = _normalize_query_text(query)
-    municipal = ('municipio' in text or 'municipal' in text or 'prefeitura' in text or
-                 'tcm-sp' in text or 'tcms' in text or 'cidade de sao paulo' in text)
     state = ('estadual' in text or 'estado de sao paulo' in text or 'tcesp' in text or
              'tce-sp' in text or 'pge-sp' in text)
     federal = ('federal' in text or 'uniao' in text or 'tcu' in text or 'stj' in text or
                'stf' in text or 'agu' in text or 'pncp' in text or 'compras.gov.br' in text)
     if state and not federal:
         return 'estadual_sp'
-    if federal and not municipal and not state:
+    if federal and not state:
         return 'federal'
     return None
 
