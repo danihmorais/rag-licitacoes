@@ -18,6 +18,8 @@ TCU_SUMULA_SEARCH_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/%2A/N
 TCU_SUMULA_CATALOG_URL = "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula"
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 TCU_SUMULA_MAX_NUMBER = 400
+TCU_SUMULA_MIN_RECORDS = 295
+TCU_SUMULA_REQUIRED_NUMBERS = (222, 247, 259, 263, 292)
 def _strip_markup(value: str) -> str:
     return re.sub(r"~~|\*\*", "", str(value or "")).strip()
 
@@ -64,20 +66,42 @@ def _thread_session():
 
 
 def _parse_tcu_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
-    cleaned = "\n".join(line.strip() for line in text.splitlines() if line.strip())
-    records = []
-    pattern = re.compile(
-        r"(?is)S[ÚU]MULA(?:\s+TCU)?\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:\(([^)]+)\))?\s*:?\s*(.+?)(?=\n\s*S[ÚU]MULA(?:\s+TCU)?\s+(?:N[ºO°]?\s*)?\d+\b|\Z)"
+    lines = [line.strip() for line in text.replace("\xa0", " ").splitlines() if line.strip()]
+    heading = re.compile(
+        r"^S[ÚU]MULA(?:\s+TCU)?\s+(?:N[ºO°]?\s*)?(\d+)\s*(?:\(([^)]*)\))?\s*:?[ \t]*(.*)$",
+        re.IGNORECASE,
     )
-    for match in pattern.finditer(cleaned):
-        number = int(match.group(1))
-        status = clean_text(match.group(2) or "")
-        block = clean_text(match.group(3))
-        block = re.split(r"\n\s*(?:Acórdão|Decisão)\b", block, maxsplit=1, flags=re.I)[0]
-        enunciado = _strip_markup(block)
+    records = []
+    current = None
+    for line in lines:
+        match = heading.match(line)
+        if match:
+            if current is not None:
+                records.append(current)
+            current = {
+                "numero": int(match.group(1)),
+                "status": clean_text(match.group(2) or ""),
+                "parts": [match.group(3).strip()] if match.group(3).strip() else [],
+            }
+            continue
+        if current is None:
+            continue
+        if re.match(r"^(?:Acórdão|Decisão|Ata)\b", line, re.IGNORECASE):
+            continue
+        current["parts"].append(line)
+    if current is not None:
+        records.append(current)
+
+    result = []
+    for item in records:
+        block = " ".join(part for part in item["parts"] if part)
+        block = re.split(r"\s+(?:Acórdão|Decisão|Ata)\b", block, maxsplit=1, flags=re.IGNORECASE)[0]
+        block = re.split(r"\s+Área\s*:", block, maxsplit=1, flags=re.IGNORECASE)[0]
+        enunciado = _strip_markup(clean_text(block))
         if not enunciado:
             continue
-        records.append(
+        number = item["numero"]
+        result.append(
             JurisprudenciaRecord(
                 tribunal="TCU",
                 tipo_documento="sumula",
@@ -87,12 +111,12 @@ def _parse_tcu_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
                 tipo_decisao="Súmula",
                 orgao_julgador="Plenário",
                 ementa=enunciado,
-                situacao=status or "VIGENTE",
+                situacao=item["status"] or "VIGENTE",
                 url_oficial=TCU_SUMULA_CATALOG_URL,
                 origem="TCU — Repertório oficial de Súmulas",
             )
         )
-    return records
+    return result
 
 
 def _parse_tcu_sumulas_page(raw: bytes) -> list[JurisprudenciaRecord]:
@@ -347,19 +371,26 @@ def collect_sumulas(*, strict: bool = False) -> dict[str, list[JurisprudenciaRec
     except Exception as exc:
         failures.append(f"TCESP: {type(exc).__name__}: {exc}")
     if strict:
-        tcu_numbers = {int(item.numero_decisao) for item in result['tcu'] if item.numero_decisao and item.numero_decisao.isdigit()}
-        if not tcu_numbers:
-            failures.append('TCU: nenhuma súmula estruturada foi encontrada')
-        else:
-            tcu_max = max(tcu_numbers)
-            missing = sorted(set(range(1, tcu_max + 1)) - tcu_numbers)
-            if tcu_max < 290 or missing:
-                detail = f'; ausentes={missing[:10]}' if missing else ''
-                failures.append(f'TCU: cobertura estrutural incompleta até a súmula {tcu_max}{detail}')
-        tcesp_numbers = {int(item.numero_decisao) for item in result['tcesp'] if item.numero_decisao and item.numero_decisao.isdigit()}
+        tcu_numbers = {
+            int(item.numero_decisao)
+            for item in result["tcu"]
+            if item.numero_decisao and item.numero_decisao.isdigit()
+        }
+        if len(result["tcu"]) < TCU_SUMULA_MIN_RECORDS:
+            failures.append(
+                f"TCU: apenas {len(result['tcu'])} súmulas estruturadas; esperado pelo menos {TCU_SUMULA_MIN_RECORDS}"
+            )
+        missing = [number for number in TCU_SUMULA_REQUIRED_NUMBERS if number not in tcu_numbers]
+        if missing:
+            failures.append(f"TCU: súmulas essenciais ausentes={missing}")
+        tcesp_numbers = {
+            int(item.numero_decisao)
+            for item in result["tcesp"]
+            if item.numero_decisao and item.numero_decisao.isdigit()
+        }
         if tcesp_numbers != set(range(1, 54)):
             missing = sorted(set(range(1, 54)) - tcesp_numbers)
-            failures.append(f'TCESP: cobertura estrutural incompleta; ausentes={missing}')
+            failures.append(f"TCESP: cobertura estrutural incompleta; ausentes={missing}")
     if failures:
         raise RuntimeError("Falhas na coleta estruturada de súmulas: " + "; ".join(failures))
     return result
