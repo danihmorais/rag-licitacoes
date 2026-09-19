@@ -187,3 +187,12 @@ def test_tcu_sumula_collection_contract_uses_current_catalog_expectations():
     assert TCU_SUMULA_MIN_RECORDS == 295
     assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
     assert TCU_SUMULA_CATALOG_URL.endswith("?pb=sumula")
+
+
+def test_tcesp_sumula_parser_accepts_plain_number_and_en_dash():
+    from jurisprudencia.sumulas import _parse_tcesp_sumulas_text
+    records = _parse_tcesp_sumulas_text(
+        "SÚMULA 53 – Enunciado da Súmula 53.\nTexto complementar."
+    )
+    assert len(records) == 1
+    assert records[0].numero_sumula == "53"
