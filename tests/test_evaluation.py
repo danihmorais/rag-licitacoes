@@ -24,6 +24,17 @@ def point(source_id, jurisdicao='federal', effective_from=None, effective_to=Non
     )
 
 
+def test_reference_dataset_matches_source_catalog():
+    from scripts.sources import SOURCE_BY_ID
+    cases = load_cases(DEFAULT_DATASET)
+    expected = {
+        source_id
+        for case in cases
+        for source_id in case['expected_source_ids']
+    }
+    assert expected <= set(SOURCE_BY_ID)
+
+
 def test_reference_dataset_is_loadable_and_nonempty():
     cases = load_cases(DEFAULT_DATASET)
     assert len(cases) >= 10
