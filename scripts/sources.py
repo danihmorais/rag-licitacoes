@@ -282,7 +282,6 @@ SOURCES.extend([
         discovery_max_pages=100,
         sitemap_urls=(
             "https://www.novaleilicitacao.com.br/wp-sitemap.xml",
-            "https://www.novaleilicitacao.com.br/sitemap_index.xml",
         ),
     ),
     _web_article(
