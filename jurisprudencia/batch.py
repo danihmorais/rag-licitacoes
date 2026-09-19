@@ -147,6 +147,7 @@ def collect_batch(
                     continue
                 output.append(record)
 
+    sumula_save_failures = []
     persisted = []
     for record in output:
         tribunal = record.tribunal.casefold()
@@ -161,9 +162,10 @@ def collect_batch(
                 record=record,
                 path=dlq_path,
             )
-            counts[tribunal] = max(0, counts.get(tribunal, 0) - 1)
             if str(record.tipo_decisao or '').strip().casefold() == 'súmula':
                 sumula_save_failures.append(tribunal)
+            else:
+                counts[tribunal] = max(0, counts.get(tribunal, 0) - 1)
             continue
         persisted.append(record)
     output = persisted
