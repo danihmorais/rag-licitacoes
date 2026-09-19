@@ -7,6 +7,9 @@ def test_gpu_requirements_are_canonical():
     assert "fastembed-gpu==0.8.0" in lines
     assert "fastembed==0.8.0" not in lines
     assert not any(line.startswith("onnxruntime==") for line in lines)
+    assert "PyMuPDF==1.28.2" in lines
+    assert "pytesseract==0.3.13" in lines
+    assert any(line.startswith("Pillow") for line in lines)
 
 def test_gpu_requirements_do_not_mix_cpu_fastembed_stack():
     from pathlib import Path
