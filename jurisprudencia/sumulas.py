@@ -200,7 +200,7 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
                 if next_index is None:
                     break
                 before_signature = body_text[-4000:]
-                page.locator("a,button").nth(next_index).click()
+                page.locator("a,button").nth(next_index).click(force=True)
                 try:
                     page.wait_for_function(
                         "(oldText) => document.body && document.body.innerText.slice(-4000) !== oldText",
