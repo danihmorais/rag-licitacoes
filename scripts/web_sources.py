@@ -22,7 +22,14 @@ WEB_EXCLUDED_PATH_PARTS = (
     "/page/", "/category/", "/tag/", "/autor/", "/author/", "/feed",
     "/wp-json/", "/wp-admin/", "/wp-content/", "/comments/", "/comment-page-",
     "/buscar", "/search", "/login", "/cadastro", "/sobre", "/contato",
-    "/politica-de-privacidade", "/termos", "/caderno/",
+    "/politica-de-privacidade", "/termos", "/caderno/", "/imagens/",
+)
+
+WEB_STATIC_EXTENSIONS = (
+    ".7z", ".avi", ".bmp", ".css", ".csv", ".doc", ".docx", ".gif", ".gz",
+    ".ico", ".jpeg", ".jpg", ".js", ".json", ".m4a", ".mp3", ".mp4",
+    ".mpeg", ".png", ".svg", ".tar", ".tif", ".tiff", ".webm", ".webp",
+    ".woff", ".woff2", ".xls", ".xlsx", ".zip",
 )
 
 WEB_ADMIN_EXCLUDE = (
@@ -240,6 +247,8 @@ def _is_web_article_url(source, url):
     if parsed.scheme not in {"http", "https"}:
         return False
     if any(part in low for part in WEB_EXCLUDED_PATH_PARTS):
+        return False
+    if low.endswith(WEB_STATIC_EXTENSIONS):
         return False
     source_id = source.get("id")
     if source_id == "web-migalhas":
