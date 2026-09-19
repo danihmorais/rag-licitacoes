@@ -8,6 +8,7 @@ from pathlib import Path
 
 import config
 from .collector import TRIBUNALS, collect, save_record
+from .sumulas import collect_sumulas
 from .queries import DEFAULT_QUERIES, parse_queries
 
 
@@ -116,6 +117,33 @@ def collect_batch(
                 if tribunal_key in counts:
                     counts[tribunal_key] += 1
 
+    try:
+        sumulas = collect_sumulas(strict=strict)
+    except Exception as exc:
+        if strict:
+            raise
+        print(f"Aviso: coleta de súmulas terminou com falha: {type(exc).__name__}: {exc}")
+        sumulas = {"tcu": [], "tcesp": []}
+    for tribunal in ("tcu", "tcesp"):
+        for record in sumulas.get(tribunal, []):
+            key = record.document_key
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                record.validate()
+            except Exception as exc:
+                _write_dlq(
+                    tribunal=tribunal,
+                    query="<sumulas>",
+                    stage="validate",
+                    error=exc,
+                    record=record,
+                    path=dlq_path,
+                )
+                continue
+            output.append(record)
+
     persisted = []
     for record in output:
         tribunal = record.tribunal.casefold()
@@ -150,6 +178,7 @@ def collect_batch(
     print('Registros por tribunal: ' + ', '.join(
         f'{tribunal}={counts.get(tribunal, 0)}' for tribunal in tribunals
     ))
+    print(f'Súmulas estruturadas: TCU={len(sumulas.get("tcu", []))} | TCESP={len(sumulas.get("tcesp", []))}')
     return output
 
 
