@@ -12,6 +12,7 @@ from .collector import clean_text, make_session
 from .schema import JurisprudenciaRecord
 
 TCU_SUMULA_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/{numero}"
+TCU_SUMULA_SEARCH_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/%2A/NUMERO%253A{numero}/sinonimos%253Dtrue"
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 TCU_SUMULA_MAX_NUMBER = 400
 
@@ -62,12 +63,20 @@ def _thread_session():
 
 
 def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
-    url = TCU_SUMULA_URL.format(numero=numero)
-    response = _thread_session().get(url, timeout=(8, 45), allow_redirects=True)
-    if response.status_code == 404:
-        return None
-    response.raise_for_status()
-    return _tcu_record(numero, response.content)
+    session = _thread_session()
+    urls = (
+        TCU_SUMULA_URL.format(numero=numero),
+        TCU_SUMULA_SEARCH_URL.format(numero=numero),
+    )
+    for url in urls:
+        response = session.get(url, timeout=(8, 45), allow_redirects=True)
+        if response.status_code == 404:
+            continue
+        response.raise_for_status()
+        record = _tcu_record(numero, response.content)
+        if record is not None:
+            return record
+    return None
 
 
 def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
