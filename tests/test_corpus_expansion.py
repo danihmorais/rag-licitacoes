@@ -81,7 +81,7 @@ def test_batch_deduplicates_same_record_across_queries(monkeypatch, tmp_path: Pa
 
 
 def test_essential_legal_sources_cover_requested_federal_and_state_rules():
-    sources = {item['id']: item for item in SOURCES}
+    sources = {item['id'] for item in SOURCES}
     required = {
         'decreto10922', 'decreto11317', 'decreto11871', 'decreto12343', 'decreto12807',
         'decreto11246', 'decreto11462', 'in67', 'in65', 'in58', 'in81', 'in5-2017',
