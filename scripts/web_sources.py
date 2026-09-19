@@ -407,6 +407,7 @@ def sync_web_articles(session, source, check=False):
     from scripts.sync_sources import cleanup_source_cache, fetch, slug, write_cache
 
     target = int(source.get("max_documents", 250))
+    fetch_timeout = source.get("http_timeout")
     min_date = _parse_web_date(source.get("min_publication_date")) or date(2021, 1, 1)
     candidates = []
     seen = set()
@@ -421,7 +422,7 @@ def sync_web_articles(session, source, check=False):
             continue
         visited_pages.add(page_url)
         try:
-            _, final, raw, _ = fetch(session, page_url)
+            _, final, raw, _ = fetch(session, page_url, timeout=fetch_timeout)
             successful_discoveries += 1
         except Exception as exc:
             print(f"  aviso: descoberta {page_url} falhou: {type(exc).__name__}: {exc}")
@@ -454,7 +455,7 @@ def sync_web_articles(session, source, check=False):
             if len(candidates) >= target * 6:
                 break
             try:
-                _, _, raw, _ = fetch(session, sitemap_url)
+                _, _, raw, _ = fetch(session, sitemap_url, timeout=fetch_timeout)
                 successful_discoveries += 1
             except Exception as exc:
                 print(f"  aviso: sitemap {sitemap_url} falhou: {type(exc).__name__}: {exc}")
@@ -471,7 +472,7 @@ def sync_web_articles(session, source, check=False):
                 if len(candidates) >= target * 6:
                     break
                 try:
-                    _, _, nested_raw, _ = fetch(session, nested_url)
+                    _, _, nested_raw, _ = fetch(session, nested_url, timeout=fetch_timeout)
                     successful_discoveries += 1
                 except Exception:
                     continue
@@ -491,7 +492,7 @@ def sync_web_articles(session, source, check=False):
             break
         fetched += 1
         try:
-            kind, final, raw, _ = fetch(session, candidate)
+            kind, final, raw, _ = fetch(session, candidate, timeout=fetch_timeout)
             article = extract_web_pdf(raw, final) if kind == "pdf" else extract_web_article(raw, final)
             min_substantive = 1 if kind == "pdf" else 6
             if not article["title"] or not _valid_article_text(article["texto"], min_substantive=min_substantive) or not article["date_publicacao"]:

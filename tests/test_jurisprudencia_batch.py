@@ -33,6 +33,7 @@ def test_collect_batch_treats_limit_as_total_per_tribunal(monkeypatch, tmp_path)
         output_dir=tmp_path,
         strict=True,
         min_records_per_tribunal=8,
+        include_sumulas=False,
     )
 
     assert len(records) == 16
@@ -67,9 +68,44 @@ def test_collect_batch_strict_enforces_minimum_per_tribunal(monkeypatch, tmp_pat
             output_dir=tmp_path,
             strict=True,
             min_records_per_tribunal=2,
+            include_sumulas=False,
         )
     except RuntimeError as exc:
         assert "tcu=1" in str(exc)
         assert "stj=1" in str(exc)
     else:
         raise AssertionError("a coleta estrita deveria falhar abaixo do mínimo por tribunal")
+
+
+def test_collect_batch_does_not_fetch_unrequested_sumula_tribunals(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_collect(tribunals, query, limit, **kwargs):
+        return [
+            JurisprudenciaRecord(
+                tribunal=tribunals[0].upper(),
+                numero_processo="stj-1",
+                ementa="Licitação administrativa.",
+                url_oficial="https://example.test/stj/1",
+            )
+        ]
+
+    def fake_sumulas(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("TCU/TCESP não deveriam ser coletados")
+
+    monkeypatch.setattr("jurisprudencia.batch.collect", fake_collect)
+    monkeypatch.setattr("jurisprudencia.batch.collect_sumulas", fake_sumulas)
+
+    records = collect_batch(
+        ("stj",),
+        ("licitação",),
+        1,
+        output_dir=tmp_path,
+        strict=True,
+        min_records_per_tribunal=1,
+        include_sumulas=True,
+    )
+
+    assert len(records) == 1
+    assert calls == []

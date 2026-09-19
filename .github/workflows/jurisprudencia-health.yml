@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: jurisprudencia-health
+  group: jurisprudencia-health-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
           - "licitação"
           - "Lei 14.133 licitação contrato administrativo"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v7
@@ -52,7 +52,10 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Testar jurisprudência oficial em tempo real
         run: |
-          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "${{ matrix.query }}" --limit 10 --min-records-per-tribunal 5 --strict
+          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "${{ matrix.query }}" --limit 10 --min-records-per-tribunal 5 --strict --without-sumulas
+      - name: Testar catálogo oficial de súmulas
+        run: |
+          python -m jurisprudencia.sumulas --health
       - name: Publicar cache da coleta quando houver falha
         if: failure()
         uses: actions/upload-artifact@v6

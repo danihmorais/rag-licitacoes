@@ -143,6 +143,10 @@ O corpus federal inclui, entre outros:
 - pesquisa de preços, ETP e Termo de Referência;
 - concessões e PPP;
 - Direito Financeiro e responsabilidade fiscal;
+- assinaturas eletrônicas;
+- anticorrupção e integridade;
+- contratação de serviços sob execução indireta, pesquisa de preços, ETP, Termo de Referência e técnica e preço;
+- atualização anual dos valores da Lei nº 14.133/2021;
 - transparência, LAI e LGPD;
 - governo digital;
 - servidores públicos;
@@ -170,11 +174,14 @@ O catálogo estadual inclui, entre outros:
 - integridade e responsabilização;
 - Compras SP;
 - Marketplace.SP;
-- orientações e pareceres da PGE-SP.
+- orientações e pareceres da PGE-SP;
+- CADIN Estadual e sua regulamentação.
 
 ## Jurisprudência e controle
 
 A jurisprudência possui pipeline próprio em **jurisprudencia/**.
+
+Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual a partir dos catálogos oficiais consolidados (o catálogo do TCU atualmente informa 295 registros), com normalização das variações de cabeçalho dos enunciados. O catálogo do TCU usa Chromium como fallback quando a aplicação renderizada não entrega o enunciado no HTML inicial. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
 
 O conjunto padrão utiliza:
 
@@ -715,7 +722,7 @@ Os workflows são separados por responsabilidade:
 
 - **ci.yml**: testes determinísticos e verificação de sintaxe;
 - **sync-sources.yml**: health-check das fontes jurídicas;
-- **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência;
+- **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência e dos catálogos oficiais de súmulas;
 - **legal-ingestion.yml**: execução do pipeline de ingestão.
 
 O CI cobre regressões de chunking, filtros, autoridade e jurisdição, catálogo de fontes, temporalidade, cache, versionamento, sincronização, adaptadores de jurisprudência, recuperação e integração OpenAI-compatible.

@@ -60,7 +60,9 @@ class JurisprudenciaRecord(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True, validate_assignment=True)
 
     tribunal: str = ""
+    tipo_documento: str | None = None
     numero_processo: str = ""
+    numero_sumula: str | None = None
     orgao_julgador: str | None = None
     relator: str | None = None
     data: str | None = None
@@ -90,6 +92,7 @@ class JurisprudenciaRecord(BaseModel):
             return raw
         data = dict(raw)
         _coalesce(data, "tribunal", "TRIBUNAL", "siglaTribunal", "tribunal_sigla", "orgaoTribunal")
+        _coalesce(data, "tipo_documento", "TIPO_DOCUMENTO", "tipoDocumento", "document_type")
         _coalesce(
             data,
             "numero_processo",
@@ -103,6 +106,7 @@ class JurisprudenciaRecord(BaseModel):
             "key",
             "id",
         )
+        _coalesce(data, "numero_sumula", "NUMSUMULA", "numeroSumula", "sumula_numero")
         _coalesce(data, "numero_decisao", "NUMACORDAO", "numeroAcordao", "NUMACORDAOINT", "numeroDecisao", "acordao_numero")
         _coalesce(data, "orgao_julgador", "COLEGIADO", "colegiado", "CODCOLEGIADO", "orgaoJulgador", "nomeOrgaoJulgador")
         _coalesce(data, "relator", "RELATOR", "relator_nome", "ministroRelator", "relator_processo_nome", "relator_acordao_nome")
@@ -130,8 +134,10 @@ class JurisprudenciaRecord(BaseModel):
         process = str(self.numero_processo or "").strip()
         if tribunal not in {"TCU", "TCESP", "STJ", "STF", "TJSP"}:
             errors.append(f"tribunal inválido: {self.tribunal!r}")
-        if not process:
+        if not process and str(self.tipo_documento or '').casefold() != 'sumula':
             errors.append("numero_processo é obrigatório")
+        if str(self.tipo_documento or '').casefold() == 'sumula' and not str(self.numero_sumula or '').strip():
+            errors.append("numero_sumula é obrigatório para súmula")
         if not isinstance(self.assunto, list):
             errors.append("assunto deve ser lista")
         if not isinstance(self.partes, list):
@@ -146,7 +152,9 @@ class JurisprudenciaRecord(BaseModel):
         self.validate()
         parts = [
             self.tribunal or "",
+            self.tipo_documento or "",
             self.numero_processo or "",
+            self.numero_sumula or "",
             self.numero_decisao or "",
             self.tipo_decisao or "",
         ]
@@ -180,10 +188,13 @@ class JurisprudenciaRecord(BaseModel):
 
     def to_index_text(self) -> str:
         self.validate()
-        lines = [
-            f"TRIBUNAL: {self.tribunal}",
-            f"PROCESSO: {self.numero_processo}",
-        ]
+        lines = [f"TRIBUNAL: {self.tribunal}"]
+        if self.tipo_documento:
+            lines.append(f"TIPO DOCUMENTO: {self.tipo_documento}")
+        if self.numero_sumula:
+            lines.append(f"SÚMULA: {self.numero_sumula}")
+        if self.numero_processo:
+            lines.append(f"PROCESSO: {self.numero_processo}")
         if self.numero_decisao:
             lines.append(f"DECISÃO/ACÓRDÃO: {self.numero_decisao}")
         if self.tipo_decisao:
