@@ -276,6 +276,57 @@ def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
     return [by_number[number] for number in sorted(by_number)]
 
 
+def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRecord]:
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
+    except ImportError as exc:
+        raise RuntimeError("Playwright é necessário para renderizar o catálogo de Súmulas do TCESP.") from exc
+
+    by_number = {}
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1600, "height": 1200})
+        try:
+            page.goto(TCESP_SUMULA_URL, wait_until="domcontentloaded", timeout=60000)
+            visited_signatures = set()
+            for _ in range(max_pages):
+                try:
+                    page.wait_for_load_state("networkidle", timeout=10000)
+                except PlaywrightTimeoutError:
+                    pass
+                body_text = page.locator("body").inner_text(timeout=15000)
+                signature = re.sub(r"\s+", " ", body_text)
+                if signature in visited_signatures:
+                    break
+                visited_signatures.add(signature)
+                for record in _parse_tcesp_sumulas_text(body_text):
+                    by_number[int(record.numero_sumula)] = record
+                expected = set(range(1, 54))
+                if expected.issubset(by_number):
+                    break
+
+                next_locator = page.get_by_role("button", name=re.compile(r"Próxima página|Próximo", re.I)).last
+                if next_locator.count() == 0:
+                    break
+                if await next_locator.get_attribute("disabled") is not None:
+                    break
+                if await next_locator.get_attribute("aria-disabled") == "true":
+                    break
+                before = signature
+                next_locator.click(force=True)
+                try:
+                    page.wait_for_function(
+                        "(oldText) => document.body && document.body.innerText.replace(/\\s+/g, ' ').trim() !== oldText",
+                        arg=before,
+                        timeout=15000,
+                    )
+                except PlaywrightTimeoutError:
+                    pass
+        finally:
+            browser.close()
+    return [by_number[number] for number in sorted(by_number)]
+
+
 def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     session = session or make_session()
     response = session.get(TCESP_SUMULA_URL, timeout=(8, 45), allow_redirects=True)
@@ -283,7 +334,16 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     soup = BeautifulSoup(response.content, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "form", "aside"]):
         tag.decompose()
-    return _parse_tcesp_sumulas_text(soup.get_text("\n"))
+    records = _parse_tcesp_sumulas_text(soup.get_text("\n"))
+    numbers = {
+        int(record.numero_sumula)
+        for record in records
+        if record.numero_sumula and record.numero_sumula.isdigit()
+    }
+    if len(numbers) < 53 or 53 not in numbers:
+        records = _collect_tcesp_sumulas_browser()
+    return records
+
 
 
 def smoke_test_sumulas() -> None:
