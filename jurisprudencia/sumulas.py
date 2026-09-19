@@ -13,6 +13,7 @@ from .schema import JurisprudenciaRecord
 
 TCU_SUMULA_URL = "https://pesquisa.apps.tcu.gov.br/resultado/sumula/{numero}"
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
+TCU_SUMULA_MAX_NUMBER = 400
 
 
 def _strip_markup(value: str) -> str:
@@ -69,7 +70,7 @@ def _fetch_tcu_sumula(_session, numero: int) -> JurisprudenciaRecord | None:
     return _tcu_record(numero, response.content)
 
 
-def collect_tcu_sumulas(session=None, max_number: int = 400) -> list[JurisprudenciaRecord]:
+def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
     session = session or make_session()
     numbers = range(1, max_number + 1)
     records: list[JurisprudenciaRecord] = []
