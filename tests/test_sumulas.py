@@ -54,3 +54,17 @@ def test_sumula_save_record_has_dedicated_type(tmp_path: Path):
     assert '"source_id": "tcu-sumulas"' in data
     assert '"tipo_documento": "sumula"' in data
     assert '"status": "vigente"' in data
+
+
+def test_batch_can_disable_sumulas_for_targeted_health_checks(monkeypatch, tmp_path: Path):
+    import jurisprudencia.batch as batch
+    monkeypatch.setattr(batch, "collect", lambda *args, **kwargs: [])
+    monkeypatch.setattr(batch, "collect_sumulas", lambda **kwargs: (_ for _ in ()).throw(AssertionError("sumulas não deveriam ser coletadas")))
+    result = batch.collect_batch(
+        ("tcu",),
+        ("licitação",),
+        1,
+        output_dir=tmp_path,
+        include_sumulas=False,
+    )
+    assert result == []
