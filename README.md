@@ -146,7 +146,7 @@ O corpus federal inclui, entre outros:
 - assinaturas eletrônicas;
 - anticorrupção e integridade;
 - contratação de serviços sob execução indireta, pesquisa de preços, ETP, Termo de Referência e técnica e preço;
-- assinaturas eletrônicas, anticorrupção, integridade e atualização anual dos valores da Lei nº 14.133/2021;
+- atualização anual dos valores da Lei nº 14.133/2021;
 - transparência, LAI e LGPD;
 - governo digital;
 - servidores públicos;
@@ -181,7 +181,7 @@ O catálogo estadual inclui, entre outros:
 
 A jurisprudência possui pipeline próprio em **jurisprudencia/**.
 
-Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual a partir dos catálogos oficiais consolidados (o catálogo do TCU atualmente informa 295 registros), com normalização das variações de cabeçalho dos enunciados. Quando os catálogos do TCU ou do TCESP forem entregues por aplicações renderizadas ou incompletas no HTML inicial, o coletor usa Chromium para obter o conteúdo efetivamente exibido e navega pelos paginadores nativos. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
+Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual a partir dos catálogos oficiais consolidados (o catálogo do TCU atualmente informa 295 registros), com normalização das variações de cabeçalho dos enunciados. O catálogo do TCU usa Chromium como fallback quando a aplicação renderizada não entrega o enunciado no HTML inicial. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
 
 O conjunto padrão utiliza:
 
