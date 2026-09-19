@@ -168,6 +168,8 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
                 except PlaywrightTimeoutError:
                     pass
                 body_text = page.locator("body").inner_text(timeout=10000)
+                if not body_text.strip():
+                    print(f"  diagnóstico: catálogo TCU sem texto renderizado em {page.url}")
                 for record in _parse_tcu_sumulas_text(body_text):
                     number = int(record.numero_sumula or 0)
                     if 1 <= number <= max_number:
@@ -213,6 +215,18 @@ def _collect_tcu_sumulas_browser(max_pages: int = 40, max_number: int = TCU_SUMU
                     break
         finally:
             browser.close()
+    if not by_number:
+        diagnostics = [
+            re.sub(r"\s+", " ", line).strip()
+            for line in body_text.splitlines()
+            if "s[úu]mula" in line.casefold()
+        ]
+        print("  diagnóstico TCU: nenhuma súmula extraída.")
+        print(f"  URL renderizada: {page.url if 'page' in locals() else TCU_SUMULA_CATALOG_URL}")
+        if diagnostics:
+            print("  linhas contendo 'súmula': " + " | ".join(diagnostics[:20]))
+        elif 'body_text' in locals():
+            print("  início do texto renderizado: " + re.sub(r"\s+", " ", body_text[:3000]).strip())
     return [by_number[number] for number in sorted(by_number)]
 
 
