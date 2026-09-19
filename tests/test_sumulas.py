@@ -103,3 +103,23 @@ def test_tcu_catalog_parser_extracts_multiple_sumulas_and_pagination():
 def test_tcu_catalog_is_canonical_source_url():
     from jurisprudencia.sumulas import TCU_SUMULA_CATALOG_URL
     assert TCU_SUMULA_CATALOG_URL == "https://pesquisa.apps.tcu.gov.br/resultado/todas-bases/%2A?pb=sumula"
+
+
+def test_tcu_sumula_parser_accepts_numero_marker_and_metadata_block():
+    raw = """
+    <html><body>
+    <div>SÚMULA TCU Nº 222: As decisões do Tribunal de Contas da União devem ser acatadas.</div>
+    <div>Decisão 759/1994-Plenário | RELATOR IRAM SARAIVA</div>
+    <div>Área: Competência do TCU</div>
+    </body></html>
+    """.encode("utf-8")
+    record = _parse_tcu_record_for_test(raw)
+    assert record.numero_sumula == "222"
+    assert record.ementa.startswith("As decisões do Tribunal de Contas da União")
+
+
+def _parse_tcu_record_for_test(raw):
+    from jurisprudencia.sumulas import _parse_tcu_sumulas_page
+    records = _parse_tcu_sumulas_page(raw)
+    assert records
+    return records[0]
