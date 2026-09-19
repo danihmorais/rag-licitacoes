@@ -74,6 +74,14 @@ def test_web_topic_filter_rejects_unrelated_migalhas_content():
 def test_web_article_url_policy_avoids_archive_and_accepts_article_paths():
     conlic = next(item for item in SOURCES if item["id"] == "web-conlicitacao")
     assert _is_web_article_url(conlic, "https://conlicitacao.com.br/blog/criterios-de-julgamento/")
+    assert _is_web_article_url(
+        conlic,
+        "https://conlicitacao.com.br/inteligencia-artificial-para-licitacoes/",
+    )
+    assert _is_web_article_url(
+        conlic,
+        "https://conlicitacao.com.br/lei-14133-atualizada/",
+    )
     assert not _is_web_article_url(conlic, "https://conlicitacao.com.br/blog/page/4/")
 
     mig = next(item for item in SOURCES if item["id"] == "web-migalhas")
