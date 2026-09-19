@@ -116,12 +116,13 @@ def _decode_response(raw, final, content_type=''):
     return 'html', final, raw, clean_html(raw)
 
 
-def _fetch_with_wget(url):
+def _fetch_with_wget(url, timeout=None):
     if shutil.which('wget') is None:
         raise RuntimeError('wget não está instalado no sistema.')
     is_pdf = urlparse(url).path.lower().split('?', 1)[0].endswith('.pdf')
-    timeout = 180 if is_pdf else 20
-    process_timeout = 240 if is_pdf else 50
+    if timeout is None:
+        timeout = 180 if is_pdf else 20
+    process_timeout = 240 if is_pdf else max(50, int(timeout * 2 + 10))
     result = subprocess.run(
         [
             'wget',
@@ -148,10 +149,10 @@ def _fetch_with_wget(url):
     return _decode_response(raw, final)
 
 
-def fetch(session, url):
+def fetch(session, url, *, timeout=None):
     try:
         is_pdf = urlparse(url).path.lower().split('?', 1)[0].endswith('.pdf')
-        response_timeout = (8, 120) if is_pdf else (8, 20)
+        response_timeout = timeout or ((8, 120) if is_pdf else (8, 20))
         response = session.get(url, timeout=response_timeout, allow_redirects=True)
         response.raise_for_status()
         return _decode_response(
@@ -161,7 +162,7 @@ def fetch(session, url):
         )
     except (requests.RequestException, ConnectionError, TimeoutError) as request_error:
         try:
-            return _fetch_with_wget(url)
+            return _fetch_with_wget(url, timeout=(timeout[1] if isinstance(timeout, tuple) else timeout))
         except Exception as wget_error:
             raise ConnectionError(
                 f'requests falhou: {request_error}; wget falhou: {wget_error}'
