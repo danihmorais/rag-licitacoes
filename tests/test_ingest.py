@@ -94,6 +94,13 @@ def test_ensure_collection_creates_payload_indexes(monkeypatch):
     assert fields['revogado'] == ingest.models.PayloadSchemaType.BOOL
 
 
+def test_cache_entry_requires_matching_metadata_fingerprint():
+    entry = {'sha256': 'abc', 'metadata_fingerprint': 'meta-1', 'chunks': 3}
+    assert ingest.cache_entry_is_valid(entry, 'abc', 'meta-1', 3)
+    assert not ingest.cache_entry_is_valid(entry, 'abc', 'meta-2', 3)
+    assert not ingest.cache_entry_is_valid(entry, 'other', 'meta-1', 3)
+    assert not ingest.cache_entry_is_valid(entry, 'abc', 'meta-1', 2)
+
 def test_metadata_fingerprint_changes_when_metadata_source_or_sidecar_changes(tmp_path: Path):
     document = tmp_path / 'documento.txt'
     document.write_text('texto', encoding='utf-8')
