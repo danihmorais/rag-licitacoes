@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from query import _query_jurisdiction, authority_score, jurisdiction_score, rerank
+from query import _query_jurisdiction, authority_score, jurisdiction_score, mandatory_context_points, rerank
 
 
 class FakeReranker:
@@ -57,3 +57,66 @@ def test_ambiguous_query_keeps_jurisdiction_neutral():
 
 def test_structured_jurisdiction_overrides_keyword_ambiguity():
     assert _query_jurisdiction("qual o prazo para impugnar edital?", {"jurisdicao": ["estadual_sp"]}) == "estadual_sp"
+
+
+class FakeDenseVector:
+    def tolist(self):
+        return [0.1, 0.2, 0.3]
+
+
+class FakeDense:
+    def embed(self, texts):
+        return iter([FakeDenseVector()])
+
+
+class FakeClient:
+    def __init__(self, available):
+        self.available = available
+
+    def query_points(self, **kwargs):
+        source_id = kwargs["query_filter"].must[0].match.value
+        point = self.available.get(source_id)
+        return SimpleNamespace(points=[point] if point is not None else [])
+
+
+def test_mandatory_context_requires_law_and_tcu_manual():
+    available = {
+        "lei14133": point("lei14133", 0.9, 1, "federal"),
+        "tcu-manual-licitacoes": point("tcu-manual-licitacoes", 0.8, 3, "federal"),
+    }
+    result = mandatory_context_points(FakeClient(available), FakeDense(), "pergunta")
+    assert [item.payload["source"] for item in result] == ["lei14133", "tcu-manual-licitacoes"]
+    assert all(item.payload["_mandatory_context"] is True for item in result)
+
+
+def test_mandatory_context_fails_closed_when_a_required_source_is_missing():
+    available = {"lei14133": point("lei14133", 0.9, 1, "federal")}
+    import pytest
+    with pytest.raises(RuntimeError, match="Manual de Licitações e Contratos do TCU"):
+        mandatory_context_points(FakeClient(available), FakeDense(), "pergunta")
+
+
+def test_retrieve_context_places_mandatory_sources_in_context(monkeypatch):
+    import query
+
+    available = {
+        "lei14133": point("lei14133", 0.9, 1, "federal"),
+        "tcu-manual-licitacoes": point("tcu-manual-licitacoes", 0.8, 3, "federal"),
+    }
+    available["lei14133"].payload["title"] = "Lei nº 14.133/2021"
+    available["lei14133"].payload["text"] = "A Lei nº 14.133/2021 estabelece normas gerais de licitação e contratação."
+    available["tcu-manual-licitacoes"].payload["title"] = "Manual de Licitações e Contratos do TCU"
+    available["tcu-manual-licitacoes"].payload["text"] = "Manual de Licitações e Contratos do TCU com orientações oficiais."
+
+    monkeypatch.setattr(query, "hybrid", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query, "rerank", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query, "expand_context", lambda *args, **kwargs: [])
+
+    query_text, context_text, sources = query.retrieve_context(
+        FakeClient(available), FakeDense(), object(), object(), "pergunta"
+    )
+
+    assert query_text == "pergunta"
+    assert [item.payload["source"] for item in sources] == ["lei14133", "tcu-manual-licitacoes"]
+    assert "Lei nº 14.133/2021" in context_text
+    assert "Manual de Licitações e Contratos do TCU" in context_text

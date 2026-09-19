@@ -57,10 +57,15 @@ def test_answer_query_returns_sources_used_in_context(monkeypatch):
             captured['prompt'] = system_prompt
             return 'Resposta [F2].'
 
-    monkeypatch.setattr(query, 'hybrid', lambda *args, **kwargs: [selected])
-    monkeypatch.setattr(query, 'rerank', lambda *args, **kwargs: [selected])
-    monkeypatch.setattr(query, 'expand_context', lambda *args, **kwargs: [selected, neighbor])
-    monkeypatch.setattr(query, 'context_with_sources', lambda points: ('[F1] selecionada\n[F2] vizinha', [selected, neighbor]))
+    monkeypatch.setattr(
+        query,
+        'retrieve_context',
+        lambda *args, **kwargs: (
+            'qual é a regra?',
+            '[F1] selecionada\n[F2] vizinha',
+            [selected, neighbor],
+        ),
+    )
 
     answer, sources = query.answer_query(
         object(), object(), object(), object(), FakeLLM(), 'qual é a regra?'

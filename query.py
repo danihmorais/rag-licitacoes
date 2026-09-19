@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import re
+import sys
 import unicodedata
 
 from fastembed import SparseTextEmbedding, TextEmbedding
@@ -25,6 +26,7 @@ REGRAS DE AUTORIDADE E TEMPO:
 - Em jurisprudência, considere também a data da decisão e, quando houver múltiplas versões do mesmo registro, dê preferência ao conteúdo mais recente sem apagar o valor histórico.
 
 REGRAS DE EVIDÊNCIA:
+- Independentemente da pergunta, o contexto deve conter pelo menos uma evidência da Lei nº 14.133/2021 e uma evidência do Manual de Licitações e Contratos do TCU. Essas duas fontes são referências-base obrigatórias; não devem ser tratadas como automaticamente aplicáveis à pergunta nem como equivalentes em autoridade.
 - O texto recuperado pode conter trechos vizinhos do mesmo artigo/unidade para completar o contexto. Eles continuam sendo fontes independentes e devem ser citados pelo respectivo [F#].
 - Não transforme inferência em citação: a fonte deve sustentar a afirmação feita.
 - Se duas fontes discordarem, apresente a divergência e explique jurisdição, hierarquia e temporalidade em vez de escolher silenciosamente.
@@ -41,6 +43,8 @@ FORMATO:
 
 Contexto recuperado:
 {context}'''
+
+MANDATORY_CONTEXT_SOURCE_IDS = ('lei14133', 'tcu-manual-licitacoes')
 
 FILTER_RE = re.compile(r'@(\w+)(>=|<=|=|>|<)([^\s@]+)')
 ALLOWED_FILTERS = {
@@ -195,8 +199,9 @@ def embedding_kwargs():
     return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
-def hybrid(client, dense, sparse, query, query_filter):
-    dense_vector = list(dense.embed(['query: ' + query]))[0]
+def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
+    if dense_vector is None:
+        dense_vector = list(dense.embed(['query: ' + query]))[0]
     sparse_vector = list(sparse.embed([query]))[0]
     return client.query_points(
         collection_name=config.COLLECTION_NAME,
@@ -210,6 +215,48 @@ def hybrid(client, dense, sparse, query, query_filter):
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=config.CANDIDATES_K,
     ).points
+
+
+def mandatory_context_points(client, dense, query, *, dense_vector=None):
+    if dense_vector is None:
+        dense_vector = list(dense.embed(['query: ' + query]))[0]
+    selected = []
+    missing = []
+    for source_id in MANDATORY_CONTEXT_SOURCE_IDS:
+        query_filter = models.Filter(
+            must=[models.FieldCondition(
+                key='source_id',
+                match=models.MatchValue(value=source_id),
+            )]
+        )
+        result = client.query_points(
+            collection_name=config.COLLECTION_NAME,
+            query=dense_vector.tolist(),
+            using='dense',
+            query_filter=query_filter,
+            limit=1,
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = list(result.points or [])
+        if not points:
+            missing.append(source_id)
+            continue
+        point = points[0]
+        point.payload['_mandatory_context'] = True
+        point.payload['_context_only'] = False
+        selected.append(point)
+    if missing:
+        labels = {
+            'lei14133': 'Lei nº 14.133/2021',
+            'tcu-manual-licitacoes': 'Manual de Licitações e Contratos do TCU',
+        }
+        missing_labels = ', '.join(labels[item] for item in missing)
+        raise RuntimeError(
+            'Fontes obrigatórias não estão indexadas: ' + missing_labels +
+            '. Execute a sincronização das fontes e o ingest antes de consultar.'
+        )
+    return selected
 
 
 def evidence_score(raw_score, mode=None):
@@ -231,7 +278,8 @@ AUTHORITY_LEVEL_SCORES = {
     4: 0.20,
 }
 
-EVIDENCE_CITATION_RE = re.compile(r'\[F(\d+)\]')
+EVIDENCE_CITATION_RE = re.compile(r'(?i)(?:\[|【|\()\s*F(\d+)\s*(?:\]|】|\))')
+EVIDENCE_CITATION_ONLY_RE = re.compile(r'^(?:\s*\[F\d+\]\s*)+$', re.IGNORECASE)
 EVIDENCE_TOKEN_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}|\d{2,}')
 EVIDENCE_STOPWORDS = {
     'para', 'como', 'essa', 'esse', 'isso', 'esta', 'este', 'sao', 'são',
@@ -262,12 +310,37 @@ def _normalized_identifier(value):
     return re.sub(r'[^a-z0-9]+', '', _normalize_query_text(value))
 
 
+def _normalize_generated_answer(answer):
+    answer = EVIDENCE_CITATION_RE.sub(lambda match: f'[F{match.group(1)}]', str(answer or '')).strip()
+    lines = []
+    for line in answer.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if EVIDENCE_CITATION_ONLY_RE.fullmatch(stripped) and lines:
+            lines[-1] = f'{lines[-1]} {stripped}'.strip()
+        else:
+            lines.append(stripped)
+    return '\n'.join(lines)
+
+
+def _is_non_substantive_line(line):
+    stripped = line.strip()
+    if re.fullmatch(r'#{1,6}\s+.+', stripped):
+        return True
+    if re.fullmatch(r'\*\*[^*]+\*\*:?\s*', stripped):
+        return True
+    if re.fullmatch(r'[-*_]{3,}', stripped):
+        return True
+    return False
+
+
 def _sentence_citations(sentence):
     return {int(value) for value in EVIDENCE_CITATION_RE.findall(sentence)}
 
 
 def validate_generated_answer(answer, sources):
-    answer = str(answer or '').strip()
+    answer = _normalize_generated_answer(answer)
     if not answer:
         raise EvidenceGateError('A resposta do LLM veio vazia.')
     citations = sorted(set(int(value) for value in EVIDENCE_CITATION_RE.findall(answer)))
@@ -280,6 +353,8 @@ def validate_generated_answer(answer, sources):
         raise EvidenceGateError('A resposta contém citação para uma fonte que não está no contexto.')
     sentences = [part.strip() for part in re.split(r'\n+', answer) if part.strip()]
     for sentence in sentences:
+        if _is_non_substantive_line(sentence):
+            continue
         sentence_citations = _sentence_citations(sentence)
         factual = EVIDENCE_CITATION_RE.sub('', sentence).strip(' .,:;-')
         tokens = _evidence_tokens(factual)
@@ -494,21 +569,38 @@ def context(points):
     return context_with_sources(points)[0]
 
 
-def answer_query(client, dense, sparse, reranker, llm, raw):
+def retrieve_context(client, dense, sparse, reranker, raw):
     query, filters = parse_filters(raw)
     if not query:
-        return 'Informe uma pergunta.', []
-    points = rerank(reranker, query, hybrid(client, dense, sparse, query, qfilter(filters)), filters)
-    if not points:
-        return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
-    context_points = expand_context(client, points)
-    context_text, context_sources = context_with_sources(context_points)
+        return '', [], []
+    dense_vector = list(dense.embed(['query: ' + query]))[0]
+    points = rerank(
+        reranker,
+        query,
+        hybrid(client, dense, sparse, query, qfilter(filters), dense_vector=dense_vector),
+        filters,
+    )
+    mandatory = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
+    context_points = expand_context(client, points) if points else []
+    mandatory_ids = {point.id for point in mandatory}
+    ordered = mandatory + [point for point in context_points if point.id not in mandatory_ids]
+    context_text, context_sources = context_with_sources(ordered)
     if not context_sources:
-        return 'Não encontrei espaço suficiente no contexto para apresentar evidência de forma segura.', []
+        return query, [], []
+    return query, context_text, context_sources
+
+
+def answer_query(client, dense, sparse, reranker, llm, raw):
+    query, context_text, context_sources = retrieve_context(client, dense, sparse, reranker, raw)
+    if not query:
+        return 'Informe uma pergunta.', []
+    if not context_sources:
+        return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
     answer = llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context_text), user_prompt=query)
     try:
         validate_generated_answer(answer, context_sources)
-    except EvidenceGateError:
+    except EvidenceGateError as error:
+        print(f'Evidence Gate: {error}', file=sys.stderr)
         return 'Não foi possível validar as citações da resposta contra as evidências recuperadas. A resposta não será apresentada como fundamentada.', context_sources
     return answer, context_sources
 
@@ -550,7 +642,7 @@ def main():
         except Exception as error:
             print(f'Erro: {error}')
             return 1
-        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False))} for index, point in enumerate(points, 1)]}
+        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False)), 'mandatory_context': bool(point.payload.get('_mandatory_context', False))} for index, point in enumerate(points, 1)]}
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:

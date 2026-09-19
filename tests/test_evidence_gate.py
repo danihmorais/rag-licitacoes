@@ -57,3 +57,26 @@ def test_evidence_gate_rejects_unsupported_legal_identifier():
     source = make_point("lei14133", "artigo:1", "Art. 1º A licitação observará a legalidade.")
     with pytest.raises(EvidenceGateError, match="Identificador jurídico"):
         validate_generated_answer("O Art. 8º da Lei 14.133/2021 determina outra regra. [F1]", [source])
+
+
+
+def test_evidence_gate_accepts_common_citation_brackets_and_markdown_heading():
+    source = make_point(
+        "lei14133", "artigo:1",
+        "Lei 14.133/2021. Art. 1º A licitação observará planejamento e eficiência.",
+    )
+    assert validate_generated_answer(
+        "## Requisitos\nO ETP deve observar planejamento e eficiência. 【F1】",
+        [source],
+    )
+
+
+def test_evidence_gate_accepts_citation_on_following_line():
+    source = make_point(
+        "lei14133", "artigo:1",
+        "A licitação observará planejamento e eficiência.",
+    )
+    assert validate_generated_answer(
+        "A contratação deve observar planejamento e eficiência.\n[F1]",
+        [source],
+    )

@@ -19,7 +19,7 @@ def chunking_algorithm_sha256():
 COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
-    'context_neighbors', 'max_context_chars', 'chunking_algorithm_sha256', 'schema',
+    'chunking_algorithm_sha256', 'schema',
     'manifest_schema_version',
 )
 
