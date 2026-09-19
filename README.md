@@ -624,7 +624,7 @@ RAG_JURISPRUDENCIA_STRICT=1
 
 O embedding denso usa limite explícito de **512 tokens**. Antes de gerar o vetor, o pipeline conta os tokens sem truncagem e interrompe a indexação ou consulta quando o limite é excedido. Isso evita que um texto seja cortado silenciosamente pelo tokenizer.
 
-A coleção usa distância **Cosine** para o vetor denso. O Qdrant normaliza automaticamente vetores em coleções Cosine, portanto não há uma normalização manual redundante no código. citeturn598243search2
+A coleção usa distância **Cosine** para o vetor denso. O Qdrant normaliza automaticamente vetores em coleções Cosine, portanto não há uma normalização manual redundante no código.
 
 Os campos utilizados pelos filtros do retrieval recebem índices de payload tipados (`keyword`, `integer` ou `bool`) na criação da coleção. O carregamento de pontos também é particionado em lotes pequenos para evitar upserts excessivamente grandes.
 
