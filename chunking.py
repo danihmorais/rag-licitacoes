@@ -95,10 +95,11 @@ def _fit_child_prefix(prefix, child_text, max_size):
     if len(header) + 1 >= prefix_budget:
         return header
     remaining = prefix_budget - len(header) - 1
-    original_caput = caput
-    caput = caput[:remaining].rstrip()
-    if len(caput) < len(original_caput.rstrip()):
-        caput = caput.rstrip(' .,:;-') + '…'
+    original_caput = caput.rstrip()
+    if len(original_caput) > remaining:
+        caput = original_caput[:max(0, remaining - 1)].rstrip(' .,:;-') + ('…' if remaining > 0 else '')
+    else:
+        caput = original_caput
     return f'{header}\n{caput}'.strip()
 
 def _split_child(child_text, prefix, max_size, overlap):
