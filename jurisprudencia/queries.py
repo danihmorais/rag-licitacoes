@@ -50,7 +50,6 @@ DEFAULT_QUERIES = (
     "governo digital assinatura eletrônica processo eletrônico serviço público",
     "serviço público usuário continuidade universalidade eficiência atendimento",
     "São Paulo processo administrativo Lei 10.177/1998 administração estadual",
-    "São Paulo Município Prefeitura licitação contrato administrativo Decreto 62.100 Lei 14.133",
     "São Paulo Tribunal de Contas controle externo licitação contrato administrativo",
     "TJSP Tribunal de Justiça de São Paulo licitação contrato administrativo Lei 14.133",
     "TJSP licitação edital habilitação contratação pública",
