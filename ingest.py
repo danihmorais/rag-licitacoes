@@ -121,6 +121,15 @@ def metadata_fingerprint(document):
     return digest.hexdigest()
 
 
+def cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
+    return (
+        isinstance(entry, dict)
+        and entry.get('sha256') == digest
+        and entry.get('metadata_fingerprint') == metadata_digest
+        and int(entry.get('chunks') or 0) == indexed_count
+        and indexed_count > 0
+    )
+
 def read_cache():
     if not CACHE_PATH.exists():
         return {}
@@ -602,13 +611,7 @@ def main():
             count_filter=count_filter,
             exact=True,
         ).count
-        if (
-            isinstance(entry, dict)
-            and entry.get('sha256') == digest
-            and entry.get('metadata_fingerprint') == metadata_digest
-            and int(entry.get('chunks') or 0) == indexed_count
-            and indexed_count > 0
-        ):
+        if cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
             skipped += 1
             document_manifest[doc_id] = {
                 'sha256': digest,
