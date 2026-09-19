@@ -66,14 +66,14 @@ def _make_tcu_record(numero: int, enunciado: str, *, source_url: str, context: s
 
 def _parse_tcu_sumula_text(text: str, numero: int, source_url: str) -> JurisprudenciaRecord | None:
     pattern = re.compile(
-        rf"(?is)\bEnunciado\b\s*S[ÚU]MULA\s+TCU\s+(?:N[ºO°]?\s*)?{numero}\s*"
-        rf"\s*[:\-–—]\s*(.+?)(?=\n\s*(?:Excerto|Fundamento legal|ÍNDICE)\b|\Z)"
+        rf"(?is)\bEnunciado\b\s*S[ÚU]MULA\s+TCU\s+(?:N[ºO°]?\s*)?{numero}"
+        rf"(?:\s*\([^\n)]{1,40}\))?\s*[:\-–—]\s*(.+?)(?=\n\s*(?:Excerto|Fundamento legal|ÍNDICE)\b|\Z)"
     )
     match = pattern.search(text)
     if not match:
         pattern = re.compile(
-            rf"S[ÚU]MULA\s+TCU\s+(?:N[ºO°]?\s*)?{numero}\s*"
-            rf"\s*[:\-–—]\s*(.+?)(?=\n\s*(?:Decisão|Acórdão|Área|Excerto|Fundamento legal|ÍNDICE)\b|\Z)"
+            rf"S[ÚU]MULA\s+TCU\s+(?:N[ºO°]?\s*)?{numero}"
+            rf"(?:\s*\([^\n)]{1,40}\))?\s*[:\-–—]\s*(.+?)(?=\n\s*(?:Decisão|Acórdão|Área|Excerto|Fundamento legal|ÍNDICE)\b|\Z)"
         )
         match = pattern.search(text)
     if not match:
