@@ -305,15 +305,37 @@ def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRe
                 if expected.issubset(by_number):
                     break
 
-                next_locator = page.get_by_role("button", name=re.compile(r"Próxima página|Próximo", re.I)).last
-                if next_locator.count() == 0:
-                    break
-                if next_locator.get_attribute("disabled") is not None:
-                    break
-                if next_locator.get_attribute("aria-disabled") == "true":
+                controls = page.locator("a,button")
+                next_index = None
+                for control_index in range(controls.count()):
+                    control = controls.nth(control_index)
+                    try:
+                        label = " ".join(
+                            filter(
+                                None,
+                                [
+                                    control.inner_text(timeout=1000),
+                                    control.get_attribute("aria-label"),
+                                    control.get_attribute("title"),
+                                ],
+                            )
+                        ).strip().casefold()
+                    except Exception:
+                        continue
+                    normalized = re.sub(r"\s+", " ", label)
+                    if (
+                        re.search(r"\b(próxima|proxima|próximo|proximo|next)\b", normalized)
+                        or normalized in {">", "›", "»", "→"}
+                    ):
+                        disabled = control.get_attribute("disabled")
+                        aria_disabled = control.get_attribute("aria-disabled")
+                        if disabled is None and aria_disabled != "true":
+                            next_index = control_index
+                            break
+                if next_index is None:
                     break
                 before = signature
-                next_locator.click(force=True)
+                controls.nth(next_index).click(force=True)
                 try:
                     page.wait_for_function(
                         "(oldText) => document.body && document.body.innerText.replace(/\\s+/g, ' ').trim() !== oldText",
