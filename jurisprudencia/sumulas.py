@@ -305,6 +305,46 @@ def _collect_tcesp_sumulas_browser(max_pages: int = 10) -> list[JurisprudenciaRe
                 if expected.issubset(by_number):
                     break
 
+                if 53 not in by_number:
+                    anchors = page.locator("a")
+                    candidate_urls = []
+                    for anchor_index in range(anchors.count()):
+                        anchor = anchors.nth(anchor_index)
+                        try:
+                            label = " ".join(
+                                filter(
+                                    None,
+                                    [
+                                        anchor.inner_text(timeout=1000),
+                                        anchor.get_attribute("aria-label"),
+                                        anchor.get_attribute("title"),
+                                    ],
+                                )
+                            ).strip()
+                            href = str(anchor.get_attribute("href") or "").strip()
+                        except Exception:
+                            continue
+                        haystack = f"{label} {href}".casefold()
+                        if re.search(r"s[úu]mulas?", haystack) and re.search(r"\b53\b", haystack):
+                            candidate_urls.append(href)
+                    for href in dict.fromkeys(candidate_urls):
+                        try:
+                            response = page.request.get(urljoin(page.url, href), timeout=30000)
+                            content_type = (response.headers.get("content-type") or "").casefold()
+                            if "pdf" in content_type or href.casefold().endswith(".pdf"):
+                                import io
+                                from pypdf import PdfReader
+                                reader = PdfReader(io.BytesIO(response.body()))
+                                linked_text = "\n".join((p.extract_text() or "") for p in reader.pages)
+                            else:
+                                linked_text = BeautifulSoup(response.body(), "html.parser").get_text("\n")
+                            for record in _parse_tcesp_sumulas_text(linked_text):
+                                by_number[int(record.numero_sumula)] = record
+                        except Exception as exc:
+                            print(f"  aviso: documento de Súmula TCESP não processado {href}: {type(exc).__name__}: {exc}")
+                    if 53 in by_number:
+                        break
+
                 controls = page.locator("a,button")
                 next_index = None
                 for control_index in range(controls.count()):
