@@ -279,7 +279,7 @@ AUTHORITY_LEVEL_SCORES = {
 }
 
 EVIDENCE_CITATION_RE = re.compile(r'(?i)(?:\[|【|\()\s*F(\d+)\s*(?:\]|】|\))')
-EVIDENCE_CITATION_ONLY_RE = re.compile(r'^(?:\s*\[F\d+\]\s*)+
+EVIDENCE_CITATION_ONLY_RE = re.compile(r'^(?:\s*\[F\d+\]\s*)+$', re.IGNORECASE)
 EVIDENCE_TOKEN_RE = re.compile(r'[A-Za-zÀ-ÿ]{3,}|\d{2,}')
 EVIDENCE_STOPWORDS = {
     'para', 'como', 'essa', 'esse', 'isso', 'esta', 'este', 'sao', 'são',
