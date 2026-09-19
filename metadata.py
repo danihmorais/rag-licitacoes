@@ -69,8 +69,6 @@ def _source_with_explicit(path, explicit):
         result.update(jurisdicao='federal', esfera='federal', orgao='STJ', tribunal='STJ', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
     elif 'stf' in name:
         result.update(jurisdicao='federal', esfera='federal', orgao='STF', tribunal='STF', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
-    elif 'tcm-sp' in name or 'tcm_sp' in name or 'tcmsP'.casefold() in name:
-        result.update(jurisdicao='municipal_sp', esfera='municipal', orgao='TCM-SP', tribunal='TCM-SP', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
     elif 'tjsp' in name:
         result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TJSP', tribunal='TJSP', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
     elif 'constituicao' in name:
@@ -176,7 +174,7 @@ def extract_metadata(text, pdf_path):
         metadata['orgao'] = tribunal
         metadata['source_role'] = 'jurisprudencia_controle' if tribunal in {'TCU', 'TCESP'} else 'jurisprudencia'
         metadata['tipo_documento'] = 'jurisprudencia'
-        metadata['authority_level'] = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}.get(tribunal, 4)
+        metadata['authority_level'] = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2}.get(tribunal, 4)
         metadata['status'] = 'jurisprudencia'
         metadata['jurisdicao'] = 'municipal_sp' if tribunal == 'TCM-SP' else ('estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal')
         metadata['esfera'] = 'municipal' if metadata['jurisdicao'] == 'municipal_sp' else ('estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal')
@@ -206,11 +204,8 @@ def extract_metadata(text, pdf_path):
         inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2, 'TCM-SP': 2}.get(tribunal)
         if inferred_authority is not None:
             metadata['authority_level'] = inferred_authority
-        if tribunal == 'TCM-SP':
-            metadata['jurisdicao'], metadata['esfera'] = 'municipal_sp', 'municipal'
-        else:
-            metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
-            metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+        metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+        metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
     if metadata.get('classificacao_ambigua'):
         metadata['metadata_ambiguous'] = True
     regime_key, regime_label = _detect_regime(sample, {**source_values, **metadata})
