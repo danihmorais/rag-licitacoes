@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import math
 
 from evaluation import (
     DEFAULT_DATASET,
@@ -50,7 +51,7 @@ def test_recall_and_ndcg_reward_relevant_source_at_top():
     expected = {'lei14133'}
     assert recall_at_k(ranking, expected, 1) == 0.0
     assert recall_at_k(ranking, expected, 2) == 1.0
-    assert ndcg_at_k(ranking, expected, 2) == 1.0 / __import__('math').log2(3)
+    assert ndcg_at_k(ranking, expected, 2) == 1.0 / math.log2(3)
 
 
 def test_evaluation_report_tracks_jurisdiction_and_temporal_accuracy():
