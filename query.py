@@ -43,6 +43,8 @@ FORMATO:
 Contexto recuperado:
 {context}'''
 
+MANDATORY_CONTEXT_SOURCE_IDS = ('lei14133', 'tcu-manual-licitacoes')
+
 FILTER_RE = re.compile(r'@(\w+)(>=|<=|=|>|<)([^\s@]+)')
 ALLOWED_FILTERS = {
     'jurisdicao', 'esfera', 'orgao', 'tribunal', 'tipo_documento', 'source_role',
@@ -196,8 +198,9 @@ def embedding_kwargs():
     return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
-def hybrid(client, dense, sparse, query, query_filter):
-    dense_vector = list(dense.embed(['query: ' + query]))[0]
+def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
+    if dense_vector is None:
+        dense_vector = list(dense.embed(['query: ' + query]))[0]
     sparse_vector = list(sparse.embed([query]))[0]
     return client.query_points(
         collection_name=config.COLLECTION_NAME,
@@ -211,6 +214,48 @@ def hybrid(client, dense, sparse, query, query_filter):
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=config.CANDIDATES_K,
     ).points
+
+
+def mandatory_context_points(client, dense, query, *, dense_vector=None):
+    if dense_vector is None:
+        dense_vector = list(dense.embed(['query: ' + query]))[0]
+    selected = []
+    missing = []
+    for source_id in MANDATORY_CONTEXT_SOURCE_IDS:
+        query_filter = models.Filter(
+            must=[models.FieldCondition(
+                key='source_id',
+                match=models.MatchValue(value=source_id),
+            )]
+        )
+        result = client.query_points(
+            collection_name=config.COLLECTION_NAME,
+            query=dense_vector.tolist(),
+            using='dense',
+            query_filter=query_filter,
+            limit=1,
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = list(result.points or [])
+        if not points:
+            missing.append(source_id)
+            continue
+        point = points[0]
+        point.payload['_mandatory_context'] = True
+        point.payload['_context_only'] = False
+        selected.append(point)
+    if missing:
+        labels = {
+            'lei14133': 'Lei nº 14.133/2021',
+            'tcu-manual-licitacoes': 'Manual de Licitações e Contratos do TCU',
+        }
+        missing_labels = ', '.join(labels[item] for item in missing)
+        raise RuntimeError(
+            'Fontes obrigatórias não estão indexadas: ' + missing_labels +
+            '. Execute a sincronização das fontes e o ingest antes de consultar.'
+        )
+    return selected
 
 
 def evidence_score(raw_score, mode=None):
@@ -523,17 +568,35 @@ def context(points):
     return context_with_sources(points)[0]
 
 
-def answer_query(client, dense, sparse, reranker, llm, raw):
+def retrieve_context(client, dense, sparse, reranker, raw):
     query, filters = parse_filters(raw)
     if not query:
-        return 'Informe uma pergunta.', []
-    points = rerank(reranker, query, hybrid(client, dense, sparse, query, qfilter(filters)), filters)
+        return '', [], []
+    dense_vector = list(dense.embed(['query: ' + query]))[0]
+    points = rerank(
+        reranker,
+        query,
+        hybrid(client, dense, sparse, query, qfilter(filters), dense_vector=dense_vector),
+        filters,
+    )
     if not points:
-        return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
+        return query, [], []
+    mandatory = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
     context_points = expand_context(client, points)
-    context_text, context_sources = context_with_sources(context_points)
+    mandatory_ids = {point.id for point in mandatory}
+    ordered = mandatory + [point for point in context_points if point.id not in mandatory_ids]
+    context_text, context_sources = context_with_sources(ordered)
     if not context_sources:
-        return 'Não encontrei espaço suficiente no contexto para apresentar evidência de forma segura.', []
+        return query, [], []
+    return query, context_text, context_sources
+
+
+def answer_query(client, dense, sparse, reranker, llm, raw):
+    query, context_text, context_sources = retrieve_context(client, dense, sparse, reranker, raw)
+    if not query:
+        return 'Informe uma pergunta.', []
+    if not context_sources:
+        return 'Não encontrei evidência suficientemente relevante nos documentos indexados para responder com segurança.', []
     answer = llm.generate(system_prompt=SYSTEM_PROMPT.format(context=context_text), user_prompt=query)
     try:
         validate_generated_answer(answer, context_sources)
@@ -580,7 +643,7 @@ def main():
         except Exception as error:
             print(f'Erro: {error}')
             return 1
-        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False))} for index, point in enumerate(points, 1)]}
+        payload = {'query': args.query, 'answer': answer, 'sources': [{'citation': f'[F{index}]', 'source': point.payload.get('source'), 'title': point.payload.get('title'), 'page': point.payload.get('page'), 'score': round(point.payload.get('_evidence_score', 0.0), 6), 'retrieval_score': round(point.payload.get('_retrieval_score', 0.0), 6), 'authority_level': point.payload.get('authority_level'), 'context_only': bool(point.payload.get('_context_only', False)), 'mandatory_context': bool(point.payload.get('_mandatory_context', False))} for index, point in enumerate(points, 1)]}
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
