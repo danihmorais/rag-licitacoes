@@ -722,7 +722,7 @@ Os workflows são separados por responsabilidade:
 
 - **ci.yml**: testes determinísticos e verificação de sintaxe;
 - **sync-sources.yml**: health-check das fontes jurídicas;
-- **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência;
+- **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência e dos catálogos oficiais de súmulas;
 - **legal-ingestion.yml**: execução do pipeline de ingestão.
 
 O CI cobre regressões de chunking, filtros, autoridade e jurisdição, catálogo de fontes, temporalidade, cache, versionamento, sincronização, adaptadores de jurisprudência, recuperação e integração OpenAI-compatible.
