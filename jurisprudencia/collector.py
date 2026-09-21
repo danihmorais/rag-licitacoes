@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import io
 import html
 import itertools
 import json
@@ -281,6 +283,7 @@ class TCUAdapter(JurisprudenciaAdapter):
     endpoint = 'https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo'
     search_endpoint = endpoint + '/documentosResumidos'
     detail_endpoint = endpoint + '/documento'
+    bulletin_csv_url = 'https://sites.tcu.gov.br/dados-abertos/jurisprudencia/arquivos/boletim-jurisprudencia/boletim-jurisprudencia.csv'
 
     @staticmethod
     def _rows(payload: Any) -> list[dict[str, Any]]:
@@ -336,6 +339,96 @@ class TCUAdapter(JurisprudenciaAdapter):
             origem='TCU — Pesquisa de Jurisprudência oficial',
             situacao=_first_value(row, 'SITUACAO', 'situacao'),
         )
+
+    @staticmethod
+    def _bulletin_rows(raw: bytes) -> list[dict[str, str]]:
+        text = ''
+        for encoding in ('utf-8-sig', 'cp1252', 'latin-1'):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if not text:
+            raise ValueError('CSV do Boletim de Jurisprudência do TCU não pôde ser decodificado')
+
+        try:
+            dialect = csv.Sniffer().sniff(text[:8192], delimiters=',;|\\t')
+        except csv.Error:
+            dialect = csv.excel
+            dialect.delimiter = ';'
+
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+        return [
+            {
+                str(key or '').strip().lstrip('﻿').upper(): str(value or '').strip()
+                for key, value in row.items()
+                if key is not None
+            }
+            for row in reader
+            if row
+        ]
+
+    @classmethod
+    def _bulletin_records(
+        cls,
+        raw: bytes,
+        query: str,
+        limit: int,
+        seen: set[str],
+    ) -> list[JurisprudenciaRecord]:
+        records = []
+        for row in cls._bulletin_rows(raw):
+            key = _first_value(row, 'KEY', 'key')
+            enunciado = _first_value(row, 'ENUNCIADO', 'enunciado')
+            referencia = _first_value(row, 'REFERENCIA', 'referencia')
+            texto_acordao = _first_value(row, 'TEXTOACORDAO', 'textoAcordao')
+            titulo = _first_value(row, 'TITULO', 'titulo')
+            if not key or not enunciado or not _query_matches(
+                query,
+                enunciado,
+                referencia,
+                texto_acordao,
+                titulo,
+            ):
+                continue
+
+            process = texto_acordao or key
+            number_match = re.search(
+                r'(?i)ac[oó]rd[aã]o(?:\s+n[ºo.]*)?\s*([0-9]+(?:/[0-9]{4})?)',
+                f'{texto_acordao} {titulo}',
+            )
+            numero_decisao = number_match.group(1) if number_match else None
+            dedupe_key = key or f'{titulo}|{enunciado}'
+            if dedupe_key in seen:
+                continue
+
+            records.append(
+                JurisprudenciaRecord(
+                    tribunal='TCU',
+                    tipo_documento='boletim_jurisprudencia',
+                    numero_processo=process,
+                    numero_decisao=numero_decisao,
+                    tipo_decisao='Enunciado de Boletim de Jurisprudência',
+                    ementa=enunciado,
+                    assunto=[referencia] if referencia else [],
+                    url_oficial=cls.bulletin_csv_url,
+                    origem='TCU — Boletim de Jurisprudência (dados abertos)',
+                )
+            )
+            seen.add(dedupe_key)
+            if len(records) >= limit:
+                break
+        return records
+
+    def _search_bulletin(self, query: str, limit: int, seen: set[str]) -> list[JurisprudenciaRecord]:
+        response = self.session.get(
+            self.bulletin_csv_url,
+            timeout=(8, 90),
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return self._bulletin_records(response.content, query, limit, seen)
 
     def _detail_content(self, key: str) -> str:
         response = self.session.get(
@@ -395,9 +488,27 @@ class TCUAdapter(JurisprudenciaAdapter):
                 records.append(record)
                 if len(records) >= limit:
                     return records
+            if len(records) >= limit:
+                return records
+
+            try:
+                bulletin = self._search_bulletin(
+                    query,
+                    limit - len(records),
+                    seen,
+                )
+            except Exception as exc:
+                print(
+                    f'aviso: Boletim de Jurisprudência TCU indisponível para {query!r}: '
+                    f'{type(exc).__name__}: {exc}'
+                )
+                bulletin = []
+
+            if bulletin:
+                records.extend(bulletin)
             if records:
                 return records
-        raise RuntimeError(f'TCU não retornou resultados estruturados para a consulta {query!r}. Contrato da API oficial possivelmente alterado.')
+        raise RuntimeError(f'TCU não retornou resultados estruturados para a consulta {query!r}. Contrato das APIs oficiais possivelmente alterado.')
 
 
 class TCESPAdapter(JurisprudenciaAdapter):
