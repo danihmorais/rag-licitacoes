@@ -70,6 +70,41 @@ def test_tcu_collection_contract_contains_key_summulas():
 
 
 
+def test_tcu_discovery_accepts_future_numbers(monkeypatch):
+    def fake_fetch(number, session=None):
+        if number <= 293:
+            return sumulas._make_tcu_record(
+                number,
+                f"Enunciado da Súmula {number}.",
+                source_url=TCU_SUMULA_DOCUMENT_URL.format(numero=number),
+            )
+        return None
+
+    monkeypatch.setattr(sumulas, "_fetch_tcu_sumula", fake_fetch)
+    numbers = sumulas.discover_tcu_sumula_numbers()
+    assert numbers[-1] == 293
+
+
+def test_tcesp_strict_allows_future_numbers():
+    records = [
+        sumulas.JurisprudenciaRecord(
+            tribunal="TCESP",
+            tipo_documento="sumula",
+            numero_sumula=str(number),
+            tipo_decisao="Súmula",
+            ementa=f"Enunciado {number}.",
+        )
+        for number in range(1, 54)
+    ]
+    original = sumulas.collect_tcesp_sumulas
+    try:
+        sumulas.collect_tcesp_sumulas = lambda: records
+        result = sumulas.collect_sumulas(tribunals=("tcesp",), strict=True)
+        assert len(result["tcesp"]) == 53
+    finally:
+        sumulas.collect_tcesp_sumulas = original
+
+
 def test_tcesp_parser_extracts_current_catalog_and_preserves_cancelled_status():
     parts = []
     for number in range(1, TCESP_SUMULA_MIN_RECORDS + 1):
