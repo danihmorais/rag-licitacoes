@@ -49,6 +49,26 @@ def test_tcu_adapter_uses_current_public_rest_contract():
     assert records[0].orgao_julgador == "Plenário"
     assert records[0].url_oficial.endswith("/4802024")
 
+def test_tcu_adapter_uses_bulletin_csv_when_rest_returns_no_records():
+    bulletin = (
+        "KEY,ENUNCIADO,REFERENCIA,TEXTOACORDAO,TITULO\n"
+        'B1,"Licitação exige planejamento adequado.","Lei 14.133/2021","Acórdão 123/2026","Boletim de Jurisprudência 600"\n'
+    ).encode("utf-8")
+    session = FakeSession([
+        FakeResponse({"quantidadeEncontrada": 0, "documentos": []}),
+        FakeResponse(bulletin, content_type="text/csv", url=TCUAdapter.bulletin_csv_url),
+    ])
+
+    records = TCUAdapter(session).search("licitação", 1)
+
+    assert len(records) == 1
+    assert records[0].tribunal == "TCU"
+    assert records[0].tipo_documento == "boletim_jurisprudencia"
+    assert records[0].numero_decisao == "123/2026"
+    assert records[0].url_oficial == TCUAdapter.bulletin_csv_url
+    assert records[0].origem == "TCU — Boletim de Jurisprudência (dados abertos)"
+
+
 def test_tcesp_adapter_parses_result_table():
     html = '''<html><body><table><tbody>
     <tr class="borda-superior"><td>Relatório / Voto</td><td>5600/989/25</td><td>17/03/2025</td><td>EMPRESA A</td><td>PREFEITURA B</td><td>LICITAÇÃO</td><td>Exame de edital</td><td>2025</td></tr>
