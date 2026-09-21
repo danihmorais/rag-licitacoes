@@ -256,7 +256,14 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
     session = session or make_session()
     response = session.get(TCESP_SUMULA_URL, timeout=(8, 45), allow_redirects=True)
     response.raise_for_status()
-    return _parse_tcesp_sumulas_text(page_text(response.content))
+    records = _parse_tcesp_sumulas_text(page_text(response.content))
+    unique_by_number: dict[int, JurisprudenciaRecord] = {}
+    for record in records:
+        number = str(record.numero_sumula or '').strip()
+        if not number.isdigit():
+            continue
+        unique_by_number.setdefault(int(number), record)
+    return [unique_by_number[number] for number in sorted(unique_by_number)]
 
 
 def smoke_test_sumulas() -> None:
