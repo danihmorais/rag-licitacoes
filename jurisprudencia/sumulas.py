@@ -344,13 +344,17 @@ def collect_sumulas(
             for item in result["tcu"]
             if item.numero_sumula and item.numero_sumula.isdigit()
         }
-        if len(result["tcu"]) < TCU_SUMULA_MIN_RECORDS:
-            failures.append(
-                f"TCU: apenas {len(result['tcu'])} súmulas estruturadas; esperado pelo menos {TCU_SUMULA_MIN_RECORDS}"
-            )
-        missing = sorted(set(TCU_SUMULA_REQUIRED_NUMBERS) - tcu_numbers)
+        expected_tcu_numbers = set(range(1, TCU_SUMULA_MAX_NUMBER + 1))
+        missing = sorted(expected_tcu_numbers - tcu_numbers)
+        extra = sorted(tcu_numbers - expected_tcu_numbers)
         if missing:
-            failures.append(f"TCU: súmulas essenciais ausentes={missing}")
+            failures.append(f"TCU: súmulas ausentes={missing}")
+        if extra:
+            failures.append(f"TCU: números fora do catálogo esperado={extra}")
+        if len(result["tcu"]) != len(expected_tcu_numbers):
+            failures.append(
+                f"TCU: {len(result['tcu'])} súmulas estruturadas; esperado exatamente {len(expected_tcu_numbers)} números"
+            )
 
     if strict and "tcesp" in requested:
         tcesp_numbers = {
