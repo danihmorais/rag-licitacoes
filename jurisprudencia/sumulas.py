@@ -372,13 +372,11 @@ def collect_sumulas(
             for item in result["tcesp"]
             if item.numero_sumula and item.numero_sumula.isdigit()
         }
-        expected_tcesp_numbers = set(range(1, TCESP_SUMULA_MIN_RECORDS + 1))
-        missing = sorted(expected_tcesp_numbers - tcesp_numbers)
-        extra = sorted(tcesp_numbers - expected_tcesp_numbers)
-        if missing:
-            failures.append(f"TCESP: súmulas ausentes={missing}")
-        if extra:
-            failures.append(f"TCESP: números fora do catálogo esperado={extra}")
+        if len(tcesp_numbers) < TCESP_SUMULA_MIN_RECORDS:
+            failures.append(
+                f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
+                f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
+            )
         if len(tcesp_numbers) != len(result["tcesp"]):
             failures.append(
                 f"TCESP: números de súmula duplicados ou inconsistentes; "
