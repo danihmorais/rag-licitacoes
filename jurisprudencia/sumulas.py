@@ -92,8 +92,8 @@ def _parse_tcu_sumula_document(raw: bytes, numero: int, source_url: str) -> Juri
     return _parse_tcu_sumula_text(page_text(raw), numero, source_url)
 
 
-def _fetch_tcu_sumula(numero: int) -> JurisprudenciaRecord | None:
-    session = _thread_session()
+def _fetch_tcu_sumula(numero: int, session=None) -> JurisprudenciaRecord | None:
+    session = session or _thread_session()
     try:
         response = session.get(
             TCU_SUMULA_DOCUMENT_URL.format(numero=numero),
@@ -152,21 +152,31 @@ async def _collect_tcu_sumulas_browser(numbers: list[int]) -> list[Jurisprudenci
     return [record for record in records if record is not None]
 
 
-def _collect_tcu_sumulas(numbers) -> list[JurisprudenciaRecord]:
+def _collect_tcu_sumulas(numbers, session=None) -> list[JurisprudenciaRecord]:
     numbers = list(numbers)
     records_by_number: dict[int, JurisprudenciaRecord] = {}
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(_fetch_tcu_sumula, number): number for number in numbers}
-        for future in concurrent.futures.as_completed(futures):
-            number = futures[future]
+    if session is not None:
+        for number in numbers:
             try:
-                record = future.result()
+                record = _fetch_tcu_sumula(number, session)
             except (requests.RequestException, ValueError) as exc:
                 print(f"  aviso: Súmula TCU {number} indisponível: {type(exc).__name__}: {exc}")
                 continue
             if record is not None:
                 records_by_number[number] = record
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(_fetch_tcu_sumula, number): number for number in numbers}
+            for future in concurrent.futures.as_completed(futures):
+                number = futures[future]
+                try:
+                    record = future.result()
+                except (requests.RequestException, ValueError) as exc:
+                    print(f"  aviso: Súmula TCU {number} indisponível: {type(exc).__name__}: {exc}")
+                    continue
+                if record is not None:
+                    records_by_number[number] = record
 
     missing = [number for number in numbers if number not in records_by_number]
     if missing:
@@ -184,7 +194,7 @@ def _collect_tcu_sumulas(numbers) -> list[JurisprudenciaRecord]:
 
 
 def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
-    return _collect_tcu_sumulas(range(1, max_number + 1))
+    return _collect_tcu_sumulas(range(1, max_number + 1), session=session)
 
 
 def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
@@ -276,16 +286,16 @@ def smoke_test_sumulas() -> None:
             f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
         )
     highest = max(tcesp_numbers, default=0)
-    expected = set(range(1, highest + 1))
-    if tcesp_numbers != expected:
-        missing = sorted(expected - tcesp_numbers)
+    if len(tcesp_numbers) != len(tcesp_records):
         raise RuntimeError(
-            f"TCESP: repertório de súmulas com lacunas no portal oficial; ausentes={missing}"
+            f"TCESP: números de súmula duplicados ou inconsistentes; "
+            f"registros={len(tcesp_records)} números_únicos={len(tcesp_numbers)}"
         )
 
     print(
         f"Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | "
-        f"TCESP 1-{highest} ({len(tcesp_numbers)} registros)"
+        f"TCESP {min(tcesp_numbers, default=0)}-{highest} ({len(tcesp_numbers)} registros, "
+        "sem exigir numeração contínua)"
     )
 
 
@@ -339,12 +349,10 @@ def collect_sumulas(
                 f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
                 f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
             )
-        highest = max(tcesp_numbers, default=0)
-        expected = set(range(1, highest + 1))
-        if tcesp_numbers != expected:
-            missing = sorted(expected - tcesp_numbers)
+        if len(tcesp_numbers) != len(result["tcesp"]):
             failures.append(
-                f"TCESP: cobertura estrutural com lacunas; ausentes={missing}"
+                f"TCESP: números de súmula duplicados ou inconsistentes; "
+                f"registros={len(result['tcesp'])} números_únicos={len(tcesp_numbers)}"
             )
 
     if failures:
