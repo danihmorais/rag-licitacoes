@@ -1,7 +1,18 @@
-name: Validação manual das fontes legislativas
+name: Smoke das fontes jurídicas
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/legal-ingestion.yml'
+      - 'scripts/sync_sources.py'
+      - 'scripts/web_sources.py'
+      - 'scripts/sources.py'
+      - 'jurisprudencia/**'
+      - 'tests/**'
+      - 'requirements.txt'
 
 permissions:
   contents: read
@@ -11,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ingest:
+  smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -28,10 +39,45 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt pytest
 
-      - name: Sincronizar legislação e corpus disponível
+      - name: Sincronizar todas as leis
         run: |
           python scripts/sync_sources.py --legislation-only --strict --no-follow-links
 
-      - name: Testar código e política do RAG
+      - name: Coletar algumas matérias
         run: |
-          python -m pytest -q
+          set -o pipefail
+          python scripts/sync_sources.py --web-only --max-web-documents 2 --max-web-discovery-pages 8 2>&1 | tee web-smoke.log
+          count=$(grep -c '^OK web-' web-smoke.log || true)
+          echo "Fontes web com sucesso: $count"
+          test "$count" -ge 2
+
+      - name: Instalar Chromium para a coleta de jurisprudência
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Coletar poucas jurisprudências — TCU/STJ/STF/TJSP
+        run: |
+          python -m jurisprudencia.batch --tribunais tcu,stj,stf,tjsp --query "licitação" --limit 2 --per-query-limit 2 --min-records-per-tribunal 1 --strict --without-sumulas
+
+      - name: Probar TCESP com um registro (não bloqueante)
+        run: |
+          set +e
+          python -m jurisprudencia.batch --tribunais tcesp --query "licitação" --limit 1 --per-query-limit 1 --min-records-per-tribunal 1 --strict --without-sumulas
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::O endpoint do TCESP não respondeu ao smoke-test; os demais tribunais continuam sendo validados."
+          fi
+          exit 0
+
+      - name: Testes offline
+        run: python -m pytest -q
+
+      - name: Publicar evidências do smoke em caso de falha
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: legal-ingestion-smoke-debug
+          path: |
+            web-smoke.log
+            db/source_cache/
+          if-no-files-found: ignore
