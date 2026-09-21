@@ -1297,6 +1297,25 @@ class TJSPAdapter(JurisprudenciaAdapter):
                 if len(records) >= limit: return records[:limit]
         raise RuntimeError(f'TJSP não retornou registros estruturados para {query!r}.')
 
+def _find_query_form(soup: BeautifulSoup, keywords: tuple[str, ...]):
+    candidates = []
+    for form in soup.find_all('form'):
+        descriptor = clean_text(form.get_text(' ', strip=True)).casefold()
+        fields = clean_text(
+            ' '.join(
+                str(field.get('name') or '') + ' ' + str(field.get('id') or '') + ' ' + str(field.get('placeholder') or '')
+                for field in form.find_all(['input', 'textarea'])
+            )
+        ).casefold()
+        if any(keyword in descriptor or keyword in fields for keyword in keywords):
+            candidates.append(form)
+    return candidates[0] if candidates else None
+
+
+def _discover_form(soup: BeautifulSoup):
+    return _find_query_form(soup, ('jurisprud', 'pesquisa'))
+
+
 def adapters(session):
     return {
         'tcu': TCUAdapter(session),
