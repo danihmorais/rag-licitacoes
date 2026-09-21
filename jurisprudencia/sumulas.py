@@ -210,11 +210,10 @@ def discover_tcu_sumula_numbers(session=None) -> list[int]:
         try:
             record = _fetch_tcu_sumula(number, session)
         except requests.RequestException as exc:
-            print(
-                f"  aviso: descoberta da Súmula TCU {number} falhou: "
+            raise RuntimeError(
+                f"Falha de rede ao descobrir a Súmula TCU {number}: "
                 f"{type(exc).__name__}: {exc}"
-            )
-            continue
+            ) from exc
         if record is None:
             missing_streak += 1
         else:
