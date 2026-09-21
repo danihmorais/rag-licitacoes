@@ -200,35 +200,92 @@ def _collect_tcu_sumulas(numbers, session=None) -> list[JurisprudenciaRecord]:
     return sorted(records_by_number.values(), key=lambda item: int(item.numero_sumula or 0))
 
 
+TCU_SUMULA_DISCOVERY_BATCH = 24
+
+
+def _discover_tcu_sumula_records(session=None) -> list[JurisprudenciaRecord]:
+    """Descobre o catálogo atual sem depender de um limite numérico fixo."""
+    session = session or _thread_session()
+    records_by_number: dict[int, JurisprudenciaRecord] = {}
+    start_number = 1
+
+    while True:
+        batch_numbers = list(
+            range(start_number, start_number + TCU_SUMULA_DISCOVERY_BATCH)
+        )
+        missing_numbers: list[int] = []
+
+        for number in batch_numbers:
+            try:
+                record = _fetch_tcu_sumula(number, session)
+            except (requests.RequestException, ValueError) as exc:
+                print(
+                    f"  aviso: Súmula TCU {number} indisponível na descoberta HTTP: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                record = None
+            if record is None:
+                missing_numbers.append(number)
+            else:
+                records_by_number[number] = record
+
+        if missing_numbers:
+            try:
+                browser_records = asyncio.run(
+                    _collect_tcu_sumulas_browser(missing_numbers)
+                )
+            except Exception as exc:
+                print(
+                    f"  aviso: fallback Chromium na descoberta das Súmulas TCU "
+                    f"falhou: {type(exc).__name__}: {exc}"
+                )
+                browser_records = []
+
+            for record in browser_records:
+                number = int(record.numero_sumula or 0)
+                if number:
+                    records_by_number[number] = record
+
+        missing_tail = 0
+        for number in reversed(batch_numbers):
+            if number in records_by_number:
+                break
+            missing_tail += 1
+
+        if missing_tail >= TCU_SUMULA_MISSING_STREAK:
+            break
+
+        start_number += TCU_SUMULA_DISCOVERY_BATCH
+
+    return sorted(
+        records_by_number.values(),
+        key=lambda item: int(item.numero_sumula or 0),
+    )
+
+
 def discover_tcu_sumula_numbers(session=None) -> list[int]:
     """Descobre dinamicamente a numeração atual das Súmulas do TCU."""
-    session = session or _thread_session()
-    numbers: list[int] = []
-    missing_streak = 0
-    number = 1
-    while missing_streak < TCU_SUMULA_MISSING_STREAK:
-        try:
-            record = _fetch_tcu_sumula(number, session)
-        except requests.RequestException as exc:
-            raise RuntimeError(
-                f"Falha de rede ao descobrir a Súmula TCU {number}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        if record is None:
-            missing_streak += 1
-        else:
-            numbers.append(number)
-            missing_streak = 0
-        number += 1
-    return numbers
+    records = _discover_tcu_sumula_records(session=session)
+    return [
+        int(record.numero_sumula)
+        for record in records
+        if record.numero_sumula and record.numero_sumula.isdigit()
+    ]
 
 
-def collect_tcu_sumulas(session=None) -> list[JurisprudenciaRecord]:
+def collect_tcu_sumulas(
+    session=None,
+    max_number: int | None = None,
+) -> list[JurisprudenciaRecord]:
     session = session or _thread_session()
-    numbers = discover_tcu_sumula_numbers(session)
-    if not numbers:
-        return []
-    return _collect_tcu_sumulas(numbers, session=session)
+    if max_number is not None:
+        if max_number < 1:
+            return []
+        return _collect_tcu_sumulas(
+            range(1, max_number + 1),
+            session=session,
+        )
+    return _discover_tcu_sumula_records(session=session)
 
 
 def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
