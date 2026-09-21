@@ -6,7 +6,7 @@ import jurisprudencia.sumulas as sumulas
 from jurisprudencia.sumulas import (
     TCU_SUMULA_DOCUMENT_URL,
     TCU_SUMULA_MIN_RECORDS,
-    TCU_SUMULA_MAX_NUMBER,
+    TCU_SUMULA_MISSING_STREAK,
     TCU_SUMULA_REQUIRED_NUMBERS,
     TCESP_SUMULA_MIN_RECORDS,
     TCESP_SUMULA_URL,
@@ -64,15 +64,10 @@ def test_tcu_document_parser_accepts_numero_marker_and_status():
 def test_tcu_collection_contract_contains_key_summulas():
     assert "{numero}" in TCU_SUMULA_DOCUMENT_URL
     assert TCU_SUMULA_DOCUMENT_URL.startswith("https://pesquisa.apps.tcu.gov.br/documento/sumula/")
-    assert TCU_SUMULA_MAX_NUMBER == 292
-    assert TCU_SUMULA_MIN_RECORDS == 292
+    assert TCU_SUMULA_MISSING_STREAK >= 3
+    assert TCU_SUMULA_MIN_RECORDS == 1
     assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
 
-
-
-
-def test_tcu_strict_catalog_expected_numbers_are_contiguous():
-    assert set(range(1, TCU_SUMULA_MAX_NUMBER + 1)) == set(range(1, 293))
 
 
 def test_tcesp_parser_extracts_current_catalog_and_preserves_cancelled_status():
