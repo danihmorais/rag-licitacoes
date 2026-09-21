@@ -1,3 +1,0 @@
-0000000000000000000000000000000000000000 e5da476d7a0ef03c71c797a373bf9ea7d306770f root <root@vm.(none)> 1789837365 +0000	clone: from https://github.com/danihmorais/rag-licitacoes.git
-e5da476d7a0ef03c71c797a373bf9ea7d306770f e5da476d7a0ef03c71c797a373bf9ea7d306770f root <root@vm.(none)> 1789838596 +0000	checkout: moving from main to main
-e5da476d7a0ef03c71c797a373bf9ea7d306770f 1be2249333869b9cd060da8ae9f0cd9f99c67a02 root <root@vm.(none)> 1789838596 +0000	pull --ff-only origin main: Fast-forward
