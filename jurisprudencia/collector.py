@@ -817,15 +817,6 @@ class TCESPAdapter(JurisprudenciaAdapter):
             if len(records) >= limit:
                 return records[:limit]
 
-        if total is not None and total > 0:
-            expected_records = min(total, limit)
-            if len(records) < expected_records:
-                print(
-                    f'aviso: TCESP informou {total} registros para {variant!r}, mas apenas {len(records)} '
-                    f'foram estruturados (esperados até {expected_records}); a página pode ter mudado '
-                    'e a extração está potencialmente parcial.'
-                )
-
         if not records:
             process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
             for anchor in soup.find_all('a', href=True):
@@ -902,30 +893,40 @@ class TCESPAdapter(JurisprudenciaAdapter):
                     return records[:limit]
 
         browser_error = None
-        if total is not None and total > 0 and not records:
-            try:
-                browser_records = self._browser_records(
-                    variant,
-                    limit,
-                    detail=detail,
-                    with_content=with_content,
-                    seen=seen,
+        if total is not None and total > 0:
+            expected_records = min(total, limit)
+            if len(records) < expected_records:
+                try:
+                    browser_records = self._browser_records(
+                        variant,
+                        limit,
+                        detail=detail,
+                        with_content=with_content,
+                        seen=seen,
+                    )
+                except Exception as exc:
+                    browser_error = exc
+                    browser_records = []
+                if browser_records:
+                    records.extend(browser_records)
+                if len(records) >= expected_records:
+                    return records[:limit]
+                detail_message = (
+                    f'; fallback Playwright falhou: {type(browser_error).__name__}: {browser_error}'
+                    if browser_error
+                    else '; fallback Playwright não encontrou links de processos'
                 )
-            except Exception as exc:
-                browser_error = exc
-                browser_records = []
-            if browser_records:
-                return browser_records[:limit]
-            detail_message = (
-                f'; fallback Playwright falhou: {type(browser_error).__name__}: {browser_error}'
-                if browser_error
-                else '; fallback Playwright não encontrou links de processos'
-            )
-            raise RuntimeError(
-                f'TCESP informou {total} registros para a consulta {variant!r}, '
-                'mas não foi possível localizar uma linha de resultado processável'
-                f'{detail_message}.'
-            )
+                print(
+                    f'aviso: TCESP informou {total} registros para {variant!r}, mas apenas {len(records)} '
+                    f'foram estruturados (esperados até {expected_records}){detail_message}; '
+                    'a extração está potencialmente parcial.'
+                )
+                if not records and browser_error:
+                    raise RuntimeError(
+                        f'TCESP informou {total} registros para a consulta {variant!r}, '
+                        'mas não foi possível localizar uma linha de resultado processável'
+                        f'{detail_message}.'
+                    ) from browser_error
 
         if total is None:
             form = soup.find('form')
