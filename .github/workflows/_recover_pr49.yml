@@ -1,0 +1,51 @@
+name: Recover PR49 snapshot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "recovery/READY"
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    if: hashFiles('recovery/READY') != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore uploaded snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f recovery/READY
+          mkdir -p /tmp/rag-recovery
+          cat recovery/.part-* > /tmp/rag-recovery/rag-licitacoes.zip.b64
+          base64 -d /tmp/rag-recovery/rag-licitacoes.zip.b64 > /tmp/rag-recovery/rag-licitacoes.zip
+
+          rm -rf /tmp/rag-recovery/src
+          mkdir -p /tmp/rag-recovery/src
+          unzip -q /tmp/rag-recovery/rag-licitacoes.zip -d /tmp/rag-recovery/src
+
+          repo_src="/tmp/rag-recovery/src/rag-licitacoes"
+          test -d "$repo_src/.git"
+
+          git -C "$repo_src" clean -fdx
+          git -C "$repo_src" checkout-index -a
+
+          find . -mindepth 1 -maxdepth 1 ! -name ".git" ! -name "recovery" -exec rm -rf {} +
+          rsync -a --delete --exclude=".git/" --exclude="recovery/" "$repo_src/" "./"
+
+          rm -rf recovery
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git commit -m "Restore exact PR49 snapshot from uploaded archive"
+          git push origin HEAD:main
