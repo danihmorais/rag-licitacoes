@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.pytest_cache/
+data/cache/
+data/bm25.json
+data/ingest_cache.json
+data/jurisprudencia/
+*.log
