@@ -119,6 +119,32 @@ def test_tcesp_adapter_accepts_current_result_rows_without_css_class():
     assert records[0].url_oficial == "https://www.tce.sp.gov.br/jurisprudencia/exibir?codigo=560098925"
     assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
 
+def test_tcesp_rendered_fallback_does_not_emit_false_partial_warning(monkeypatch, capsys):
+    html = '''<html><body>
+    <h3>Foram encontrados 121068 registros</h3>
+    <div class="resultado">Resultado renderizado pelo navegador.</div>
+    </body></html>'''.encode("utf-8")
+    record = JurisprudenciaRecord(
+        tribunal="TCESP",
+        numero_processo="5600/989/25",
+        data_autuacao="17/03/2025",
+        ementa="Licitação e qualificação técnica.",
+        tipo_decisao="Jurisprudência",
+        origem="TCESP — Pesquisa de Jurisprudência",
+        url_oficial="https://www.tce.sp.gov.br/jurisprudencia/exibir?codigo=560098925",
+    )
+    adapter = TCESPAdapter(FakeSession([
+        FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")
+    ]))
+    monkeypatch.setattr(adapter, "_browser_records", lambda *args, **kwargs: [record])
+    records = adapter.search("licitação", 1)
+    captured = capsys.readouterr().out
+
+    assert len(records) == 1
+    assert records[0].numero_processo == "5600/989/25"
+    assert "potencialmente parcial" not in captured
+
+
 def test_tcesp_adapter_falls_back_to_process_links_when_rows_are_not_structured():
     html = '''<html><body>
     <h3>Foram encontrados 353880 registros</h3>
