@@ -2,6 +2,15 @@ name: Smoke das fontes jurídicas
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/legal-ingestion.yml'
+      - 'scripts/sync_sources.py'
+      - 'scripts/web_sources.py'
+      - 'scripts/sources.py'
+      - 'jurisprudencia/**'
+      - 'tests/**'
+      - 'requirements.txt'
   push:
     branches:
       - main
@@ -18,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: legal-ingestion-${{ github.ref }}
+  group: legal-ingestion-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,35 +48,45 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt pytest
 
-      - name: Sincronizar todas as leis
+      - name: Sincronizar todas as legislações explícitas do catálogo
         run: |
           python scripts/sync_sources.py --legislation-only --strict --no-follow-links
 
-      - name: Coletar algumas matérias
+      - name: Coletar exatamente 5 matérias por website
         run: |
           set -o pipefail
-          python scripts/sync_sources.py --web-only --max-web-documents 2 --max-web-discovery-pages 8 2>&1 | tee web-smoke.log
-          count=$(grep -c '^OK web-' web-smoke.log || true)
-          echo "Fontes web com sucesso: $count"
-          test "$count" -ge 2
+          python scripts/sync_sources.py             --web-only             --max-web-documents 5             --max-web-discovery-pages 25             --strict             2>&1 | tee web-smoke.log
+
+          expected_web_sources=(
+            web-nova-lei-licitacao
+            web-licitacoes-publicas-blog
+            web-conlicitacao
+            web-zenite
+            web-migalhas
+            web-conjur
+          )
+
+          for source_id in "${expected_web_sources[@]}"; do
+            if ! grep -Eq "^OK ${source_id}: 5 matérias aceitas " web-smoke.log; then
+              echo "::error::${source_id} não entregou exatamente 5 matérias válidas."
+              grep -E "^OK ${source_id}:|^FAIL ${source_id}:" web-smoke.log || true
+              exit 1
+            fi
+          done
+
+          echo "Todos os 6 websites entregaram exatamente 5 matérias válidas."
 
       - name: Instalar Chromium para a coleta de jurisprudência
         run: |
           python -m playwright install --with-deps chromium
 
-      - name: Coletar poucas jurisprudências — TCU/STJ/STF/TJSP
+      - name: Coletar 5 registros por tribunal
         run: |
-          python -m jurisprudencia.batch --tribunais tcu,stj,stf,tjsp --query "licitação" --limit 2 --per-query-limit 2 --min-records-per-tribunal 1 --strict --without-sumulas
+          python -m jurisprudencia.batch             --tribunais tcu,stj,stf,tjsp,tcesp             --query "licitação"             --limit 5             --per-query-limit 5             --min-records-per-tribunal 5             --strict             --without-sumulas
 
-      - name: Probar TCESP com um registro (não bloqueante)
+      - name: Coletar todas as Súmulas TCU e TCESP
         run: |
-          set +e
-          python -m jurisprudencia.batch --tribunais tcesp --query "licitação" --limit 1 --per-query-limit 1 --min-records-per-tribunal 1 --strict --without-sumulas
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "::warning::O endpoint do TCESP não respondeu ao smoke-test; os demais tribunais continuam sendo validados."
-          fi
-          exit 0
+          python -m jurisprudencia.sumulas --strict
 
       - name: Testes offline
         run: python -m pytest -q
