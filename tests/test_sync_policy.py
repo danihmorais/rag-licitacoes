@@ -1,6 +1,10 @@
-from scripts.sync_sources import strict_failure_ids
+from scripts.sync_sources import (
+    _expected_normative_number,
+    _source_urls,
+    apply_runtime_limits,
+    strict_failure_ids,
+)
 from scripts.sources import SOURCE_BY_ID
-from scripts.sync_sources import _expected_normative_number, _source_urls
 
 
 def test_constitution_year_is_not_treated_as_normative_number():
@@ -46,3 +50,35 @@ def test_strict_failure_ids_ignores_only_discovery_indexes():
         {"id": "indice-b", "index_only": True},
     ]
     assert strict_failure_ids(sources, ["indice-a", "indice-b"]) == []
+
+
+def test_runtime_limits_cap_only_web_sources_without_mutating_catalog():
+    sources = [
+        {"id": "web", "source_type": "web_articles", "max_documents": 250, "discovery_max_pages": 100},
+        {"id": "lei", "source_role": "norma", "max_documents": 10, "discovery_max_pages": 10},
+    ]
+
+    limited = apply_runtime_limits(
+        sources,
+        max_web_documents=2,
+        max_web_discovery_pages=5,
+    )
+
+    assert limited[0]["max_documents"] == 2
+    assert limited[0]["discovery_max_pages"] == 5
+    assert limited[1] == sources[1]
+    assert sources[0]["max_documents"] == 250
+    assert sources[0]["discovery_max_pages"] == 100
+
+
+def test_runtime_limits_do_not_expand_existing_web_bounds():
+    source = {"id": "web", "source_type": "web_articles", "max_documents": 2, "discovery_max_pages": 4}
+
+    limited = apply_runtime_limits(
+        [source],
+        max_web_documents=10,
+        max_web_discovery_pages=10,
+    )
+
+    assert limited[0]["max_documents"] == 2
+    assert limited[0]["discovery_max_pages"] == 4
