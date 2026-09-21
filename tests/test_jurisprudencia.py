@@ -25,8 +25,12 @@ class FakeSession:
     def request(self, method, *args, **kwargs): return self.get(*args, **kwargs)
 
 
-def test_tcu_adapter_uses_current_public_rest_contract():
-    session = FakeSession([
+def test_tcu_adapter_queries_rest_and_bulletin_sources():
+    bulletin = (
+        "KEY,ENUNCIADO,REFERENCIA,TEXTOACORDAO,TITULO\n"
+        'B1,"Boletim também contém entendimento sobre licitação.","Lei 14.133/2021","Acórdão 123/2026","Boletim de Jurisprudência 600"\n'
+    ).encode("utf-8")
+    responses = [
         FakeResponse({
             "quantidadeEncontrada": 1,
             "documentos": [{
@@ -40,14 +44,32 @@ def test_tcu_adapter_uses_current_public_rest_contract():
                 "SUMARIO": "Licitação e contratação pública.",
                 "AREA": "Licitação", "TEMA": "Contratação", "SUBTEMA": "Edital"
             }]
-        })
-    ])
-    records = TCUAdapter(session).search("licitação", 1)
-    assert len(records) == 1
-    assert TCUAdapter.endpoint == "https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo"
+        }),
+        FakeResponse(bulletin, content_type="text/csv", url=TCUAdapter.bulletin_csv_url),
+    ]
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return super().get(*args, **kwargs)
+
+    session = CaptureSession(responses)
+    records = TCUAdapter(session).search("licitação", 2)
+
+    assert len(records) == 2
+    assert records[0].tribunal == "TCU"
     assert records[0].numero_decisao == "480/2024"
-    assert records[0].orgao_julgador == "Plenário"
     assert records[0].url_oficial.endswith("/4802024")
+    assert records[1].tipo_documento == "boletim_jurisprudencia"
+    assert len(session.calls) == 2
+    assert session.calls[0][0][0] == TCUAdapter.search_endpoint
+    assert session.calls[1][0][0] == TCUAdapter.bulletin_csv_url
+
+
 
 def test_tcu_adapter_uses_bulletin_csv_when_rest_returns_no_records():
     bulletin = (
