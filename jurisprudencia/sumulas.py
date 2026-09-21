@@ -22,8 +22,8 @@ TCU_SUMULA_SEARCH_URL = (
 )
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 
-TCU_SUMULA_MAX_NUMBER = 400
-TCU_SUMULA_MIN_RECORDS = 295
+TCU_SUMULA_MAX_NUMBER = 292
+TCU_SUMULA_MIN_RECORDS = 292
 TCU_SUMULA_BROWSER_CONCURRENCY = 6
 TCU_SUMULA_BROWSER_TIMEOUT_MS = 60000
 TCU_SUMULA_REQUIRED_NUMBERS = (222, 247, 259, 263, 292)
@@ -119,8 +119,15 @@ async def _fetch_tcu_sumula_browser(page, numero: int) -> JurisprudenciaRecord |
         if response is not None and response.status >= 400:
             return None
         await page.wait_for_function(
-            "(needle) => document.body && document.body.innerText.includes(needle)",
-            arg=f"SÚMULA TCU {numero}",
+            """(number) => {
+                const text = document.body ? document.body.innerText : "";
+                const pattern = new RegExp(
+                    "S[ÚU]MULA\\\\s+TCU\\\\s+(?:N[ºO°]?\\\\s*)?" + number + "\\\\b",
+                    "i",
+                );
+                return pattern.test(text);
+            }""",
+            arg=str(numero),
             timeout=30000,
         )
         text = await page.locator("body").inner_text()
@@ -351,11 +358,13 @@ def collect_sumulas(
             for item in result["tcesp"]
             if item.numero_sumula and item.numero_sumula.isdigit()
         }
-        if len(tcesp_numbers) < TCESP_SUMULA_MIN_RECORDS:
-            failures.append(
-                f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
-                f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
-            )
+        expected_tcesp_numbers = set(range(1, TCESP_SUMULA_MIN_RECORDS + 1))
+        missing = sorted(expected_tcesp_numbers - tcesp_numbers)
+        extra = sorted(tcesp_numbers - expected_tcesp_numbers)
+        if missing:
+            failures.append(f"TCESP: súmulas ausentes={missing}")
+        if extra:
+            failures.append(f"TCESP: números fora do catálogo esperado={extra}")
         if len(tcesp_numbers) != len(result["tcesp"]):
             failures.append(
                 f"TCESP: números de súmula duplicados ou inconsistentes; "
