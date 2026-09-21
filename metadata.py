@@ -1,103 +1,223 @@
-from __future__ import annotations
 import json
 import re
-import warnings
 from pathlib import Path
-from typing import Any
+from urllib.parse import urlparse
 
-TRIBUNAL_AUTHORITY = {"STF": 2, "STJ": 3, "TCU": 3, "TCESP": 4, "TJSP": 4}
-ALLOWED_ROLES = {"norma", "jurisprudencia", "jurisprudencia_controle", "orientacao_oficial", "doutrina"}
+MODALIDADES = ['Pregão Eletrônico', 'Pregão Presencial', 'Concorrência Eletrônica', 'Concorrência', 'Dispensa Eletrônica', 'Inexigibilidade de Licitação', 'Chamamento Público', 'Credenciamento', 'Leilão']
+TIPOS = ['Menor Preço', 'Maior Desconto', 'Melhor Técnica', 'Técnica e Preço', 'Maior Lance', 'Maior Oferta']
+PROCESSO_RE = re.compile(r'processo\s*(?:administrativo)?\s*n[ºo°.]*\s*[:\-]?\s*([\d./\-]{4,30})', re.I)
+REVISION_RE = re.compile(r'[._](\d{8})\.pdf$', re.I)
+SP_NAME_RE = re.compile(r'(?:^|[_\-.])sp(?:[_\-.]|$)', re.I)
+FEDERAL_14133_RE = re.compile(r'(?:^|[_\-.])(?:l|lei)?14[ ._\-]?133(?:[_\-.]|$)', re.I)
+NORMA_HEADER_RE = re.compile(
+    r'(?im)^\s*(?:lei|decreto|decreto-lei|portaria|resolu[cç][aã]o|instru[cç][aã]o\s+normativa|emenda\s+constitucional|lei\s+complementar)'
+    r'\s+(?:federal\s+)?n?[ºo°.]*\s*[\d.\-/A-Za-z]*\s*,?\s*de\s+'
+    r'(?:\d{1,2}[ºo]?\s+de\s+)?[^\n\d]{3,40}\s+de\s+(20\d{2})\b'
+)
 
-ANO_RE = re.compile(r"\b(20\d{2})\b")
-TRIBUNAL_RE = re.compile(r"\b(STF|STJ|TCU|TCESP|TJSP)\b", re.I)
-PROCESSO_RE = re.compile(r"\b(?:processo|proc\.?|autos)\s*(?:n[ºo°]?\s*)?([\w./-]+)", re.I)
 
-def _read_sidecar(path: Path) -> dict[str, Any]:
-    sidecar = Path(str(path) + ".json")
+def _first(values, text):
+    for value in values:
+        if re.search(re.escape(value), text, re.I):
+            return value
+    return None
+
+
+def _header_value(sample, label):
+    match = re.search(rf'(?im)^\s*{re.escape(label)}\s*:\s*(.+)$', sample)
+    return match.group(1).strip() if match else None
+
+
+def _read_sidecar(path):
+    sidecar = path.with_suffix('.json')
     if not sidecar.exists():
         return {}
     try:
-        value = json.loads(sidecar.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError("sidecar precisa ser objeto JSON")
-        return value
-    except Exception as exc:
-        raise ValueError(f"Sidecar inválido: {sidecar}: {exc}") from exc
+        values = json.loads(sidecar.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return values if isinstance(values, dict) else {}
 
-def _header_year(text: str) -> int | None:
-    m = re.search(r"\b(?:lei|decreto|portaria|resolu[cç][aã]o|instru[cç][aã]o normativa)[^\n]{0,180}\b(?:de|em)\s+\d{1,2}\s+de\s+[a-zç]+\s+de\s+(20\d{2})\b", text, re.I)
-    return int(m.group(1)) if m else None
 
-def _infer(filename: str, sample: str) -> dict[str, Any]:
-    name = filename.lower()
-    text = sample[:30000]
-    tribunal_match = TRIBUNAL_RE.search(text) or TRIBUNAL_RE.search(filename)
-    tribunal = tribunal_match.group(1).upper() if tribunal_match else None
-    year = _header_year(text)
-    if year is None:
-        years = ANO_RE.findall(text)
-        year = int(years[0]) if years else None
+def _source(path):
+    return _source_with_explicit(path, {})
 
-    if tribunal in TRIBUNAL_AUTHORITY:
-        role = "jurisprudencia" if tribunal in {"STF", "STJ"} else "jurisprudencia_controle"
-        return {
-            "jurisdicao": "federal" if tribunal in {"STF", "STJ", "TCU"} else "estadual_sp",
-            "esfera": "federal" if tribunal in {"STF", "STJ", "TCU"} else "estadual",
-            "source_role": role,
-            "authority_level": TRIBUNAL_AUTHORITY[tribunal],
-            "tribunal": tribunal,
-            "ano": year,
-        }
 
-    if re.search(r"lei\s*14[ ._-]?133|l\.?\s*14[ ._-]?133", name):
-        jurisdicao, esfera = "federal", "federal"
-    elif re.search(r"(?:^|[_ -])sp(?:[_ -]|$)|s[aã]o[_ -]?paulo", name):
-        jurisdicao, esfera = "estadual_sp", "estadual"
-    elif any(k in name for k in ("doutrina", "manual", "guia", "cartilha", "orientacao", "orientação")):
-        jurisdicao, esfera = "federal", "federal"
-    else:
-        jurisdicao, esfera = None, None
-
-    role = "orientacao_oficial" if any(k in name for k in ("manual","guia","cartilha","orienta")) else "norma"
-    authority = 1 if role == "norma" else 5
-    if not jurisdicao:
-        warnings.warn(f"Jurisdição não determinada para {filename}; use sidecar JSON.")
-    return {
-        "jurisdicao": jurisdicao,
-        "esfera": esfera,
-        "source_role": role,
-        "authority_level": authority,
-        "tribunal": tribunal,
-        "ano": year,
+def _source_with_explicit(path, explicit):
+    name = path.name.lower()
+    result = {
+        'jurisdicao': None, 'esfera': None, 'orgao': None, 'tribunal': None,
+        'tipo_documento': None, 'source_role': 'desconhecido', 'authority_level': None,
+        'ramo_direito': None, 'normative_rank': None, 'status': 'desconhecido', 'fonte_oficial': None,
+        'classificacao_ambigua': False,
+        'metadata_ambiguous': False,
     }
+    explicit_scope = any(explicit.get(key) not in (None, '') for key in ('jurisdicao', 'esfera', 'orgao', 'tribunal'))
+    if explicit_scope:
+        return result
+    sp_token = bool(SP_NAME_RE.search(name))
+    federal_14133 = bool(FEDERAL_14133_RE.search(name)) or bool(re.search(r'lei.?14[ ._\-]?133', name, re.I))
+    if sp_token and federal_14133:
+        result['classificacao_ambigua'] = True
+        result['metadata_ambiguous'] = True
+        return result
+    if 'tcesp' in name or 'tribunal de contas do estado de são paulo' in name or 'tribunal de contas do estado de sao paulo' in name:
+        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TCESP', tribunal='TCESP', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
+    elif 'tcu' in name:
+        result.update(jurisdicao='federal', esfera='federal', orgao='TCU', tribunal='TCU', tipo_documento='jurisprudencia', source_role='jurisprudencia_controle', authority_level=2)
+    elif 'stj' in name:
+        result.update(jurisdicao='federal', esfera='federal', orgao='STJ', tribunal='STJ', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
+    elif 'stf' in name:
+        result.update(jurisdicao='federal', esfera='federal', orgao='STF', tribunal='STF', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
+    elif 'tjsp' in name:
+        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='TJSP', tribunal='TJSP', tipo_documento='jurisprudencia', source_role='jurisprudencia', authority_level=2)
+    elif 'constituicao' in name:
+        result.update(jurisdicao='estadual_sp' if 'estadual' in name else 'federal', esfera='estadual' if 'estadual' in name else 'federal', orgao='Constituição', tipo_documento='constituicao', source_role='norma', authority_level=1)
+    elif federal_14133:
+        result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='lei', source_role='norma', authority_level=1)
+    elif any(x in name for x in ('sustent', 'ambient', 'engenharia', 'obras')):
+        result.update(jurisdicao='federal', esfera='federal', orgao='AGU', tipo_documento='guia', source_role='orientacao_oficial', authority_level=3)
+    elif sp_token:
+        result.update(jurisdicao='estadual_sp', esfera='estadual', orgao='Estado de São Paulo', source_role='norma', authority_level=1)
+    elif any(x in name for x in ('lei_', 'decreto_', 'decretolei', 'resolucao_', 'lindb')):
+        result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='norma', source_role='norma', authority_level=1)
+    elif 'doutrina' in name:
+        result.update(tipo_documento='doutrina', source_role='doutrina', authority_level=4)
+    elif any(x in name for x in ('direito_administrativo', 'lindb', 'improbidade')):
+        result.update(jurisdicao='federal', esfera='federal', orgao='Legislação Federal', tipo_documento='mapa_fontes', source_role='orientacao_oficial', authority_level=3)
+    return result
 
-def extract_metadata(path: str | Path, sample: str, explicit: dict[str, Any] | None = None) -> dict[str, Any]:
-    p = Path(path)
-    sidecar = _read_sidecar(p)
-    data: dict[str, Any] = _infer(p.name, sample)
-    data.update(sidecar)
+
+
+def _normative_rank(source_role, tipo_documento):
+    if source_role != 'norma':
+        return None
+    tipo = str(tipo_documento or '').casefold()
+    if 'constituicao' in tipo:
+        return 1
+    if tipo in {'lei', 'lei_complementar', 'lei_ordinaria', 'decreto_lei', 'emenda_constitucional'} or tipo.startswith('lei_'):
+        return 2
+    if tipo == 'decreto' or tipo.startswith('decreto_'):
+        return 3
+    if tipo in {'instrucao_normativa', 'portaria', 'resolucao', 'deliberacao', 'ato_normativo'}:
+        return 4
+    return 4
+
+
+REGIME_CANONICAL = {
+    'lei_14133': 'Lei 14.133/2021',
+    'lei_8666': 'Lei 8.666/1993',
+    'lei_10520': 'Lei 10.520/2002',
+    'lei_12462': 'Lei 12.462/2011',
+    'jurisprudencia': 'Jurisprudência',
+    'transicao': 'Transição legislativa',
+    'nao_especificado': 'Não especificado',
+}
+
+
+def _detect_regime(text, source_values):
+    source_id = str(source_values.get('source_id') or '').casefold()
+    title = str(source_values.get('title') or '').casefold()
+    haystack = f'{source_id} {title} {text[:40000]}'
+    rules = (
+        ('lei_14133', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?14[.\- ]133\b', re.I)),
+        ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\b', re.I)),
+        ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\b', re.I)),
+        ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\b', re.I)),
+    )
+    explicit = source_values.get('regime_juridico') or source_values.get('regime')
     if explicit:
-        data.update(explicit)
+        explicit_norm = str(explicit).strip().casefold()
+        for key, label in REGIME_CANONICAL.items():
+            if explicit_norm in {key, label.casefold()}:
+                return key, label
+        return str(explicit).strip(), str(explicit).strip()
+    detected = [key for key, pattern in rules if pattern.search(haystack)]
+    if len(detected) > 1:
+        return 'transicao', REGIME_CANONICAL['transicao']
+    if detected:
+        key = detected[0]
+        return key, REGIME_CANONICAL[key]
+    if source_values.get('tipo_documento') == 'jurisprudencia' or source_values.get('source_role') in {'jurisprudencia', 'jurisprudencia_controle'}:
+        return 'jurisprudencia', REGIME_CANONICAL['jurisprudencia']
+    return 'nao_especificado', REGIME_CANONICAL['nao_especificado']
 
-    tribunal = str(data.get("tribunal") or "").upper() or None
-    if tribunal in TRIBUNAL_AUTHORITY:
-        data["tribunal"] = tribunal
-        data["authority_level"] = TRIBUNAL_AUTHORITY[tribunal]
-        if tribunal in {"STF", "STJ", "TCU"}:
-            data.setdefault("jurisdicao", "federal")
-            data.setdefault("esfera", "federal")
+
+def embedding_metadata_prefix(metadata):
+    regime = metadata.get('norma_canonica') or metadata.get('regime_juridico') or REGIME_CANONICAL['nao_especificado']
+    status = metadata.get('status') or 'desconhecido'
+    esfera = metadata.get('esfera') or 'desconhecida'
+    jurisdicao = metadata.get('jurisdicao') or 'desconhecida'
+    return (
+        f'[REGIME: {regime} | STATUS: {status} | ESFERA: {esfera} | '
+        f'JURISDIÇÃO: {jurisdicao}]'
+    )
+
+def extract_metadata(text, pdf_path):
+    path = Path(pdf_path)
+    sample = text[:30000]
+    sidecar_values = _read_sidecar(path)
+    source_values = _source_with_explicit(path, sidecar_values)
+    metadata = {
+        'municipio': None, 'modalidade': _first(MODALIDADES, sample), 'ano': None,
+        'processo': None, 'tipo': _first(TIPOS, sample), 'data_versao': None,
+        'data_publicacao': None, 'data_vigencia': None, 'revogado': None,
+        'norma_alteradora': None, 'norm_numero': None, 'norm_ano': None,
+        'effective_from': None, 'effective_to': None, 'retrieved_at': None,
+        'ramo_direito': None, 'fonte_host': None,
+        'regime_juridico': None, 'norma_canonica': None,
+        **source_values,
+    }
+    tribunal = _header_value(sample, 'TRIBUNAL')
+    if tribunal and not sidecar_values.get('tribunal'):
+        metadata['tribunal'] = tribunal
+        metadata['orgao'] = tribunal
+        metadata['tipo_documento'] = 'jurisprudencia'
+        metadata['status'] = 'jurisprudencia'
+        if tribunal not in {'STF', 'STJ', 'TCU', 'TCESP', 'TJSP'}:
+            metadata['metadata_ambiguous'] = True
         else:
-            data.setdefault("jurisdicao", "estadual_sp")
-            data.setdefault("esfera", "estadual")
-
-    if data.get("source_role") not in ALLOWED_ROLES:
-        data["source_role"] = "norma"
-
-    data.setdefault("source", p.name)
-    data.setdefault("title", p.stem)
-    data.setdefault("vigente", True)
-    data.setdefault("municipio", None)
-    data.setdefault("inicio_vigencia", None)
-    data.setdefault("fim_vigencia", None)
-    data.setdefault("document_key", p.stem.lower())
-    return data
+            metadata['source_role'] = 'jurisprudencia_controle' if tribunal in {'TCU', 'TCESP'} else 'jurisprudencia'
+            metadata['authority_level'] = 2
+            metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+            metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+    processo_header = _header_value(sample, 'PROCESSO')
+    if processo_header and not sidecar_values.get('processo'):
+        metadata['processo'] = processo_header
+    for label, key in (('DECISÃO/ACÓRDÃO', 'numero_decisao'), ('RELATOR', 'relator'), ('DATA DO JULGAMENTO/SESSÃO', 'data_julgamento')):
+        value = _header_value(sample, label)
+        if value and not sidecar_values.get(key):
+            metadata[key] = value
+    match = PROCESSO_RE.search(sample)
+    if match and not metadata.get('processo'):
+        metadata['processo'] = match.group(1).strip(' .-')
+    year_match = NORMA_HEADER_RE.search(sample[:12000])
+    if year_match:
+        year = int(year_match.group(1))
+        metadata['ano'] = year
+        metadata['norm_ano'] = year
+    revision_match = REVISION_RE.search(path.name)
+    if revision_match:
+        metadata['data_versao'] = f'{revision_match.group(1)[4:]}-{revision_match.group(1)[2:4]}-{revision_match.group(1)[:2]}'
+    for key, value in sidecar_values.items():
+        if value not in (None, ''):
+            metadata[key] = value
+    tribunal = str(metadata.get('tribunal') or '').upper()
+    if tribunal:
+        inferred_authority = {'STF': 2, 'STJ': 2, 'TCU': 2, 'TCESP': 2, 'TJSP': 2}.get(tribunal)
+        if inferred_authority is None:
+            metadata['metadata_ambiguous'] = True
+        else:
+            metadata['authority_level'] = inferred_authority
+            metadata['jurisdicao'] = 'estadual_sp' if tribunal in {'TCESP', 'TJSP'} else 'federal'
+            metadata['esfera'] = 'estadual' if metadata['jurisdicao'] == 'estadual_sp' else 'federal'
+    if metadata.get('classificacao_ambigua'):
+        metadata['metadata_ambiguous'] = True
+    regime_key, regime_label = _detect_regime(sample, {**source_values, **metadata})
+    metadata['regime_juridico'] = regime_key
+    metadata['norma_canonica'] = regime_label
+    if metadata.get('normative_rank') is None:
+        metadata['normative_rank'] = _normative_rank(metadata.get('source_role'), metadata.get('tipo_documento'))
+    if metadata.get('fonte_oficial'):
+        metadata['fonte_host'] = urlparse(str(metadata['fonte_oficial'])).netloc
+    return metadata

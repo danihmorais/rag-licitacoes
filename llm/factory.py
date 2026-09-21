@@ -1,15 +1,42 @@
-from __future__ import annotations
+import config
 
-from .openai_compatible import OpenAICompatibleLLM
+from .base import LLMProvider
+from .gemini import GeminiProvider
+from .ollama import OllamaProvider
+from .openai_compatible import OpenAICompatibleProvider
 
-def create_llm(provider: str | None = None):
-    name = (provider or "openai").lower()
-    if name in {"openai", "openai_compatible", "unsloth"}:
-        return OpenAICompatibleLLM()
-    if name == "ollama":
-        from .ollama import OllamaLLM
-        return OllamaLLM()
-    if name == "gemini":
-        from .gemini import GeminiLLM
-        return GeminiLLM()
-    raise ValueError(f"Provider não suportado: {provider}")
+
+def get_llm_provider() -> LLMProvider:
+    provider = config.LLM_PROVIDER.strip().lower()
+
+    if provider == 'ollama':
+        return OllamaProvider(
+            host=config.OLLAMA_HOST,
+            model=config.LLM_MODEL,
+            temperature=config.LLM_TEMPERATURE,
+            timeout=config.LLM_TIMEOUT,
+            num_ctx=config.OLLAMA_NUM_CTX,
+        )
+
+    if provider in {'openai_compatible', 'openai-compatible', 'openrouter'}:
+        return OpenAICompatibleProvider(
+            base_url=config.OPENAI_COMPATIBLE_BASE_URL,
+            api_key=config.OPENAI_COMPATIBLE_API_KEY,
+            model=config.LLM_MODEL,
+            temperature=config.LLM_TEMPERATURE,
+            timeout=config.LLM_TIMEOUT,
+            max_tokens=config.LLM_MAX_TOKENS,
+        )
+
+    if provider == 'gemini':
+        return GeminiProvider(
+            api_key=config.GEMINI_API_KEY,
+            model=config.LLM_MODEL,
+            temperature=config.LLM_TEMPERATURE,
+            timeout=config.LLM_TIMEOUT,
+        )
+
+    raise ValueError(
+        f"LLM_PROVIDER inválido: {config.LLM_PROVIDER!r}. "
+        "Use 'ollama', 'openai_compatible' ou 'gemini'."
+    )

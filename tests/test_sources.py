@@ -1,0 +1,272 @@
+from scripts.sources import SOURCES
+from pathlib import Path
+import pytest
+
+from scripts.sync_sources import discover_links, normalized_pattern, validate
+
+
+def test_pdf_follow_pattern_accepts_normal_and_double_escaped_regex():
+    normal = "\\.pdf(?:$|\\?)"
+    overescaped = normal.replace("\\", "\\\\")
+    source = {"follow_patterns": [overescaped], "max_follow": 10}
+    html = '<main><a href="/docs/a.pdf">PDF oficial</a><a href="/docs/b.html">HTML</a></main>'
+    assert normalized_pattern(overescaped) == normal
+    assert discover_links(html, "https://example.gov.br/pagina", source) == [("https://example.gov.br/docs/a.pdf", "PDF oficial")]
+
+
+def test_source_catalog_is_unique_and_broad():
+    ids = [item["id"] for item in SOURCES]
+    assert len(ids) == len(set(ids))
+    required = {"cf1988","lei14133","lei9784","lei8429","lei12846","lei12527","lei13709","lei13303","lei8987","lei11079","lrf","lei4320","lc123","lei13019","lei13460","lei14129","decreto11462","decreto11878","in65","in58","in81","sp-pca","lei14770","lei15190","lei15266","lei15471","decreto13031","decreto13106","pl-14230","pl-lc173","pl-12232","pl-13243","pl-10973","sp-const","sp-lei10177","sp-lai","tcesp-srp","lei4717","lei7347","lc131","decreto7724","lei6019","lei12016","lc182","sp-pge-pareceres"}
+    assert required <= set(ids)
+    retired = {"tcu","tcesp","tcu-dados-jurisprudencia","tcu-jurisprudencia-pesquisa","stj-jurisprudencia","stj-teses","stj-repetitivos-iacs","stj-sumulas-anotadas","stj-legislacao-aplicada","stj-informativos","stf-jurisprudencia","stf-repercussao-geral","stf-teses-rg","stf-tesauro","tjsp-jurisprudencia","tjsp-saj-jurisprudencia"}
+    assert retired.isdisjoint(set(ids))
+    areas = {item.get("ramo_direito") for item in SOURCES if item.get("ramo_direito")}
+    assert {"Constitucional","Administrativo","Processual Público","Tributário","Financeiro e Orçamentário","Ambiental","Urbanístico","Saúde Pública","Educação Pública","Assistência Social","Pessoal e Servidores","Serviços Públicos","Contratações Públicas"} <= areas
+
+
+def test_in5_2017_uses_current_official_page_and_remains_blocking():
+    source = next(item for item in SOURCES if item["id"] == "in5-2017")
+    assert source["urls"] == [
+        "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-no-5-de-26-de-maio-de-2017-atualizada"
+    ]
+    assert source["fallback_urls"] == ("https://siscon.agu.gov.br/in5/",)
+    assert source["required"] is True
+    assert source["status"] == "vigente"
+    assert source["jurisdicao"] == "federal"
+
+
+def test_compras_in_discovers_normative_pages_not_supplier_pdfs():
+    source = next(item for item in SOURCES if item["id"] == "compras-in")
+    html = (
+        '<main>'
+        '<a href="/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-seges-mgi-no-129-de-30-de-marco-de-2026">IN 129/2026</a>'
+        '<a href="/compras/pt-br/temporario-compras-gov.br/fornecedor-1/defeso-guia-do-fornecedor-como-vender-para-governo.pdf">Guia do fornecedor</a>'
+        '</main>'
+    )
+    assert discover_links(html, source["urls"][0], source) == [
+        (
+            "https://www.gov.br/compras/pt-br/acesso-a-informacao/legislacao/instrucoes-normativas/instrucao-normativa-seges-mgi-no-129-de-30-de-marco-de-2026",
+            "IN 129/2026",
+        )
+    ]
+
+
+def test_discovery_indexes_are_not_indexed_as_corpus_documents():
+    index_ids = {"pl-discovery-camara","pl-discovery-lexml","pl-discovery-leis-2026","pl-discovery-leis-2025","pl-discovery-lc-atualizadas","pl-discovery-decretos-2026"}
+    catalog = {item["id"]: item for item in SOURCES}
+    index_ids.update({"pncp", "compras", "compras-in", "sp-compras", "sp-pge-pareceres", "pl-discovery-camara", "pl-discovery-lexml", "pl-discovery-leis-2026", "pl-discovery-leis-2025", "pl-discovery-lc-atualizadas", "pl-discovery-decretos-2026"})
+    assert all(catalog[item].get("index_only") is True for item in index_ids)
+
+
+
+def test_no_duplicate_primary_source_urls():
+    urls = [url for item in SOURCES if not item.get("index_only") for url in item.get("urls", [])]
+    assert len(urls) == len(set(urls))
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_validator_rejects_spa_portal_shell():
+    shell = (ROOT / "tests" / "fixtures" / "spa_shell.html").read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError, match="casca de portal"):
+        validate(next(item for item in SOURCES if item["id"] == "lei14133"), shell)
+
+
+def test_validator_rejects_wrong_normative_identity():
+    legal = (ROOT / "tests" / "fixtures" / "legal_act.txt").read_text(encoding="utf-8").replace("14.133", "13.999")
+    with pytest.raises(RuntimeError, match="identidade normativa"):
+        validate(next(item for item in SOURCES if item["id"] == "lei14133"), legal)
+
+
+def test_validator_accepts_structured_normative_content():
+    legal = (ROOT / "tests" / "fixtures" / "legal_act.txt").read_text(encoding="utf-8")
+    validate(next(item for item in SOURCES if item["id"] == "lei14133"), legal)
+
+
+def test_validator_accepts_official_guidance_content():
+    guidance = (ROOT / "tests" / "fixtures" / "pge_guidance.txt").read_text(encoding="utf-8")
+    validate(next(item for item in SOURCES if item["id"] == "sp-pge-pareceres"), guidance, linked=True)
+
+def test_prefeitura_sp_sources_are_absent():
+    municipal = [item for item in SOURCES if item.get("jurisdicao") == "municipal_sp"]
+    assert municipal == []
+    assert not any(item["id"].startswith("spm-") for item in SOURCES)
+
+
+def test_historical_nllc_value_decrees_use_official_camara_fallback_series():
+    catalog = {item["id"]: item for item in SOURCES}
+    expected = {
+        "decreto10922": (
+            "https://www2.camara.leg.br/legin/fed/decret/2021/decreto-10922-30-dezembro-2021-792190-publicacaooriginal-164267-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2021/decreto/d10922.htm",
+        ),
+        "decreto11317": (
+            "https://www2.camara.leg.br/legin/fed/decret/2022/decreto-11317-29-dezembro-2022-793592-publicacaooriginal-166702-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2022/decreto/d11317.htm",
+        ),
+        "decreto11871": (
+            "https://www2.camara.leg.br/legin/fed/decret/2023/decreto-11871-29-dezembro-2023-795201-publicacaooriginal-170740-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2023/decreto/d11871.htm",
+        ),
+        "decreto12343": (
+            "https://www2.camara.leg.br/legin/fed/decret/2024/decreto-12343-30-dezembro-2024-796843-publicacaooriginal-173988-pe.html",
+            "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2024/decreto/d12343.htm",
+        ),
+    }
+    for source_id, (primary_url, fallback_url) in expected.items():
+        source = catalog[source_id]
+        assert source["urls"] == [primary_url]
+        assert source["fallback_urls"] == (fallback_url,)
+
+
+def test_planalto_sources_with_secondary_official_mirror():
+    catalog = {item["id"]: item for item in SOURCES}
+    expected = {
+        "lei14063": "https://www2.camara.leg.br/legin/fed/lei/2020/lei-14063-23-setembro-2020-790659-norma-pl.html",
+        "lei12527": "https://www2.camara.leg.br/legin/fed/lei/2011/lei-12527-18-novembro-2011-611802-norma-pl.html",
+        "lei13303": "https://www2.camara.leg.br/legin/fed/lei/2016/lei-13303-30-junho-2016-783296-norma-pl.html",
+        "lei8987": "https://www2.camara.leg.br/legin/fed/lei/1995/lei-8987-13-fevereiro-1995-349810-norma-pl.html",
+        "lei11079": "https://www2.camara.leg.br/legin/fed/lei/2004/lei-11079-30-dezembro-2004-535279-norma-pl.html",
+        "lei4320": "https://www2.camara.leg.br/legin/fed/lei/1960-1969/lei-4320-17-marco-1964-376590-norma-pl.html",
+        "lc123": "https://www2.camara.leg.br/legin/fed/leicom/2006/leicomplementar-123-14-dezembro-2006-548099-normaatualizada-pl.html",
+        "lei13019": "https://www2.camara.leg.br/legin/fed/lei/2014/lei-13019-31-julho-2014-779123-norma-pl.html",
+        "lei13460": "https://www2.camara.leg.br/legin/fed/lei/2017/lei-13460-26-junho-2017-785098-norma-pl.html",
+        "lei14129": "https://www2.camara.leg.br/legin/fed/lei/2021/lei-14129-29-marco-2021-791203-norma-pl.html",
+        "decreto11246": "https://www2.camara.leg.br/legin/fed/decret/2022/decreto-11246-27-outubro-2022-793362-norma-pe.html",
+        "decreto11461": "https://www2.camara.leg.br/legin/fed/decret/2023/decreto-11461-31-marco-2023-793985-norma-pe.html",
+        "lei6938": "https://www2.camara.leg.br/legin/fed/lei/1980-1987/lei-6938-31-agosto-1981-366135-norma-pl.html",
+        "lei9605": "https://www2.camara.leg.br/legin/fed/lei/1998/lei-9605-12-fevereiro-1998-365397-norma-pl.html",
+        "lei13146": "https://www2.camara.leg.br/legin/fed/lei/2015/lei-13146-6-julho-2015-781174-norma-pl.html",
+        "lei10520": "https://www2.camara.leg.br/legin/fed/lei/2002/lei-10520-17-julho-2002-472321-norma-pl.html",
+        "lei12462": "https://www2.camara.leg.br/legin/fed/lei/2011/lei-12462-4-agosto-2011-611147-norma-pl.html",
+        "decreto12771": "https://www2.camara.leg.br/legin/fed/decret/2025/decreto-12771-5-dezembro-2025-798434-norma-pe.html",
+        "lei15210": "https://www2.camara.leg.br/legin/fed/lei/2025/lei-15210-16-setembro-2025-797983-norma-pl.html",
+        "lei15266": "https://www2.camara.leg.br/legin/fed/lei/2025/lei-15266-21-novembro-2025-798322-norma-pl.html",
+        "lei15190": "https://www2.camara.leg.br/legin/fed/lei/2025/lei-15190-8-agosto-2025-797833-norma-pl.html",
+        "decreto12926": "https://www2.camara.leg.br/legin/fed/decret/2026/decreto-12926-13-abril-2026-798946-norma-pe.html",
+        "decreto13031": "https://www2.camara.leg.br/legin/fed/decret/2026/decreto-13031-17-junho-2026-799366-norma-pe.html",
+        "decreto13106": "https://www2.camara.leg.br/legin/fed/decret/2026/decreto-13106-24-agosto-2026-799815-norma-pe.html",
+        "lei15471": "https://www2.camara.leg.br/legin/fed/lei/2026/lei-15471-20-julho-2026-799657-publicacaooriginal-180540-pl.html",
+    }
+    for source_id, fallback_url in expected.items():
+        assert catalog[source_id]["fallback_urls"] == (fallback_url,)
+
+
+def test_current_source_endpoints():
+    catalog = {item["id"]: item for item in SOURCES}
+    assert catalog["pncp"]["urls"][0] == "https://www.gov.br/pncp/pt-br/pncp/legislacao"
+    assert catalog["tcesp-srp"]["urls"][0] == "https://tce.sp.gov.br/sites/default/files/legislacao/SEI_1482508_DELIBERACAO_TCESP.pdf"
+    assert catalog["agu-modelos-14133"]["urls"][0].endswith("/modelos/licitacoesecontratos/14133")
+    assert catalog["agu-tic"]["urls"][0].endswith("/modelos/licitacoesecontratos/14133/bens-e-servicos-de-tic")
+    assert catalog["pl-discovery-camara"]["urls"][0] == "https://www.camara.leg.br/legislacao/busca?geral=&origem=C%C3%A2mara+dos+Deputados"
+    assert catalog["pl-discovery-leis-2026"]["urls"][0].endswith("/_leis2026.htm")
+    assert catalog["pl-discovery-lc-atualizadas"]["urls"][0].endswith("/quadro_lcp.htm")
+
+
+def test_validator_accepts_short_discovery_page():
+    source = next(item for item in SOURCES if item["id"] == "pl-discovery-lexml")
+    validate(source, "LexML\nTudo\nLegislação\nJurisprudência\nProposições Legislativas")
+
+
+def test_validator_rejects_empty_discovery_page():
+    source = next(item for item in SOURCES if item["id"] == "pl-discovery-lexml")
+    with pytest.raises(RuntimeError, match="conteúdo vazio"):
+        validate(source, "   ")
+
+
+def test_discover_links_honors_exclude_patterns():
+    source = {
+        "follow_patterns": [r"\\.pdf(?:$|\\?)"],
+        "exclude_patterns": [r"observatorio_da_democracia", r"(?:^|/)cartilha\\.pdf(?:$|\\?)"],
+        "max_follow": 10,
+    }
+    html = (
+        '<main>'
+        '<a href="pareceres/PARECERREFERENCIAL.pdf">Parecer Referencial</a>'
+        '<a href="/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
+        '</main>'
+    )
+    assert discover_links(
+        html, "https://www.gov.br/agu/pagina", source
+    ) == [("https://www.gov.br/agu/pareceres/PARECERREFERENCIAL.pdf", "Parecer Referencial")]
+
+
+def test_validator_accepts_official_guidance_when_marker_is_only_in_link_metadata():
+    source = next(item for item in SOURCES if item["id"] == "agu-pareceres-referenciais")
+    content = "\n".join(
+        ["MANIFESTAÇÃO JURÍDICA " + ("fundamentação jurídica " * 25) for _ in range(6)]
+    )
+    validate(
+        source,
+        content,
+        linked=True,
+        final_url="https://www.gov.br/agu/documentos/00009.pdf",
+        document_title="PARECER REFERENCIAL n. 00009/2025/GERTEC/ELIC/PGF/AGU",
+    )
+
+
+def test_agu_model_collection_sources_exclude_irrelevant_cartilha():
+    html = (
+        '<main>'
+        '<a href="modelos/edital.pdf">Edital</a>'
+        '<a href="/assuntos-1/observatorio_da_democracia/cartilha.pdf">Cartilha</a>'
+        '</main>'
+    )
+    catalog = {item["id"]: item for item in SOURCES}
+    for source_id in {"agu-contratacao-direta", "agu-pregao-concorrencia"}:
+        source = catalog[source_id]
+        assert discover_links(html, source["urls"][0], source) == [
+            ("https://www.gov.br/agu/pt-br/composicao/cgu/cgu/modelos/licitacoesecontratos/14133/modelos/edital.pdf", "Edital")
+        ]
+
+
+def test_tcesp_srp_source_accepts_official_deliberation_pdf_content():
+    source = next(item for item in SOURCES if item["id"] == "tcesp-srp")
+    content = "\n".join(
+        [
+            "DELIBERAÇÃO",
+            "(SEI N. 0005763/2025-11)",
+            "Artigo 1º - " + ("Sistema de Registro de Preços e adesão a atas. " * 4),
+            "Artigo 2º - " + ("Cumprimento dos procedimentos pelos órgãos e entidades. " * 4),
+            "I - " + ("estimativa das quantidades demandadas para registro e futura contratação. " * 4),
+            "II - " + ("precisa descrição dos itens pretendidos e dos materiais e serviços. " * 4),
+            "Artigo 3º - " + ("Processo administrativo específico para adesão e demonstração da vantajosidade. " * 4),
+            "Artigo 5º - " + ("Regras para adesões no Estado e nos Municípios paulistas. " * 4),
+        ]
+    )
+    validate(source, content)
+
+
+def test_tcu_manual_is_required_official_guidance_source():
+    catalog = {item["id"]: item for item in SOURCES}
+    source = catalog["tcu-manual-licitacoes"]
+    assert source["required"] is True
+    assert source["source_role"] == "orientacao_oficial"
+    assert source["authority_level"] == 3
+    assert source["tipo_documento"] == "manual"
+    assert source["urls"][0] == (
+        "https://licitacoesecontratos.tcu.gov.br/wp-content/uploads/sites/11/2026/02/"
+        "Manual-versao-SECOM-publicada-no-site-VERSAO-FINAL-ATUALIZADA-1_compressed-1.pdf"
+    )
+    assert source["data_versao"] == "5ª edição — atualizado em 29/08/2025"
+
+
+def test_validator_accepts_tcu_manual_content():
+    source = next(item for item in SOURCES if item["id"] == "tcu-manual-licitacoes")
+    content = "\n".join(
+        [
+            "MANUAL DE LICITAÇÕES E CONTRATOS — ORIENTAÇÕES E JURISPRUDÊNCIA DO TCU",
+            "5ª edição — Tribunal de Contas da União.",
+            "Este manual apresenta orientações para licitações e contratos administrativos.",
+            "O conteúdo foi elaborado para apoiar a aplicação prática da legislação de contratações públicas.",
+            "A Lei 14.133/2021 constitui a referência normativa central para as contratações públicas.",
+            "São apresentadas orientações preventivas, pedagógicas e referências à jurisprudência do TCU.",
+            "O manual reúne referências normativas, jurisprudenciais e procedimentos de contratação administrativa.",
+            "A obra aborda planejamento, seleção do fornecedor, gestão contratual e controle das contratações.",
+            "As orientações devem ser consideradas em conjunto com a legislação vigente e a jurisprudência aplicável.",
+            "O material possui caráter de orientação oficial e não substitui o texto da legislação.",
+        ]
+    )
+    validate(source, content)

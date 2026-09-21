@@ -1,15 +1,65 @@
-QUERIES = {
-    "licitacoes": [
-        "licitação Lei 14.133",
-        "contratação direta dispensa inexigibilidade",
-        "pregão registro de preços",
-        "habilitação proposta julgamento",
-        "sanções impedimento declaração inidoneidade",
-    ],
-    "controle": [
-        "sobrepreço licitação",
-        "pesquisa de preços",
-        "planejamento contratação",
-        "termo de referência estudo técnico preliminar",
-    ],
-}
+from __future__ import annotations
+
+DEFAULT_QUERIES = (
+    "Lei 14.133 licitação contrato administrativo",
+    "contratação direta dispensa inexigibilidade",
+    "edital habilitação qualificação técnica",
+    "pesquisa de preços estudo técnico preliminar termo de referência",
+    "registro de preços adesão ata",
+    "sanção impedimento inidoneidade licitação",
+    "reequilíbrio reajuste repactuação aditivo contrato",
+    "fiscalização execução responsabilidade agente público licitação",
+    "ato administrativo competência motivação anulação revogação convalidação",
+    "processo administrativo contraditório ampla defesa devido processo prazo decisão",
+    "poder de polícia administrativo licença autorização fiscalização multa",
+    "responsabilidade civil do Estado agente público omissão serviço público",
+    "servidor público concurso provimento estabilidade remuneração acumulação aposentadoria",
+    "processo administrativo disciplinar PAD servidor público penalidade",
+    "improbidade administrativa dolo enriquecimento ilícito dano ao erário perda função",
+    "Lei Anticorrupção acordo de leniência responsabilização pessoa jurídica",
+    "abuso de autoridade agente público crime decisão administrativa",
+    "controle de constitucionalidade administração pública STF repercussão geral",
+    "mandado de segurança ato administrativo autoridade pública",
+    "ação civil pública interesse público patrimônio público meio ambiente administração",
+    "ação popular ilegalidade lesividade patrimônio público",
+    "controle externo tribunal de contas gestor público tomada de contas",
+    "finanças públicas orçamento PPA LDO LOA crédito adicional despesa pública",
+    "Lei de Responsabilidade Fiscal despesa com pessoal limite transparência renúncia receita",
+    "dívida ativa execução fiscal prescrição tributária município",
+    "tributário municipal IPTU ISS ITBI taxa contribuição melhoria competência tributária",
+    "ICMS repartição receita municípios guerra fiscal benefício fiscal",
+    "IBS CBS reforma tributária administração tributária município estado",
+    "precatório requisição de pequeno valor fazenda pública execução contra o Estado",
+    "consórcios públicos federalismo cooperação entre entes transferência voluntária",
+    "convênio contrato de repasse Transferegov recursos públicos prestação de contas",
+    "concessão permissão serviço público tarifa equilíbrio econômico financeiro",
+    "parceria público-privada concessão administrativa patrocinada garantias",
+    "agência reguladora poder normativo regulação sanção contrato",
+    "desapropriação utilidade pública interesse social indenização imissão posse",
+    "patrimônio público bens públicos afetação desafetação alienação ocupação",
+    "estatuto da cidade plano diretor parcelamento solo regularização fundiária",
+    "licenciamento ambiental competência administrativa licença ambiental",
+    "infrações administrativas ambientais multa responsabilidade ambiental",
+    "resíduos sólidos saneamento recursos hídricos proteção ambiental",
+    "SUS saúde pública financiamento fornecimento medicamento judicialização",
+    "educação pública Fundeb piso magistério responsabilidade município",
+    "assistência social SUAS LOAS benefício prestação continuada município",
+    "criança adolescente idoso pessoa com deficiência políticas públicas proteção integral",
+    "transparência Lei de Acesso à Informação sigilo publicidade dados pessoais poder público",
+    "LGPD administração pública tratamento compartilhamento dados pessoais interesse público",
+    "governo digital assinatura eletrônica processo eletrônico serviço público",
+    "serviço público usuário continuidade universalidade eficiência atendimento",
+    "São Paulo processo administrativo Lei 10.177/1998 administração estadual",
+    "São Paulo Tribunal de Contas controle externo licitação contrato administrativo",
+    "TJSP Tribunal de Justiça de São Paulo licitação contrato administrativo Lei 14.133",
+    "TJSP licitação edital habilitação contratação pública",
+    "TJSP contrato administrativo equilíbrio econômico financeiro sanção",
+    "TJSP servidor público processo administrativo responsabilidade do Estado",
+)
+
+
+def parse_queries(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return DEFAULT_QUERIES
+    queries = tuple(item.strip() for item in value.split("|") if item.strip())
+    return queries or DEFAULT_QUERIES

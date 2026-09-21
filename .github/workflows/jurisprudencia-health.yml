@@ -1,0 +1,64 @@
+name: Saúde da jurisprudência oficial
+
+on:
+  schedule:
+    - cron: '15 7 * * 1'
+  pull_request:
+    paths:
+      - 'jurisprudencia/**'
+      - 'scripts/sources.py'
+      - 'tests/test_jurisprudencia*.py'
+      - 'requirements.txt'
+      - '.github/workflows/jurisprudencia-health.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'jurisprudencia/**'
+      - 'scripts/sources.py'
+      - 'requirements.txt'
+      - '.github/workflows/jurisprudencia-health.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jurisprudencia-health-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        query:
+          - "licitação"
+          - "Lei 14.133 licitação contrato administrativo"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Instalar dependências da coleta
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Testar jurisprudência oficial em tempo real
+        run: |
+          python -m jurisprudencia.batch --tribunais tcu,tcesp,stj,stf,tjsp --query "${{ matrix.query }}" --limit 10 --min-records-per-tribunal 5 --strict --without-sumulas
+      - name: Testar catálogo oficial de súmulas
+        run: |
+          python -m jurisprudencia.sumulas --health
+      - name: Publicar cache da coleta quando houver falha
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: jurisprudencia-health-debug
+          path: db/source_cache/jurisprudencia/
+          if-no-files-found: ignore

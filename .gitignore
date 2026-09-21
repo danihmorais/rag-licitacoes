@@ -1,10 +1,10 @@
-.venv/
+.env
 __pycache__/
 *.py[cod]
-.env
 .pytest_cache/
-data/cache/
-data/bm25.json
-data/ingest_cache.json
-data/jurisprudencia/
-*.log
+.venv/
+venv/
+db/qdrant/
+db/index_manifest.json
+db/ingest_cache.json
+db/source_cache/

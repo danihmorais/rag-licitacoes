@@ -1,23 +1,52 @@
-from __future__ import annotations
-import os
+import requests
 
-class GeminiLLM:
-    def __init__(self, model: str | None = None):
-        self.model = model or os.getenv("RAG_GEMINI_MODEL","gemini-2.5-flash")
-        self.api_key = os.getenv("GOOGLE_API_KEY","")
+from .base import LLMProvider, LLMProviderError, raise_provider_error
 
-    def chat(self, question: str, context: str) -> str:
-        try:
-            from google import genai
-        except ImportError as exc:
-            raise RuntimeError("Instale google-genai para usar o provider Gemini.") from exc
+
+class GeminiProvider(LLMProvider):
+    """Minimal Gemini REST adapter; no Google SDK is required."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        temperature: float,
+        timeout: int,
+    ):
+        super().__init__(model, temperature, timeout)
+        self.api_key = api_key
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
         if not self.api_key:
-            raise RuntimeError("GOOGLE_API_KEY não configurada.")
-        client = genai.Client(api_key=self.api_key)
-        prompt = (
-            "Você é um assistente jurídico especializado em Direito Público brasileiro.\n"
-            "Responda somente com base no contexto e preserve as citações [F#].\n\n"
-            f"CONTEXTO:\n{context}\n\nPERGUNTA:\n{question}"
+            raise LLMProviderError("GEMINI_API_KEY não está configurada para o provedor Gemini.")
+
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.model}:generateContent"
         )
-        response = client.models.generate_content(model=self.model, contents=prompt)
-        return (getattr(response, "text", None) or "").strip()
+        params = {"key": self.api_key}
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": {"temperature": self.temperature},
+        }
+
+        response = None
+        try:
+            response = requests.post(url, params=params, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as exc:
+            raise_provider_error(exc, 'Gemini', response)
+        except ValueError as exc:
+            raise LLMProviderError("O Gemini retornou uma resposta JSON inválida.") from exc
+
+        try:
+            parts = data["candidates"][0]["content"]["parts"]
+            answer = "".join(part.get("text", "") for part in parts)
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMProviderError("Resposta inesperada do Gemini.") from exc
+
+        if not answer:
+            raise LLMProviderError("O Gemini não retornou texto na resposta.")
+        return answer.strip()
