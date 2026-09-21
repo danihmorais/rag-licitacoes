@@ -1,9 +1,15 @@
 from __future__ import annotations
-from config import SETTINGS
+
 from .openai_compatible import OpenAICompatibleLLM
 
 def create_llm(provider: str | None = None):
-    provider = (provider or "openai").lower()
-    if provider in {"openai", "openai_compatible", "unsloth", "ollama"}:
+    name = (provider or "openai").lower()
+    if name in {"openai", "openai_compatible", "unsloth"}:
         return OpenAICompatibleLLM()
+    if name == "ollama":
+        from .ollama import OllamaLLM
+        return OllamaLLM()
+    if name == "gemini":
+        from .gemini import GeminiLLM
+        return GeminiLLM()
     raise ValueError(f"Provider não suportado: {provider}")
