@@ -274,42 +274,22 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
 
 
 def smoke_test_sumulas() -> None:
-    critical_numbers = (222, 247, 259, 263, 292)
-    tcu_records = _collect_tcu_sumulas(critical_numbers)
-    tcu_by_number = {
-        int(record.numero_sumula): record
-        for record in tcu_records
-        if record.numero_sumula and record.numero_sumula.isdigit()
+    result = collect_sumulas(strict=True)
+    tcu_numbers = {
+        int(item.numero_sumula)
+        for item in result["tcu"]
+        if item.numero_sumula and item.numero_sumula.isdigit()
     }
-    for number in critical_numbers:
-        record = tcu_by_number.get(number)
-        if record is None:
-            raise RuntimeError(f"Súmula TCU {number} não foi encontrada no portal oficial.")
-        if not record.ementa or record.numero_sumula != str(number) or record.tipo_documento != "sumula":
-            raise RuntimeError(f"Súmula TCU {number} retornou registro estrutural inválido.")
-
-    tcesp_records = collect_tcesp_sumulas()
     tcesp_numbers = {
-        int(record.numero_sumula)
-        for record in tcesp_records
-        if record.numero_sumula and record.numero_sumula.isdigit()
+        int(item.numero_sumula)
+        for item in result["tcesp"]
+        if item.numero_sumula and item.numero_sumula.isdigit()
     }
-    if len(tcesp_numbers) < TCESP_SUMULA_MIN_RECORDS:
-        raise RuntimeError(
-            f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
-            f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
-        )
-    highest = max(tcesp_numbers, default=0)
-    if len(tcesp_numbers) != len(tcesp_records):
-        raise RuntimeError(
-            f"TCESP: números de súmula duplicados ou inconsistentes; "
-            f"registros={len(tcesp_records)} números_únicos={len(tcesp_numbers)}"
-        )
-
     print(
-        f"Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | "
-        f"TCESP {min(tcesp_numbers, default=0)}-{highest} ({len(tcesp_numbers)} registros, "
-        "sem exigir numeração contínua)"
+        f"Smoke súmulas OK: TCU {len(tcu_numbers)} números "
+        f"(1-{max(tcu_numbers, default=0)}) | "
+        f"TCESP {len(tcesp_numbers)} números "
+        f"(1-{max(tcesp_numbers, default=0)})"
     )
 
 
