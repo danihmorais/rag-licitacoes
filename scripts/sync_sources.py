@@ -398,6 +398,26 @@ def strict_failure_ids(sources, failures):
     ]
 
 
+def apply_runtime_limits(sources, *, max_web_documents=None, max_web_discovery_pages=None):
+    """Aplica limites de smoke-test sem alterar o catálogo versionado."""
+    limited = []
+    for source in sources:
+        item = dict(source)
+        if item.get('source_type') == 'web_articles':
+            if max_web_documents is not None:
+                item['max_documents'] = min(
+                    int(item.get('max_documents', max_web_documents)),
+                    max_web_documents,
+                )
+            if max_web_discovery_pages is not None:
+                item['discovery_max_pages'] = min(
+                    int(item.get('discovery_max_pages', max_web_discovery_pages)),
+                    max_web_discovery_pages,
+                )
+        limited.append(item)
+    return limited
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
@@ -406,7 +426,23 @@ def main():
     parser.add_argument('--strict', action='store_true')
     parser.add_argument('--no-follow-links', action='store_true')
     parser.add_argument('--web-only', action='store_true')
+    parser.add_argument(
+        '--max-web-documents',
+        type=int,
+        default=None,
+        help='Limita o número de matérias por fonte no modo de coleta web.',
+    )
+    parser.add_argument(
+        '--max-web-discovery-pages',
+        type=int,
+        default=None,
+        help='Limita o número de páginas de descoberta por fonte na coleta web.',
+    )
     args = parser.parse_args()
+    if args.max_web_documents is not None and args.max_web_documents < 1:
+        parser.error('--max-web-documents deve ser >= 1')
+    if args.max_web_discovery_pages is not None and args.max_web_discovery_pages < 1:
+        parser.error('--max-web-discovery-pages deve ser >= 1')
     sources = [
         s for s in SOURCES
         if (not args.required_only or s.get('required'))
@@ -419,6 +455,11 @@ def main():
             or s.get('source_type') == 'web_articles'
         )
     ]
+    sources = apply_runtime_limits(
+        sources,
+        max_web_documents=args.max_web_documents,
+        max_web_discovery_pages=args.max_web_discovery_pages,
+    )
     session = make_session()
     failures = []
     ok = 0
