@@ -187,63 +187,6 @@ def _query_variants(query: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(item for item in variants if item))
 
 
-def _find_query_field(form: BeautifulSoup, keywords: tuple[str, ...]):
-    for label in form.find_all('label'):
-        label_text = clean_text(label.get_text(' ', strip=True)).casefold()
-        if not any(keyword in label_text for keyword in keywords):
-            continue
-        target = str(label.get('for') or '').strip()
-        if target:
-            field = form.find(id=target)
-            if field is not None and field.name in {'input', 'textarea'}:
-                return field
-        parent = label.parent
-        if parent is not None:
-            field = parent.find(['input', 'textarea'])
-            if field is not None:
-                return field
-    for field in form.find_all(['input', 'textarea']):
-        descriptor = (
-            str(field.get('name') or '') + ' ' +
-            str(field.get('id') or '') + ' ' +
-            str(field.get('placeholder') or '')
-        ).casefold()
-        if any(keyword in descriptor for keyword in keywords):
-            if str(field.get('type') or 'text').lower() not in {'submit', 'button', 'reset', 'hidden'}:
-                return field
-    return None
-
-
-def _form_data(form: BeautifulSoup, query: str, keywords: tuple[str, ...]) -> tuple[str, str, dict[str, str]] | None:
-    query_field = _find_query_field(form, keywords)
-    if query_field is None:
-        return None
-    data: dict[str, str] = {}
-    for field in form.find_all(['input', 'select', 'textarea']):
-        name = str(field.get('name') or '').strip()
-        if not name:
-            continue
-        if field.name == 'input':
-            field_type = str(field.get('type') or 'text').lower()
-            if field_type in {'submit', 'button', 'reset', 'image', 'file'}:
-                continue
-            if field_type in {'checkbox', 'radio'} and not field.has_attr('checked'):
-                continue
-            data[name] = str(field.get('value') or '')
-        elif field.name == 'select':
-            option = field.find('option', selected=True) or field.find('option')
-            data[name] = str(option.get('value') if option else '')
-        else:
-            data[name] = str(field.get_text() or '')
-    query_name = str(query_field.get('name') or '').strip()
-    if not query_name:
-        return None
-    data[query_name] = query
-    action = str(form.get('action') or '').strip()
-    method = str(form.get('method') or 'get').lower()
-    return action, method, data
-
-
 def _extract_pdf_links(raw: bytes, base_url: str) -> list[str]:
     soup = BeautifulSoup(raw, 'html.parser')
     links = []
@@ -287,7 +230,7 @@ def _extract_process(text: str, url: str = '') -> str:
     patterns = (
         r'\b\d{1,7}-\d{2}\.20\d{2}\.8\.26\.\d{4}\b',
         r'\b(?:REsp|AREsp|AgInt no REsp|AgRg no REsp|RMS|MS|HC|RHC|AgInt|EDcl)\s+[\d.]+(?:/[A-Z]{2})?',
-        r'\b\d{1,7}/989/\d{2}\b',
+        r'\b\d{1,7}/\d{2,4}/\d{2,4}\b',
         r'\b\d{1,7}[\d.]+/[A-Z]{2}\b',
         r'\b\d{1,7}/\d{1,7}/\d{2,4}\b',
     )
@@ -415,6 +358,7 @@ class TCUAdapter(JurisprudenciaAdapter):
         return '\n\n'.join(item for item in sections if item.strip())
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
+        effective_with_content = with_content or detail
         seen: set[str] = set()
         for variant in _query_variants(query):
             response = self.session.get(
@@ -441,7 +385,7 @@ class TCUAdapter(JurisprudenciaAdapter):
                 seen.add(key)
                 if not record.url_oficial:
                     record.url_oficial = f'{self.endpoint}/{key}' if key else self.endpoint
-                if with_content and key:
+                if effective_with_content and key:
                     try:
                         content = self._detail_content(key)
                         if content:
@@ -723,8 +667,17 @@ class TCESPAdapter(JurisprudenciaAdapter):
             if len(records) >= limit:
                 return records[:limit]
 
+        if total is not None and total > 0:
+            expected_records = min(total, limit)
+            if len(records) < expected_records:
+                print(
+                    f'aviso: TCESP informou {total} registros para {variant!r}, mas apenas {len(records)} '
+                    f'foram estruturados (esperados até {expected_records}); a página pode ter mudado '
+                    'e a extração está potencialmente parcial.'
+                )
+
         if not records:
-            process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+$')
+            process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
             for anchor in soup.find_all('a', href=True):
                 process = clean_text(anchor.get_text(' ', strip=True))
                 if not process_pattern.fullmatch(process) or process in seen:
@@ -917,7 +870,7 @@ class STJAdapter(JurisprudenciaAdapter):
         return _query_score(query, *fields) > 0
 
     @staticmethod
-    def _record(row: dict[str, Any], dataset: str, resource_url: str) -> JurisprudenciaRecord:
+    def _record(row: dict[str, Any], dataset: str, resource_url: str, *, include_content: bool = False) -> JurisprudenciaRecord:
         process = _first_value(row, 'numeroProcesso', 'numeroRegistro', 'numeroDocumento', 'id')
         ementa = _first_value(row, 'ementa')
         decisao = _first_value(row, 'decisao')
@@ -933,7 +886,7 @@ class STJAdapter(JurisprudenciaAdapter):
             ementa=ementa,
             tese=tese,
             decisao=decisao,
-            inteiro_teor=content or None,
+            inteiro_teor=(content or None) if include_content else None,
             assunto=_as_list(
                 _first_value(row, 'siglaClasse'),
                 _first_value(row, 'descricaoClasse'),
@@ -945,72 +898,53 @@ class STJAdapter(JurisprudenciaAdapter):
         )
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        del detail, with_content
-        seen: set[str] = set()
         variants = _query_variants(query)
-        for variant in variants:
-            for dataset in self.orgao_datasets.values():
-                resources = self._resources(dataset)
-                for resource in resources:
-                    payload = self._json(str(resource['url']))
-                    if not isinstance(payload, list):
-                        continue
-                    for row in payload:
-                        if not isinstance(row, dict) or not self._match(variant, row):
-                            continue
-                        record = self._record(row, dataset, str(resource['url']))
-                        key = row.get('id') or record.document_key
-                        if key in seen:
-                            continue
-                        seen.add(str(key))
-                        return [record] if limit == 1 else self._collect_remaining(
-                            variants,
-                            dataset,
-                            resource,
-                            seen,
-                            limit,
-                            seed=[record],
-                        )
-        raise RuntimeError(f'STJ não encontrou registros na base de dados abertos para {query!r} nos últimos {self.max_months_scanned} espelhos mensais.' )
+        datasets = tuple(self.orgao_datasets.values())
+        resources_cache: dict[str, list[dict[str, Any]]] = {}
+        payload_cache: dict[str, list[dict[str, Any]]] = {}
+        records: list[JurisprudenciaRecord] = []
+        seen: set[str] = set()
 
-    def _collect_remaining(
-        self,
-        variants: tuple[str, ...],
-        first_dataset: str,
-        first_resource: dict[str, Any],
-        seen: set[str],
-        limit: int,
-        *,
-        seed: list[JurisprudenciaRecord],
-    ) -> list[JurisprudenciaRecord]:
-        records = list(seed)
-        ordered = list(self.orgao_datasets.items())
-        start_index = next(
-            (i for i, item in enumerate(ordered) if item[1] == first_dataset),
-            0,
-        )
-        for dataset_name in [item[1] for item in ordered[start_index:]]:
-            resources = self._resources(dataset_name)
-            for resource in resources:
-                if dataset_name == first_dataset and resource.get('url') == first_resource.get('url'):
-                    continue
-                payload = self._json(str(resource['url']))
-                if not isinstance(payload, list):
-                    continue
-                for variant in variants:
-                    for row in payload:
+        def resources_for(dataset: str) -> list[dict[str, Any]]:
+            if dataset not in resources_cache:
+                resources_cache[dataset] = self._resources(dataset)
+            return resources_cache[dataset]
+
+        def payload_for(resource: dict[str, Any]) -> list[dict[str, Any]]:
+            url = str(resource['url'])
+            if url not in payload_cache:
+                payload = self._json(url)
+                payload_cache[url] = payload if isinstance(payload, list) else []
+            return payload_cache[url]
+
+        include_content = detail or with_content
+
+        for variant in variants:
+            for dataset in datasets:
+                for resource in resources_for(dataset):
+                    for row in payload_for(resource):
                         if not isinstance(row, dict) or not self._match(variant, row):
                             continue
-                        record = self._record(row, dataset_name, str(resource['url']))
+                        record = self._record(
+                            row,
+                            dataset,
+                            str(resource['url']),
+                            include_content=include_content,
+                        )
                         key = str(row.get('id') or record.document_key)
                         if key in seen:
                             continue
                         seen.add(key)
                         records.append(record)
                         if len(records) >= limit:
-                            return records
-        return records
+                            return records[:limit]
 
+        if records:
+            return records[:limit]
+        raise RuntimeError(
+            f'STJ não encontrou registros na base de dados abertos para {query!r} '
+            f'nos últimos {self.max_months_scanned} espelhos mensais.'
+        )
 
 class STFAdapter(JurisprudenciaAdapter):
     tribunal = 'STF'
@@ -1234,9 +1168,9 @@ class STFAdapter(JurisprudenciaAdapter):
         )
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
-        del detail
+        include_full_text = detail or with_content
         for variant in _query_variants(query):
-            payload = self._browser_search(variant, limit, with_content=with_content)
+            payload = self._browser_search(variant, limit, with_content=include_full_text)
             hits = self._hits(payload)
             if hits:
                 records = []
@@ -1279,6 +1213,7 @@ class TJSPAdapter(JurisprudenciaAdapter):
             raise RuntimeError('TJSP bloqueou a pesquisa por desafio/captcha/antibot; nenhum contorno automático é feito pelo coletor.')
 
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
+        effective_with_content = with_content or detail
         records: list[JurisprudenciaRecord] = []
         seen: set[tuple[str, str]] = set()
         template = {
@@ -1346,7 +1281,7 @@ class TJSPAdapter(JurisprudenciaAdapter):
                 pdf_url = f'https://esaj.tjsp.jus.br/cjsg/getArquivo.do?cdAcordao={cd_acordao}&cdForo=0'
                 inteiro = None
                 official_url = pdf_url
-                if with_content:
+                if effective_with_content:
                     try:
                         pdf_kind, pdf_final, pdf_raw = fetch(self.session, pdf_url)
                         if pdf_kind == 'pdf': inteiro = pdf_text(pdf_raw); official_url = pdf_final; ementa = _extract_ementa(inteiro) or ementa
@@ -1468,11 +1403,19 @@ def collect(
             print(f'FAIL {tribunal}: {message}')
             failures.append((tribunal, message))
             continue
+        processed = 0
         for record in records:
             if persist:
-                save_record(record, output_dir)
+                try:
+                    save_record(record, output_dir)
+                except Exception as exc:
+                    message = f'{type(exc).__name__}: {exc}'
+                    print(f'FAIL {tribunal} registro: {message}')
+                    failures.append((tribunal, f'registro: {message}'))
+                    continue
             output.append(record)
-        print(f'OK {tribunal}: {len(records)} registros para {query!r}')
+            processed += 1
+        print(f'OK {tribunal}: {processed}/{len(records)} registros para {query!r}')
     if strict and failures:
         details = '; '.join(f'{tribunal}: {message}' for tribunal, message in failures)
         raise RuntimeError('Falhas de coleta jurisprudencial: ' + details)
@@ -1484,7 +1427,7 @@ def main() -> int:
     parser.add_argument('--tribunais', default=','.join(TRIBUNALS))
     parser.add_argument('--query', default=DEFAULT_QUERY)
     parser.add_argument('--limit', type=int, default=25)
-    parser.add_argument('--detail', action='store_true')
+    parser.add_argument('--detail', action='store_true', help='Solicita enriquecimento/detalhamento adicional quando a fonte oficial o oferece.')
     parser.add_argument('--with-content', action='store_true')
     parser.add_argument('--strict', action='store_true', help='Falha se algum tribunal solicitado não retornar registros.')
     parser.add_argument('--output-dir', type=Path, default=None)
@@ -1507,11 +1450,18 @@ def main() -> int:
             failed.append(tribunal)
             counts[tribunal] = 0
             continue
-        counts[tribunal] = len(records)
+        saved = 0
         for record in records:
-            save_record(record, output_dir)
-        print(f'OK {tribunal}: {len(records)} registros para {args.query!r}')
-        if not records:
+            try:
+                save_record(record, output_dir)
+            except Exception as exc:
+                print(f'FAIL {tribunal} registro: {type(exc).__name__}: {exc}')
+                failed.append(tribunal)
+                continue
+            saved += 1
+        counts[tribunal] = saved
+        print(f'OK {tribunal}: {saved}/{len(records)} registros para {args.query!r}')
+        if not saved:
             failed.append(tribunal)
     print(f'Tribunais: {len([value for value in counts.values() if value > 0])}/{len(counts)} com registros')
     print('Registros:', sum(counts.values()))

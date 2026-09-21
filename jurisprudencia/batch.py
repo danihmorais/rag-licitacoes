@@ -97,12 +97,9 @@ def collect_batch(
                 )
                 continue
             for record in records:
-                key = record.document_key
-                if key in seen:
-                    continue
-                seen.add(key)
                 try:
                     record.validate()
+                    key = record.document_key
                 except Exception as exc:
                     _write_dlq(
                         tribunal=tribunal,
@@ -113,6 +110,9 @@ def collect_batch(
                         path=dlq_path,
                     )
                     continue
+                if key in seen:
+                    continue
+                seen.add(key)
                 output.append(record)
                 tribunal_key = record.tribunal.casefold()
                 if tribunal_key in counts:
@@ -135,12 +135,9 @@ def collect_batch(
             sumulas = {"tcu": [], "tcesp": []}
         for tribunal in requested_sumula_tribunals:
             for record in sumulas.get(tribunal, []):
-                key = record.document_key
-                if key in seen:
-                    continue
-                seen.add(key)
                 try:
                     record.validate()
+                    key = record.document_key
                 except Exception as exc:
                     _write_dlq(
                         tribunal=tribunal,
@@ -151,6 +148,9 @@ def collect_batch(
                         path=dlq_path,
                     )
                     continue
+                if key in seen:
+                    continue
+                seen.add(key)
                 output.append(record)
 
     sumula_save_failures = []
