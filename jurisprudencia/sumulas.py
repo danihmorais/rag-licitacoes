@@ -122,7 +122,7 @@ async def _fetch_tcu_sumula_browser(page, numero: int) -> JurisprudenciaRecord |
             """(number) => {
                 const text = document.body ? document.body.innerText : "";
                 const pattern = new RegExp(
-                    "S[ÚU]MULA\\\\s+TCU\\\\s+(?:N[ºO°]?\\\\s*)?" + number + "\\\\b",
+                    "S[ÚU]MULA\\s+TCU\\s+(?:N[ºO°]?\\s*)?" + number + "\\b",
                     "i",
                 );
                 return pattern.test(text);
