@@ -677,7 +677,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 )
 
         if not records:
-            process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+$')
+            process_pattern = re.compile(r'^\d+\s*/\s*\d+\s*/\s*\d+
             for anchor in soup.find_all('a', href=True):
                 process = clean_text(anchor.get_text(' ', strip=True))
                 if not process_pattern.fullmatch(process) or process in seen:
