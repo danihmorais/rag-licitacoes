@@ -22,8 +22,8 @@ TCU_SUMULA_SEARCH_URL = (
 )
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 
-TCU_SUMULA_MAX_NUMBER = 292
-TCU_SUMULA_MIN_RECORDS = 292
+TCU_SUMULA_MIN_RECORDS = 1
+TCU_SUMULA_MISSING_STREAK = 12
 TCU_SUMULA_BROWSER_CONCURRENCY = 6
 TCU_SUMULA_BROWSER_TIMEOUT_MS = 60000
 TCU_SUMULA_REQUIRED_NUMBERS = (222, 247, 259, 263, 292)
@@ -105,7 +105,7 @@ def _fetch_tcu_sumula(numero: int, session=None) -> JurisprudenciaRecord | None:
         response.raise_for_status()
         return _parse_tcu_sumula_document(response.content, numero, response.url)
     except requests.RequestException:
-        return None
+        raise
 
 
 async def _fetch_tcu_sumula_browser(page, numero: int) -> JurisprudenciaRecord | None:
@@ -200,8 +200,36 @@ def _collect_tcu_sumulas(numbers, session=None) -> list[JurisprudenciaRecord]:
     return sorted(records_by_number.values(), key=lambda item: int(item.numero_sumula or 0))
 
 
-def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
-    return _collect_tcu_sumulas(range(1, max_number + 1), session=session)
+def discover_tcu_sumula_numbers(session=None) -> list[int]:
+    """Descobre dinamicamente a numeração atual das Súmulas do TCU."""
+    session = session or _thread_session()
+    numbers: list[int] = []
+    missing_streak = 0
+    number = 1
+    while missing_streak < TCU_SUMULA_MISSING_STREAK:
+        try:
+            record = _fetch_tcu_sumula(number, session)
+        except requests.RequestException as exc:
+            print(
+                f"  aviso: descoberta da Súmula TCU {number} falhou: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+        if record is None:
+            missing_streak += 1
+        else:
+            numbers.append(number)
+            missing_streak = 0
+        number += 1
+    return numbers
+
+
+def collect_tcu_sumulas(session=None) -> list[JurisprudenciaRecord]:
+    session = session or _thread_session()
+    numbers = discover_tcu_sumula_numbers(session)
+    if not numbers:
+        return []
+    return _collect_tcu_sumulas(numbers, session=session)
 
 
 def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
@@ -324,17 +352,19 @@ def collect_sumulas(
             for item in result["tcu"]
             if item.numero_sumula and item.numero_sumula.isdigit()
         }
-        expected_tcu_numbers = set(range(1, TCU_SUMULA_MAX_NUMBER + 1))
-        missing = sorted(expected_tcu_numbers - tcu_numbers)
-        extra = sorted(tcu_numbers - expected_tcu_numbers)
-        if missing:
-            failures.append(f"TCU: súmulas ausentes={missing}")
-        if extra:
-            failures.append(f"TCU: números fora do catálogo esperado={extra}")
-        if len(result["tcu"]) != len(expected_tcu_numbers):
-            failures.append(
-                f"TCU: {len(result['tcu'])} súmulas estruturadas; esperado exatamente {len(expected_tcu_numbers)} números"
-            )
+        highest = max(tcu_numbers, default=0)
+        if highest == 0:
+            failures.append("TCU: nenhuma súmula estruturada foi encontrada")
+        else:
+            expected_tcu_numbers = set(range(1, highest + 1))
+            missing = sorted(expected_tcu_numbers - tcu_numbers)
+            if missing:
+                failures.append(f"TCU: súmulas ausentes={missing}")
+            if len(tcu_numbers) != len(result["tcu"]):
+                failures.append(
+                    f"TCU: números de súmula duplicados ou inconsistentes; "
+                    f"registros={len(result['tcu'])} números_únicos={len(tcu_numbers)}"
+                )
 
     if strict and "tcesp" in requested:
         tcesp_numbers = {
