@@ -274,6 +274,191 @@ class JurisprudenciaAdapter(ABC):
 
     @abstractmethod
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
+        raise NotImplementedError
+
+
+
+class TCUAdapter(JurisprudenciaAdapter):
+    tribunal = 'TCU'
+    endpoint = 'https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo'
+    search_endpoint = endpoint + '/documentosResumidos'
+    detail_endpoint = endpoint + '/documento'
+    bulletin_csv_url = 'https://sites.tcu.gov.br/dados-abertos/jurisprudencia/arquivos/boletim-jurisprudencia/boletim-jurisprudencia.csv'
+
+    @staticmethod
+    def _rows(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if not isinstance(payload, dict):
+            return []
+        for key in ('documentos', 'data', 'items', 'acordaos', 'resultados'):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+        nested = payload.get('result')
+        if isinstance(nested, dict):
+            return TCUAdapter._rows(nested)
+        return []
+
+    @staticmethod
+    def _record(row: dict[str, Any]) -> JurisprudenciaRecord:
+        key = _first_value(row, 'KEY', 'key', 'id')
+        number = _first_value(row, 'NUMACORDAO', 'numeroAcordao', 'NUMACORDAOINT', 'numeroDecisao')
+        year = _first_value(row, 'ANOACORDAO', 'anoAcordao')
+        if number and year and '/' not in number:
+            number = f'{number}/{year}'
+        process = _first_value(
+            row,
+            'NUMPROCESSO_FORMATADO',
+            'NUMPROCESSOFORMATADO',
+            'numeroProcessoFormatado',
+            'NUMPROCESSO',
+            'numeroProcesso',
+            'PROCESSO',
+            'processo',
+        )
+        if not process:
+            process = key or number
+        return JurisprudenciaRecord(
+            tribunal='TCU',
+            numero_processo=process,
+            orgao_julgador=_first_value(row, 'COLEGIADO', 'colegiado', 'CODCOLEGIADO'),
+            relator=_first_value(row, 'RELATOR', 'relator'),
+            data=_first_value(row, 'DATASESSAO', 'DTSESSAO', 'dataSessao', 'dataSessaoFormatada'),
+            ementa=_first_value(row, 'SUMARIO', 'sumario', 'EMENTA', 'ementa', 'TITULO', 'titulo'),
+            tese=_first_value(row, 'TESE', 'tese'),
+            decisao=_first_value(row, 'ACORDAO', 'acordao'),
+            assunto=_as_list(
+                _first_value(row, 'AREA', 'area'),
+                _first_value(row, 'TEMA', 'tema'),
+                _first_value(row, 'SUBTEMA', 'subtema'),
+            ),
+            url_oficial=_first_value(row, 'URLACORDAO', 'urlAcordao', 'URL', 'url'),
+            tipo_decisao=_first_value(row, 'TIPO', 'tipo') or 'Acórdão',
+            numero_decisao=number,
+            origem='TCU — Pesquisa de Jurisprudência oficial',
+            situacao=_first_value(row, 'SITUACAO', 'situacao'),
+        )
+
+    @staticmethod
+    def _bulletin_rows(raw: bytes) -> list[dict[str, str]]:
+        text = ''
+        for encoding in ('utf-8-sig', 'cp1252', 'latin-1'):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if not text:
+            raise ValueError('CSV do Boletim de Jurisprudência do TCU não pôde ser decodificado')
+
+        try:
+            dialect = csv.Sniffer().sniff(text[:8192], delimiters=',;|\\t')
+        except csv.Error:
+            dialect = csv.excel
+            dialect.delimiter = ';'
+
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+        return [
+            {
+                str(key or '').strip().lstrip('\ufeff').upper(): str(value or '').strip()
+                for key, value in row.items()
+                if key is not None
+            }
+            for row in reader
+            if row
+        ]
+
+    @classmethod
+    def _bulletin_records(
+        cls,
+        raw: bytes,
+        query: str,
+        limit: int,
+        seen: set[str],
+    ) -> list[JurisprudenciaRecord]:
+        records: list[JurisprudenciaRecord] = []
+        for row in cls._bulletin_rows(raw):
+            key = _first_value(row, 'KEY', 'key')
+            enunciado = _first_value(row, 'ENUNCIADO', 'enunciado')
+            referencia = _first_value(row, 'REFERENCIA', 'referencia')
+            texto_acordao = _first_value(row, 'TEXTOACORDAO', 'textoAcordao')
+            titulo = _first_value(row, 'TITULO', 'titulo')
+            if not key or not enunciado or not _query_matches(
+                query,
+                enunciado,
+                referencia,
+                texto_acordao,
+                titulo,
+            ):
+                continue
+
+            numero_decisao = None
+            number_match = re.search(
+                r'(?i)\bac[oó]rd[aã]o(?:\s+n[ºo.]*)?\s*([0-9]+(?:/[0-9]{4})?)',
+                f'{texto_acordao} {titulo}',
+            )
+            if number_match:
+                numero_decisao = number_match.group(1)
+
+            dedupe_key = key
+            if dedupe_key in seen:
+                continue
+
+            records.append(
+                JurisprudenciaRecord(
+                    tribunal='TCU',
+                    tipo_documento='boletim_jurisprudencia',
+                    numero_processo=key,
+                    numero_decisao=numero_decisao,
+                    tipo_decisao='Enunciado de Boletim de Jurisprudência',
+                    ementa=enunciado,
+                    assunto=[referencia] if referencia else [],
+                    inteiro_teor=texto_acordao or None,
+                    url_oficial=cls.bulletin_csv_url,
+                    origem='TCU — Boletim de Jurisprudência (dados abertos)',
+                )
+            )
+            seen.add(dedupe_key)
+            if len(records) >= limit:
+                break
+        return records
+
+    def _search_bulletin(
+        self,
+        query: str,
+        limit: int,
+        seen: set[str],
+    ) -> list[JurisprudenciaRecord]:
+        response = self.session.get(
+            self.bulletin_csv_url,
+            timeout=(8, 90),
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return self._bulletin_records(response.content, query, limit, seen)
+
+    def _detail_content(self, key: str) -> str:
+        response = self.session.get(
+            self.detail_endpoint,
+            params={'termo': key},
+            timeout=(20, 90),
+        )
+        response.raise_for_status()
+        rows = self._rows(response.json())
+        if not rows:
+            return ''
+        row = rows[0]
+        sections = [
+            _first_value(row, 'EMENTA', 'ementa', 'SUMARIO', 'sumario'),
+            _first_value(row, 'ACORDAO', 'acordao'),
+            _first_value(row, 'RELATORIO', 'relatorio', 'RELATÓRIO', 'relatório'),
+            _first_value(row, 'VOTO', 'voto'),
+            _first_value(row, 'DISPOSITIVO', 'dispositivo'),
+        ]
+        return '\n\n'.join(item for item in sections if item.strip())
+
+    def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         effective_with_content = with_content or detail
         seen: set[str] = set()
         rest_records: list[JurisprudenciaRecord] = []
@@ -329,8 +514,6 @@ class JurisprudenciaAdapter(ABC):
                             f'{type(exc).__name__}: {exc}'
                         )
                 rest_records.append(record)
-                if len(rest_records) >= limit:
-                    break
 
             if len(rest_records) >= limit:
                 break
@@ -344,9 +527,6 @@ class JurisprudenciaAdapter(ABC):
                 f'{type(exc).__name__}: {exc}'
             )
 
-        # As duas bases são consultadas sempre. O limite é aplicado somente
-        # depois da união, alternando as fontes para não deixar uma delas
-        # invisível quando a outra retornar muitos resultados.
         combined: list[JurisprudenciaRecord] = []
         for index in range(max(len(rest_records), len(bulletin))):
             if index < len(rest_records):
