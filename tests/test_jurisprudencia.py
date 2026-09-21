@@ -25,8 +25,12 @@ class FakeSession:
     def request(self, method, *args, **kwargs): return self.get(*args, **kwargs)
 
 
-def test_tcu_adapter_uses_current_public_rest_contract():
-    session = FakeSession([
+def test_tcu_adapter_queries_rest_and_bulletin_sources():
+    bulletin = (
+        "KEY,ENUNCIADO,REFERENCIA,TEXTOACORDAO,TITULO\n"
+        'B1,"Boletim também contém entendimento sobre licitação.","Lei 14.133/2021","Acórdão 123/2026","Boletim de Jurisprudência 600"\n'
+    ).encode("utf-8")
+    responses = [
         FakeResponse({
             "quantidadeEncontrada": 1,
             "documentos": [{
@@ -40,14 +44,52 @@ def test_tcu_adapter_uses_current_public_rest_contract():
                 "SUMARIO": "Licitação e contratação pública.",
                 "AREA": "Licitação", "TEMA": "Contratação", "SUBTEMA": "Edital"
             }]
-        })
-    ])
-    records = TCUAdapter(session).search("licitação", 1)
-    assert len(records) == 1
-    assert TCUAdapter.endpoint == "https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo"
+        }),
+        FakeResponse(bulletin, content_type="text/csv", url=TCUAdapter.bulletin_csv_url),
+    ]
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return super().get(*args, **kwargs)
+
+    session = CaptureSession(responses)
+    records = TCUAdapter(session).search("licitação", 2)
+
+    assert len(records) == 2
+    assert records[0].tribunal == "TCU"
     assert records[0].numero_decisao == "480/2024"
-    assert records[0].orgao_julgador == "Plenário"
     assert records[0].url_oficial.endswith("/4802024")
+    assert records[1].tipo_documento == "boletim_jurisprudencia"
+    assert len(session.calls) == 2
+    assert session.calls[0][0][0] == TCUAdapter.search_endpoint
+    assert session.calls[1][0][0] == TCUAdapter.bulletin_csv_url
+
+
+
+def test_tcu_adapter_uses_bulletin_csv_when_rest_returns_no_records():
+    bulletin = (
+        "KEY,ENUNCIADO,REFERENCIA,TEXTOACORDAO,TITULO\n"
+        'B1,"Licitação exige planejamento adequado.","Lei 14.133/2021","Acórdão 123/2026","Boletim de Jurisprudência 600"\n'
+    ).encode("utf-8")
+    session = FakeSession([
+        FakeResponse({"quantidadeEncontrada": 0, "documentos": []}),
+        FakeResponse(bulletin, content_type="text/csv", url=TCUAdapter.bulletin_csv_url),
+    ])
+
+    records = TCUAdapter(session).search("licitação", 1)
+
+    assert len(records) == 1
+    assert records[0].tribunal == "TCU"
+    assert records[0].tipo_documento == "boletim_jurisprudencia"
+    assert records[0].numero_decisao == "123/2026"
+    assert records[0].url_oficial == TCUAdapter.bulletin_csv_url
+    assert records[0].origem == "TCU — Boletim de Jurisprudência (dados abertos)"
+
 
 def test_tcesp_adapter_parses_result_table():
     html = '''<html><body><table><tbody>
@@ -76,6 +118,32 @@ def test_tcesp_adapter_accepts_current_result_rows_without_css_class():
     assert records[0].numero_processo == "5600/989/25"
     assert records[0].url_oficial == "https://www.tce.sp.gov.br/jurisprudencia/exibir?codigo=560098925"
     assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
+
+def test_tcesp_rendered_fallback_does_not_emit_false_partial_warning(monkeypatch, capsys):
+    html = '''<html><body>
+    <h3>Foram encontrados 121068 registros</h3>
+    <div class="resultado">Resultado renderizado pelo navegador.</div>
+    </body></html>'''.encode("utf-8")
+    record = JurisprudenciaRecord(
+        tribunal="TCESP",
+        numero_processo="5600/989/25",
+        data_autuacao="17/03/2025",
+        ementa="Licitação e qualificação técnica.",
+        tipo_decisao="Jurisprudência",
+        origem="TCESP — Pesquisa de Jurisprudência",
+        url_oficial="https://www.tce.sp.gov.br/jurisprudencia/exibir?codigo=560098925",
+    )
+    adapter = TCESPAdapter(FakeSession([
+        FakeResponse(html, content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar")
+    ]))
+    monkeypatch.setattr(adapter, "_browser_records", lambda *args, **kwargs: [record])
+    records = adapter.search("licitação", 1)
+    captured = capsys.readouterr().out
+
+    assert len(records) == 1
+    assert records[0].numero_processo == "5600/989/25"
+    assert "potencialmente parcial" not in captured
+
 
 def test_tcesp_adapter_falls_back_to_process_links_when_rows_are_not_structured():
     html = '''<html><body>

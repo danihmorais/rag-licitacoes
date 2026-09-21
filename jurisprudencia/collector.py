@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import io
 import html
 import itertools
 import json
@@ -281,6 +283,7 @@ class TCUAdapter(JurisprudenciaAdapter):
     endpoint = 'https://pesquisa.apps.tcu.gov.br/rest/publico/base/acordao-completo'
     search_endpoint = endpoint + '/documentosResumidos'
     detail_endpoint = endpoint + '/documento'
+    bulletin_csv_url = 'https://sites.tcu.gov.br/dados-abertos/jurisprudencia/arquivos/boletim-jurisprudencia/boletim-jurisprudencia.csv'
 
     @staticmethod
     def _rows(payload: Any) -> list[dict[str, Any]]:
@@ -337,6 +340,104 @@ class TCUAdapter(JurisprudenciaAdapter):
             situacao=_first_value(row, 'SITUACAO', 'situacao'),
         )
 
+    @staticmethod
+    def _bulletin_rows(raw: bytes) -> list[dict[str, str]]:
+        text = ''
+        for encoding in ('utf-8-sig', 'cp1252', 'latin-1'):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if not text:
+            raise ValueError('CSV do Boletim de Jurisprudência do TCU não pôde ser decodificado')
+
+        try:
+            dialect = csv.Sniffer().sniff(text[:8192], delimiters=',;|\\t')
+        except csv.Error:
+            dialect = csv.excel
+            dialect.delimiter = ';'
+
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+        return [
+            {
+                str(key or '').strip().lstrip('\ufeff').upper(): str(value or '').strip()
+                for key, value in row.items()
+                if key is not None
+            }
+            for row in reader
+            if row
+        ]
+
+    @classmethod
+    def _bulletin_records(
+        cls,
+        raw: bytes,
+        query: str,
+        limit: int,
+        seen: set[str],
+    ) -> list[JurisprudenciaRecord]:
+        records: list[JurisprudenciaRecord] = []
+        for row in cls._bulletin_rows(raw):
+            key = _first_value(row, 'KEY', 'key')
+            enunciado = _first_value(row, 'ENUNCIADO', 'enunciado')
+            referencia = _first_value(row, 'REFERENCIA', 'referencia')
+            texto_acordao = _first_value(row, 'TEXTOACORDAO', 'textoAcordao')
+            titulo = _first_value(row, 'TITULO', 'titulo')
+            if not key or not enunciado or not _query_matches(
+                query,
+                enunciado,
+                referencia,
+                texto_acordao,
+                titulo,
+            ):
+                continue
+
+            numero_decisao = None
+            number_match = re.search(
+                r'(?i)\bac[oó]rd[aã]o(?:\s+n[ºo.]*)?\s*([0-9]+(?:/[0-9]{4})?)',
+                f'{texto_acordao} {titulo}',
+            )
+            if number_match:
+                numero_decisao = number_match.group(1)
+
+            dedupe_key = key
+            if dedupe_key in seen:
+                continue
+
+            records.append(
+                JurisprudenciaRecord(
+                    tribunal='TCU',
+                    tipo_documento='boletim_jurisprudencia',
+                    numero_processo=key,
+                    numero_decisao=numero_decisao,
+                    tipo_decisao='Enunciado de Boletim de Jurisprudência',
+                    ementa=enunciado,
+                    assunto=[referencia] if referencia else [],
+                    inteiro_teor=texto_acordao or None,
+                    url_oficial=cls.bulletin_csv_url,
+                    origem='TCU — Boletim de Jurisprudência (dados abertos)',
+                )
+            )
+            seen.add(dedupe_key)
+            if len(records) >= limit:
+                break
+        return records
+
+    def _search_bulletin(
+        self,
+        query: str,
+        limit: int,
+        seen: set[str],
+    ) -> list[JurisprudenciaRecord]:
+        response = self.session.get(
+            self.bulletin_csv_url,
+            timeout=(8, 90),
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return self._bulletin_records(response.content, query, limit, seen)
+
     def _detail_content(self, key: str) -> str:
         response = self.session.get(
             self.detail_endpoint,
@@ -360,23 +461,40 @@ class TCUAdapter(JurisprudenciaAdapter):
     def search(self, query: str, limit: int, *, detail: bool = False, with_content: bool = False) -> list[JurisprudenciaRecord]:
         effective_with_content = with_content or detail
         seen: set[str] = set()
+        rest_records: list[JurisprudenciaRecord] = []
+        rest_error: Exception | None = None
+
         for variant in _query_variants(query):
-            response = self.session.get(
-                self.search_endpoint,
-                params={
-                    'termo': variant,
-                    'ordenacao': 'DTRELEVANCIA desc, NUMACORDAOINT desc',
-                    'quantidade': max(10, min(100, limit * 5)),
-                    'inicio': 0,
-                },
-                timeout=(20, 90),
-            )
-            response.raise_for_status()
-            payload = response.json()
+            try:
+                response = self.session.get(
+                    self.search_endpoint,
+                    params={
+                        'termo': variant,
+                        'ordenacao': 'DTRELEVANCIA desc, NUMACORDAOINT desc',
+                        'quantidade': max(10, min(100, limit * 5)),
+                        'inicio': 0,
+                    },
+                    timeout=(20, 90),
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except Exception as exc:
+                rest_error = exc
+                print(
+                    f'aviso: Pesquisa de Acórdãos TCU indisponível para {query!r}: '
+                    f'{type(exc).__name__}: {exc}'
+                )
+                break
+
             rows = self._rows(payload)
             if not rows and isinstance(payload, dict) and payload.get('quantidadeEncontrada') not in (None, 0):
-                raise RuntimeError('TCU retornou quantidadeEncontrada mas não forneceu a lista documentos no contrato oficial.')
-            records: list[JurisprudenciaRecord] = []
+                rest_error = RuntimeError(
+                    'TCU retornou quantidadeEncontrada mas não forneceu a lista '
+                    'documentos no contrato oficial.'
+                )
+                print(f'aviso: {rest_error}')
+                break
+
             for row in rows:
                 record = self._record(row)
                 key = _first_value(row, 'KEY', 'key', 'id') or record.document_key
@@ -391,13 +509,45 @@ class TCUAdapter(JurisprudenciaAdapter):
                         if content:
                             record.inteiro_teor = content
                     except Exception as exc:
-                        print(f'aviso: inteiro teor TCU indisponível para {key}: {type(exc).__name__}: {exc}')
-                records.append(record)
-                if len(records) >= limit:
-                    return records
-            if records:
-                return records
-        raise RuntimeError(f'TCU não retornou resultados estruturados para a consulta {query!r}. Contrato da API oficial possivelmente alterado.')
+                        print(
+                            f'aviso: inteiro teor TCU indisponível para {key}: '
+                            f'{type(exc).__name__}: {exc}'
+                        )
+                rest_records.append(record)
+
+            if len(rest_records) >= limit:
+                break
+
+        bulletin: list[JurisprudenciaRecord] = []
+        try:
+            bulletin = self._search_bulletin(query, limit, seen)
+        except Exception as exc:
+            print(
+                f'aviso: Boletim de Jurisprudência TCU indisponível para {query!r}: '
+                f'{type(exc).__name__}: {exc}'
+            )
+
+        combined: list[JurisprudenciaRecord] = []
+        for index in range(max(len(rest_records), len(bulletin))):
+            if index < len(rest_records):
+                combined.append(rest_records[index])
+            if index < len(bulletin):
+                combined.append(bulletin[index])
+            if len(combined) >= limit:
+                break
+
+        if combined:
+            return combined[:limit]
+
+        if rest_error is not None:
+            raise RuntimeError(
+                f'TCU não retornou resultados estruturados para {query!r}; '
+                f'falha na pesquisa de Acórdãos: {type(rest_error).__name__}: {rest_error}'
+            ) from rest_error
+        raise RuntimeError(
+            f'TCU não retornou resultados estruturados para a consulta {query!r}. '
+            'As fontes oficiais de Acórdãos e de Boletins não retornaram resultados.'
+        )
 
 
 class TCESPAdapter(JurisprudenciaAdapter):
@@ -667,15 +817,6 @@ class TCESPAdapter(JurisprudenciaAdapter):
             if len(records) >= limit:
                 return records[:limit]
 
-        if total is not None and total > 0:
-            expected_records = min(total, limit)
-            if len(records) < expected_records:
-                print(
-                    f'aviso: TCESP informou {total} registros para {variant!r}, mas apenas {len(records)} '
-                    f'foram estruturados (esperados até {expected_records}); a página pode ter mudado '
-                    'e a extração está potencialmente parcial.'
-                )
-
         if not records:
             process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
             for anchor in soup.find_all('a', href=True):
@@ -752,30 +893,40 @@ class TCESPAdapter(JurisprudenciaAdapter):
                     return records[:limit]
 
         browser_error = None
-        if total is not None and total > 0 and not records:
-            try:
-                browser_records = self._browser_records(
-                    variant,
-                    limit,
-                    detail=detail,
-                    with_content=with_content,
-                    seen=seen,
+        if total is not None and total > 0:
+            expected_records = min(total, limit)
+            if len(records) < expected_records:
+                try:
+                    browser_records = self._browser_records(
+                        variant,
+                        limit,
+                        detail=detail,
+                        with_content=with_content,
+                        seen=seen,
+                    )
+                except Exception as exc:
+                    browser_error = exc
+                    browser_records = []
+                if browser_records:
+                    records.extend(browser_records)
+                if len(records) >= expected_records:
+                    return records[:limit]
+                detail_message = (
+                    f'; fallback Playwright falhou: {type(browser_error).__name__}: {browser_error}'
+                    if browser_error
+                    else '; fallback Playwright não encontrou links de processos'
                 )
-            except Exception as exc:
-                browser_error = exc
-                browser_records = []
-            if browser_records:
-                return browser_records[:limit]
-            detail_message = (
-                f'; fallback Playwright falhou: {type(browser_error).__name__}: {browser_error}'
-                if browser_error
-                else '; fallback Playwright não encontrou links de processos'
-            )
-            raise RuntimeError(
-                f'TCESP informou {total} registros para a consulta {variant!r}, '
-                'mas não foi possível localizar uma linha de resultado processável'
-                f'{detail_message}.'
-            )
+                print(
+                    f'aviso: TCESP informou {total} registros para {variant!r}, mas apenas {len(records)} '
+                    f'foram estruturados (esperados até {expected_records}){detail_message}; '
+                    'a extração está potencialmente parcial.'
+                )
+                if not records and browser_error:
+                    raise RuntimeError(
+                        f'TCESP informou {total} registros para a consulta {variant!r}, '
+                        'mas não foi possível localizar uma linha de resultado processável'
+                        f'{detail_message}.'
+                    ) from browser_error
 
         if total is None:
             form = soup.find('form')

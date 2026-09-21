@@ -176,7 +176,7 @@ def _native_extraction_confidence(text):
 
 def _ocr_page(pdf_document, page_number):
     try:
-        import fitz
+        import pymupdf
         import pytesseract
         from PIL import Image
     except ImportError as exc:
@@ -186,7 +186,7 @@ def _ocr_page(pdf_document, page_number):
         ) from exc
     page = pdf_document.load_page(page_number - 1)
     scale = config.OCR_DPI / 72.0
-    pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+    pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
     image = Image.frombytes('RGB', [pixmap.width, pixmap.height], pixmap.samples)
     ocr_config = '--psm 6'
     text = pytesseract.image_to_string(image, lang=config.OCR_LANGUAGE, config=ocr_config) or ''
@@ -240,8 +240,8 @@ def extract_page_records(path):
             if needs_ocr:
                 if ocr_document is None:
                     try:
-                        import fitz
-                        ocr_document = fitz.open(str(path))
+                        import pymupdf
+                        ocr_document = pymupdf.open(str(path))
                     except ImportError as exc:
                         raise RuntimeError('OCR necessário, mas PyMuPDF não está instalado.') from exc
                 try:

@@ -92,18 +92,25 @@ def test_stj_caches_resources_and_payloads_across_variants():
     assert all(record.inteiro_teor for record in records)
 
 
-def test_tcu_sumula_collection_forwards_custom_session(monkeypatch):
-    expected = object()
+def test_tcu_sumula_collection_forwards_custom_session():
     captured = {}
 
-    def fake_collect(numbers, session=None):
-        captured['numbers'] = list(numbers)
-        captured['session'] = session
-        return []
+    class Response:
+        content = b"KEY,NUMERO,ENUNCIADO,VIGENTE\nS1,222,Enunciado,SIM\n"
 
-    monkeypatch.setattr(sumulas, '_collect_tcu_sumulas', fake_collect)
-    assert sumulas.collect_tcu_sumulas(session=expected, max_number=2) == []
-    assert captured == {'numbers': [1, 2], 'session': expected}
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return Response()
+
+    records = sumulas.collect_tcu_sumulas(session=FakeSession())
+    assert [record.numero_sumula for record in records] == ["222"]
+    assert captured["url"] == sumulas.TCU_SUMULA_CSV_URL
+    assert captured["kwargs"]["allow_redirects"] is True
 
 
 def test_tcesp_strict_does_not_require_contiguous_sumula_numbers(monkeypatch):

@@ -8,6 +8,7 @@ on:
       - 'jurisprudencia/**'
       - 'scripts/sources.py'
       - 'tests/test_jurisprudencia*.py'
+      - 'tests/test_sumulas.py'
       - 'requirements.txt'
       - '.github/workflows/jurisprudencia-health.yml'
   push:
@@ -16,6 +17,8 @@ on:
     paths:
       - 'jurisprudencia/**'
       - 'scripts/sources.py'
+      - 'tests/test_jurisprudencia*.py'
+      - 'tests/test_sumulas.py'
       - 'requirements.txt'
       - '.github/workflows/jurisprudencia-health.yml'
   workflow_dispatch:
@@ -30,7 +33,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v7
@@ -43,20 +46,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Testar poucos registros nos tribunais principais
+      - name: Testar 5 registros em cada tribunal
         run: |
-          python -m jurisprudencia.batch --tribunais tcu,stj,stf,tjsp --query "licitação" --limit 2 --min-records-per-tribunal 1 --per-query-limit 2 --strict --without-sumulas
-      - name: Probar TCESP com um registro (não bloqueante)
+          python -m jurisprudencia.batch             --tribunais tcu,stj,stf,tjsp,tcesp             --query "licitação"             --limit 5             --per-query-limit 5             --min-records-per-tribunal 5             --strict             --without-sumulas
+      - name: Testar todas as Súmulas TCU e TCESP
         run: |
-          set +e
-          python -m jurisprudencia.batch --tribunais tcesp --query "licitação" --limit 1 --min-records-per-tribunal 1 --per-query-limit 1 --strict --without-sumulas
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "::warning::O endpoint do TCESP não respondeu ao health-check; isso não invalida os demais checks."
-          fi
-          exit 0
-      - name: Testar catálogo oficial de súmulas
-        run: python -m jurisprudencia.sumulas --health
+          python -m jurisprudencia.sumulas --strict
       - name: Publicar cache da coleta quando houver falha
         if: failure()
         uses: actions/upload-artifact@v6

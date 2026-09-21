@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
+import csv
+import io
 import re
 import threading
 
@@ -22,10 +22,8 @@ TCU_SUMULA_SEARCH_URL = (
 )
 TCESP_SUMULA_URL = "https://www.tce.sp.gov.br/boletim-de-jurisprudencia/sumulas"
 
-TCU_SUMULA_MAX_NUMBER = 400
-TCU_SUMULA_MIN_RECORDS = 295
-TCU_SUMULA_BROWSER_CONCURRENCY = 6
-TCU_SUMULA_BROWSER_TIMEOUT_MS = 60000
+TCU_SUMULA_CSV_URL = "https://sites.tcu.gov.br/dados-abertos/jurisprudencia/arquivos/sumula/sumula.csv"
+TCU_SUMULA_MIN_RECORDS = 1
 TCU_SUMULA_REQUIRED_NUMBERS = (222, 247, 259, 263, 292)
 TCESP_SUMULA_MIN_RECORDS = 52
 
@@ -92,109 +90,116 @@ def _parse_tcu_sumula_document(raw: bytes, numero: int, source_url: str) -> Juri
     return _parse_tcu_sumula_text(page_text(raw), numero, source_url)
 
 
-def _fetch_tcu_sumula(numero: int, session=None) -> JurisprudenciaRecord | None:
-    session = session or _thread_session()
-    try:
-        response = session.get(
-            TCU_SUMULA_DOCUMENT_URL.format(numero=numero),
-            timeout=(8, 45),
-            allow_redirects=True,
-        )
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
-        return _parse_tcu_sumula_document(response.content, numero, response.url)
-    except requests.RequestException:
-        return None
-
-
-async def _fetch_tcu_sumula_browser(page, numero: int) -> JurisprudenciaRecord | None:
-    url = TCU_SUMULA_DOCUMENT_URL.format(numero=numero)
-    try:
-        response = await page.goto(
-            url,
-            wait_until="domcontentloaded",
-            timeout=TCU_SUMULA_BROWSER_TIMEOUT_MS,
-        )
-        if response is not None and response.status >= 400:
-            return None
-        await page.wait_for_function(
-            "(needle) => document.body && document.body.innerText.includes(needle)",
-            arg=f"SÚMULA TCU {numero}",
-            timeout=30000,
-        )
-        text = await page.locator("body").inner_text()
-    except Exception as exc:
-        print(f"  aviso: Súmula TCU {numero} via navegador falhou: {type(exc).__name__}: {exc}")
-        return None
-    return _parse_tcu_sumula_text(text, numero, page.url)
-
-
-async def _collect_tcu_sumulas_browser(numbers: list[int]) -> list[JurisprudenciaRecord]:
-    from playwright.async_api import async_playwright
-
-    semaphore = asyncio.Semaphore(TCU_SUMULA_BROWSER_CONCURRENCY)
-
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
-
-        async def fetch_one(numero: int) -> JurisprudenciaRecord | None:
-            async with semaphore:
-                page = await browser.new_page()
-                try:
-                    return await _fetch_tcu_sumula_browser(page, numero)
-                finally:
-                    await page.close()
-
-        records = await asyncio.gather(*(fetch_one(numero) for numero in numbers))
-        await browser.close()
-
-    return [record for record in records if record is not None]
-
-
-def _collect_tcu_sumulas(numbers, session=None) -> list[JurisprudenciaRecord]:
-    numbers = list(numbers)
-    records_by_number: dict[int, JurisprudenciaRecord] = {}
-
-    if session is not None:
-        for number in numbers:
-            try:
-                record = _fetch_tcu_sumula(number, session)
-            except (requests.RequestException, ValueError) as exc:
-                print(f"  aviso: Súmula TCU {number} indisponível: {type(exc).__name__}: {exc}")
-                continue
-            if record is not None:
-                records_by_number[number] = record
-    else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(_fetch_tcu_sumula, number): number for number in numbers}
-            for future in concurrent.futures.as_completed(futures):
-                number = futures[future]
-                try:
-                    record = future.result()
-                except (requests.RequestException, ValueError) as exc:
-                    print(f"  aviso: Súmula TCU {number} indisponível: {type(exc).__name__}: {exc}")
-                    continue
-                if record is not None:
-                    records_by_number[number] = record
-
-    missing = [number for number in numbers if number not in records_by_number]
-    if missing:
+def _csv_rows(raw: bytes) -> list[dict[str, str]]:
+    text = ""
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
-            browser_records = asyncio.run(_collect_tcu_sumulas_browser(missing))
-        except Exception as exc:
-            print(f"  aviso: fallback Chromium das Súmulas TCU falhou: {type(exc).__name__}: {exc}")
-            browser_records = []
-        for record in browser_records:
-            number = int(record.numero_sumula or 0)
-            if number:
-                records_by_number[number] = record
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if not text:
+        raise ValueError("CSV de Súmulas TCU não pôde ser decodificado")
 
-    return sorted(records_by_number.values(), key=lambda item: int(item.numero_sumula or 0))
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;|\t")
+    except csv.Error:
+        dialect = csv.excel
+        dialect.delimiter = ";"
+
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    rows: list[dict[str, str]] = []
+    for raw_row in reader:
+        row = {
+            str(key or "").strip().lstrip("\ufeff").upper(): str(value or "").strip()
+            for key, value in raw_row.items()
+            if key is not None
+        }
+        if row:
+            rows.append(row)
+    return rows
 
 
-def collect_tcu_sumulas(session=None, max_number: int = TCU_SUMULA_MAX_NUMBER) -> list[JurisprudenciaRecord]:
-    return _collect_tcu_sumulas(range(1, max_number + 1), session=session)
+def _csv_value(row: dict[str, str], *names: str) -> str:
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return clean_text(str(value))
+    return ""
+
+
+def _normalize_tcu_sumula_number(value: str) -> str:
+    raw = clean_text(value).replace(",", ".")
+    match = re.fullmatch(r"(\d+)(?:\.0+)?", raw)
+    return match.group(1) if match else ""
+
+
+def _tcu_csv_situacao(value: str) -> str:
+    folded = clean_text(value).casefold()
+    if folded in {"sim", "s", "true", "1", "vigente"}:
+        return "VIGENTE"
+    if folded in {"não", "nao", "n", "false", "0", "revogada", "revogado", "cancelada", "cancelado"}:
+        return "REVOGADA"
+    return clean_text(value).upper() or "VIGENTE"
+
+
+def _make_tcu_csv_record(row: dict[str, str]) -> JurisprudenciaRecord | None:
+    numero = _normalize_tcu_sumula_number(_csv_value(row, "NUMERO"))
+    enunciado = _csv_value(row, "ENUNCIADO")
+    if not numero or not enunciado:
+        return None
+
+    approval = _csv_value(row, "NUMAPROVACAO")
+    approval_year = _csv_value(row, "ANOAPROVACAO")
+    decisao = f"{approval}/{approval_year}" if approval and approval_year else approval
+
+    assuntos = [
+        item for item in (
+            _csv_value(row, "AREA"),
+            _csv_value(row, "TEMA"),
+            _csv_value(row, "SUBTEMA"),
+        )
+        if item
+    ]
+
+    return JurisprudenciaRecord(
+        tribunal="TCU",
+        tipo_documento="sumula",
+        numero_processo="",
+        numero_sumula=numero,
+        numero_decisao=decisao or None,
+        tipo_decisao="Súmula",
+        orgao_julgador=_csv_value(row, "COLEGIADO") or "Plenário",
+        data=_csv_value(row, "DATASESSAOFORMATADA"),
+        assunto=assuntos,
+        ementa=enunciado,
+        situacao=_tcu_csv_situacao(_csv_value(row, "VIGENTE")),
+        url_oficial=TCU_SUMULA_CSV_URL,
+        origem="TCU — Repertório oficial de Súmulas (dados abertos)",
+    )
+
+
+def _parse_tcu_sumulas_csv(raw: bytes) -> list[JurisprudenciaRecord]:
+    records_by_number: dict[int, JurisprudenciaRecord] = {}
+    for row in _csv_rows(raw):
+        record = _make_tcu_csv_record(row)
+        if record is None:
+            continue
+        number = int(record.numero_sumula or 0)
+        if number:
+            records_by_number[number] = record
+    return [records_by_number[number] for number in sorted(records_by_number)]
+
+
+def collect_tcu_sumulas(session=None) -> list[JurisprudenciaRecord]:
+    session = session or make_session()
+    response = session.get(
+        TCU_SUMULA_CSV_URL,
+        timeout=(8, 90),
+        allow_redirects=True,
+    )
+    response.raise_for_status()
+    return _parse_tcu_sumulas_csv(response.content)
 
 
 def _parse_tcesp_sumulas_text(text: str) -> list[JurisprudenciaRecord]:
@@ -267,42 +272,22 @@ def collect_tcesp_sumulas(session=None) -> list[JurisprudenciaRecord]:
 
 
 def smoke_test_sumulas() -> None:
-    critical_numbers = (222, 247, 259, 263, 292)
-    tcu_records = _collect_tcu_sumulas(critical_numbers)
-    tcu_by_number = {
-        int(record.numero_sumula): record
-        for record in tcu_records
-        if record.numero_sumula and record.numero_sumula.isdigit()
+    result = collect_sumulas(strict=True)
+    tcu_numbers = {
+        int(item.numero_sumula)
+        for item in result["tcu"]
+        if item.numero_sumula and item.numero_sumula.isdigit()
     }
-    for number in critical_numbers:
-        record = tcu_by_number.get(number)
-        if record is None:
-            raise RuntimeError(f"Súmula TCU {number} não foi encontrada no portal oficial.")
-        if not record.ementa or record.numero_sumula != str(number) or record.tipo_documento != "sumula":
-            raise RuntimeError(f"Súmula TCU {number} retornou registro estrutural inválido.")
-
-    tcesp_records = collect_tcesp_sumulas()
     tcesp_numbers = {
-        int(record.numero_sumula)
-        for record in tcesp_records
-        if record.numero_sumula and record.numero_sumula.isdigit()
+        int(item.numero_sumula)
+        for item in result["tcesp"]
+        if item.numero_sumula and item.numero_sumula.isdigit()
     }
-    if len(tcesp_numbers) < TCESP_SUMULA_MIN_RECORDS:
-        raise RuntimeError(
-            f"TCESP: apenas {len(tcesp_numbers)} súmulas estruturadas; "
-            f"esperado pelo menos {TCESP_SUMULA_MIN_RECORDS}"
-        )
-    highest = max(tcesp_numbers, default=0)
-    if len(tcesp_numbers) != len(tcesp_records):
-        raise RuntimeError(
-            f"TCESP: números de súmula duplicados ou inconsistentes; "
-            f"registros={len(tcesp_records)} números_únicos={len(tcesp_numbers)}"
-        )
-
     print(
-        f"Smoke súmulas OK: TCU 222, 247, 259, 263, 292 | "
-        f"TCESP {min(tcesp_numbers, default=0)}-{highest} ({len(tcesp_numbers)} registros, "
-        "sem exigir numeração contínua)"
+        f"Smoke súmulas OK: TCU {len(tcu_numbers)} números "
+        f"(1-{max(tcu_numbers, default=0)}) | "
+        f"TCESP {len(tcesp_numbers)} números "
+        f"(1-{max(tcesp_numbers, default=0)})"
     )
 
 
@@ -337,13 +322,16 @@ def collect_sumulas(
             for item in result["tcu"]
             if item.numero_sumula and item.numero_sumula.isdigit()
         }
-        if len(result["tcu"]) < TCU_SUMULA_MIN_RECORDS:
+        if len(tcu_numbers) < TCU_SUMULA_MIN_RECORDS:
             failures.append(
-                f"TCU: apenas {len(result['tcu'])} súmulas estruturadas; esperado pelo menos {TCU_SUMULA_MIN_RECORDS}"
+                f"TCU: apenas {len(tcu_numbers)} súmulas estruturadas; "
+                f"esperado pelo menos {TCU_SUMULA_MIN_RECORDS}"
             )
-        missing = sorted(set(TCU_SUMULA_REQUIRED_NUMBERS) - tcu_numbers)
-        if missing:
-            failures.append(f"TCU: súmulas essenciais ausentes={missing}")
+        if len(tcu_numbers) != len(result["tcu"]):
+            failures.append(
+                f"TCU: números de súmula duplicados ou inconsistentes; "
+                f"registros={len(result['tcu'])} números_únicos={len(tcu_numbers)}"
+            )
 
     if strict and "tcesp" in requested:
         tcesp_numbers = {

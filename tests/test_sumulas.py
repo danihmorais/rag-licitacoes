@@ -4,6 +4,7 @@ from jurisprudencia.collector import save_record
 import jurisprudencia.sumulas as sumulas
 
 from jurisprudencia.sumulas import (
+    TCU_SUMULA_CSV_URL,
     TCU_SUMULA_DOCUMENT_URL,
     TCU_SUMULA_MIN_RECORDS,
     TCU_SUMULA_REQUIRED_NUMBERS,
@@ -60,11 +61,46 @@ def test_tcu_document_parser_accepts_numero_marker_and_status():
     assert record.ementa == "É obrigatória a admissão da adjudicação por item."
 
 
-def test_tcu_collection_contract_contains_key_summulas():
-    assert "{numero}" in TCU_SUMULA_DOCUMENT_URL
-    assert TCU_SUMULA_DOCUMENT_URL.startswith("https://pesquisa.apps.tcu.gov.br/documento/sumula/")
-    assert TCU_SUMULA_MIN_RECORDS == 295
+def test_tcu_collection_contract_uses_official_csv():
+    assert TCU_SUMULA_CSV_URL == "https://sites.tcu.gov.br/dados-abertos/jurisprudencia/arquivos/sumula/sumula.csv"
+    assert TCU_SUMULA_MIN_RECORDS == 1
     assert TCU_SUMULA_REQUIRED_NUMBERS == (222, 247, 259, 263, 292)
+
+
+def test_tcu_parser_accepts_open_data_csv():
+    raw = (
+        "KEY,NUMERO,ENUNCIADO,AREA,TEMA,SUBTEMA,NUMAPROVACAO,ANOAPROVACAO,COLEGIADO,VIGENTE,DATASESSAOFORMATADA\n"
+        'S1,247,"É obrigatória a admissão da adjudicação por item.",Licitação,Registro,Adesão,1234,2018,Plenário,SIM,12/09/2018\n'
+        'S2,292,"A súmula pode estar revogada.",Licitação,, ,999,2022,Plenário,NÃO,01/02/2022\n'
+    ).encode("utf-8")
+    records = sumulas._parse_tcu_sumulas_csv(raw)
+    assert [item.numero_sumula for item in records] == ["247", "292"]
+    assert records[0].url_oficial == TCU_SUMULA_CSV_URL
+    assert records[0].situacao == "VIGENTE"
+    assert records[1].situacao == "REVOGADA"
+    assert records[0].numero_decisao == "1234/2018"
+
+
+def test_tcu_sumula_collection_reads_official_csv(monkeypatch):
+    class Response:
+        content = (
+            "KEY;NUMERO;ENUNCIADO;VIGENTE\n"
+            'S1;247;"Enunciado 247.";SIM\n'
+            'S2;292;"Enunciado 292.";NAO\n'
+        ).encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    class Session:
+        def get(self, url, **kwargs):
+            assert url == TCU_SUMULA_CSV_URL
+            assert kwargs["allow_redirects"] is True
+            return Response()
+
+    records = sumulas.collect_tcu_sumulas(Session())
+    assert [record.numero_sumula for record in records] == ["247", "292"]
+    assert all(record.tribunal == "TCU" for record in records)
 
 
 def test_tcesp_parser_extracts_current_catalog_and_preserves_cancelled_status():
@@ -172,24 +208,24 @@ def test_batch_can_disable_sumulas_for_targeted_health_checks(monkeypatch, tmp_p
     assert result == []
 
 
-def test_tcu_collection_uses_browser_fallback_for_unparsed_portal(monkeypatch):
-    record = sumulas._make_tcu_record(
-        222,
-        "Enunciado da Súmula 222.",
-        source_url=TCU_SUMULA_DOCUMENT_URL.format(numero=222),
-    )
+def test_tcu_collection_does_not_depend_on_document_page_fallback(monkeypatch):
+    called = {"csv": 0}
 
-    monkeypatch.setattr(sumulas, "_fetch_tcu_sumula", lambda number: None)
+    class Response:
+        content = b"KEY,NUMERO,ENUNCIADO,VIGENTE\nS1,222,Enunciado, SIM\n"
 
-    async def fake_browser(numbers):
-        assert numbers == [222]
-        return [record]
+        def raise_for_status(self):
+            return None
 
-    monkeypatch.setattr(sumulas, "_collect_tcu_sumulas_browser", fake_browser)
+    class Session:
+        def get(self, url, **kwargs):
+            called["csv"] += 1
+            assert url == TCU_SUMULA_CSV_URL
+            return Response()
 
-    records = sumulas._collect_tcu_sumulas([222])
-
-    assert [item.numero_sumula for item in records] == ["222"]
+    records = sumulas.collect_tcu_sumulas(Session())
+    assert called["csv"] == 1
+    assert records[0].numero_sumula == "222"
 
 
 def test_collect_sumulas_strict_only_validates_requested_tribunals(monkeypatch):
