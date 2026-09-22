@@ -206,6 +206,7 @@ def build_semantic_chunks(
     window_chars: int = 9000,
     min_chars: int = 1800,
     attempts: int = 2,
+    prompt_version: str = '1',
 ) -> list[dict[str, Any]]:
     if max_size <= 0:
         raise ValueError("max_size deve ser maior que zero")
@@ -268,7 +269,7 @@ def build_semantic_chunks(
                     "semantic_source_units": group["ids"],
                     "chunking_method": "ai_semantic",
                     "chunking_model": getattr(provider, "model", None),
-                    "chunking_prompt_version": "1",
+                    "chunking_prompt_version": str(prompt_version),
                 }
             )
 
