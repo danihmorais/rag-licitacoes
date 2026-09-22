@@ -36,13 +36,16 @@ HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 CHILD_RE = re.compile(
-    r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
+    r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|"
+    r"par[aá]grafo\s+único(?:\s*[.:])?|"
+    r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
 CHILD_INLINE_RE = re.compile(
     r"(?<=[\f.;:])[ \t]+"
-    r"(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)–—-]|"
-    r"[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
+    r"(§\s*\d+[ºo]?|§\s*[uú]nico|"
+    r"par[aá]grafo\s+único(?:\s*[.:])?|"
+    r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
 
@@ -132,7 +135,7 @@ def _article_children(article_text):
 
         kind = (
             'paragrafo'
-            if ref.startswith('§')
+            if ref.startswith('§') or re.match(r'^par[aá]grafo\s+único', ref, re.I)
             else 'inciso'
             if re.match(r'^[IVXLCDM]+', ref, re.I)
             else 'alinea'
@@ -214,6 +217,32 @@ def _locate_piece(text, piece, expected_start, overlap):
     return expected_start, True
 
 
+def _take_prefix_words(text, budget):
+    if budget <= 0 or not text:
+        return ''
+    if len(text) <= budget:
+        return text
+    last_end = 0
+    for match in re.finditer(r'\S+', text):
+        if match.end() > budget:
+            break
+        last_end = match.end()
+    return text[:last_end].rstrip()
+
+
+def _take_suffix_words(text, budget):
+    if budget <= 0 or not text:
+        return ''
+    if len(text) <= budget:
+        return text
+    first_start = len(text)
+    for match in reversed(list(re.finditer(r'\S+', text))):
+        if match.start() < len(text) - budget:
+            break
+        first_start = match.start()
+    return text[first_start:].lstrip()
+
+
 def _excerpt_caput(caput, budget):
     label = 'CAPUT (trechos inicial e final): '
     if len(caput) <= budget:
@@ -223,15 +252,21 @@ def _excerpt_caput(caput, budget):
         return label[:budget].rstrip()
     ellipsis = ' […] '
     if available <= len(ellipsis) + 2:
-        return (label + caput[:available]).strip()[:budget]
+        return (label + _take_prefix_words(caput, available)).strip()[:budget]
     payload_budget = available - len(ellipsis)
-    left_budget = max(1, payload_budget // 2)
+    left_budget = max(1, int(payload_budget * 0.30))
     right_budget = max(1, payload_budget - left_budget)
-    excerpt = (
-        caput[:left_budget].rstrip()
-        + ellipsis
-        + caput[-right_budget:].lstrip()
-    )
+    left = _take_prefix_words(caput, left_budget)
+    right = _take_suffix_words(caput, right_budget)
+    excerpt = (left + ellipsis + right).strip()
+    while len(label + excerpt) > budget and (left or right):
+        if len(left) >= len(right) and left:
+            left = _take_prefix_words(caput, max(0, len(left) - 1))
+        elif right:
+            right = _take_suffix_words(caput, max(0, len(right) - 1))
+        else:
+            break
+        excerpt = (left + ellipsis + right).strip()
     return (label + excerpt).strip()[:budget]
 
 
@@ -425,6 +460,9 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
         or None
     )
     try:
+        if semantic_provider is None:
+            from llm.factory import get_llm_provider
+            semantic_provider = get_llm_provider()
         return build_semantic_chunks(
             full_text,
             max_size,
@@ -436,9 +474,30 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
             attempts=config.AI_CHUNKING_ATTEMPTS,
             prompt_version=config.AI_CHUNKING_PROMPT_VERSION,
         )
-    except SemanticChunkingError:
-        if config.AI_CHUNKING_REQUIRED:
+    except SemanticChunkingError as exc:
+        if (
+            config.AI_CHUNKING_REQUIRED
+            and not config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL
+        ):
             raise
+        print(
+            'Aviso: chunking semântico indisponível; '
+            f'fallback estrutural aplicado: {exc}'
+        )
+        return []
+    except Exception as exc:
+        wrapped = SemanticChunkingError(
+            f'Falha ao inicializar/executar chunking semântico: {exc}'
+        )
+        if (
+            config.AI_CHUNKING_REQUIRED
+            and not config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL
+        ):
+            raise wrapped from exc
+        print(
+            'Aviso: provider de chunking semântico indisponível; '
+            f'fallback estrutural aplicado: {exc}'
+        )
         return []
 
 
@@ -463,6 +522,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                 return semantic_chunks
         else:
             semantic_chunks = []
+            semantic_failed = False
             for unit in units:
                 unit_metadata = dict(metadata or {})
                 if unit.get('ref'):
@@ -473,6 +533,9 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     unit_metadata,
                     semantic_provider=semantic_provider,
                 )
+                if not chunks:
+                    semantic_failed = True
+                    break
                 for chunk in chunks:
                     chunk['start'] = unit['start'] + int(chunk.get('start') or 0)
                     chunk['unit_ref'] = unit.get('ref')
@@ -482,7 +545,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                         f"{int(chunk.get('chunk_index') or 0):04d}"
                     )
                 semantic_chunks.extend(chunks)
-            if semantic_chunks:
+            if semantic_chunks and not semantic_failed:
                 return semantic_chunks
 
     output = []
@@ -522,6 +585,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     'unit_length': len(unit['text']),
                     'start': unit['start'] + found,
                     'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                     'hierarchy_headers': headers,
                     'hierarchy_path': headers + ([ref] if ref else []),
                     'parent_caput': None,
@@ -555,6 +619,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     'unit_length': len(unit['text']),
                     'start': unit['start'] + found,
                     'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                     'hierarchy_headers': headers,
                     'hierarchy_path': article_header,
                     'parent_caput': caput,
@@ -585,6 +650,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                 'unit_length': len(unit['text']),
                 'start': unit['start'] + found,
                 'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                 'hierarchy_headers': headers,
                 'hierarchy_path': article_header + ['CAPUT'],
                 'parent_caput': caput,
@@ -620,6 +686,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     'unit_length': len(unit['text']),
                     'start': unit['start'] + child_start + relative,
                     'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                     'hierarchy_headers': headers,
                     'hierarchy_path': child_path,
                     'parent_caput': caput,

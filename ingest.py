@@ -121,6 +121,7 @@ def metadata_fingerprint(document):
         config.OCR_LANGUAGE,
         config.AI_CHUNKING_ENABLED,
         config.AI_CHUNKING_REQUIRED,
+        config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL,
         config.AI_CHUNKING_MIN_CHARS,
         config.AI_CHUNKING_WINDOW_CHARS,
         config.AI_CHUNKING_ATTEMPTS,
