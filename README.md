@@ -525,18 +525,31 @@ RAG_OCR_LANGUAGE=por+eng
 
 ## Avaliação da recuperação
 
-O repositório agora inclui um harness de avaliação em `evaluation.py` e um conjunto versionado de perguntas em `evaluation/dataset.json`. O dataset registra, para cada caso, as fontes esperadas, a jurisdição esperada e, quando pertinente, a data em que a regra deve ser avaliada.
+O repositório agora inclui um harness de avaliação em `evaluation.py` e um conjunto versionado de perguntas em `evaluation/dataset.json`. O dataset contém dezenas de casos de recuperação, incluindo perguntas normais, premissas falsas, perguntas fora do corpus e conflitos entre jurisdição federal e São Paulo, além de casos específicos para o evidence gate.
 
-As métricas calculadas são `recall@k`, `nDCG@k`, MRR, acerto de jurisdição e acerto temporal. A avaliação reutiliza o pipeline real de dense + BM25 + RRF + reranker, sem chamar o LLM.
+Para recuperação, cada caso registra as fontes esperadas, a jurisdição esperada e, quando pertinente, a data em que a regra deve ser avaliada. Quando mais de uma fonte é esperada, `recall@k` mede a fração de fontes relevantes recuperadas no top-k, em vez de reduzir o caso a acerto binário. Casos marcados como fora do corpus são avaliados separadamente quanto à rejeição da recuperação.
+
+As métricas de recuperação são `recall@k`, `nDCG@k`, MRR, acerto de jurisdição, acerto temporal e acurácia de rejeição nos casos que explicitamente exigem abstinência.
+
+O mesmo dataset contém uma suíte independente de casos do **evidence gate**, com respostas que devem ser aceitas e respostas adversariais que devem ser rejeitadas. O relatório mede:
+- `accuracy`: acerto global do gate;
+- `correct_rejection_rate`: proporção dos casos que deveriam ser rejeitados e foram efetivamente rejeitados;
+- `false_accept_rate`: proporção dos casos negativos aceitos indevidamente;
+- `correct_acceptance_rate`: proporção dos casos positivos aceitos corretamente;
+- `observed_rejection_rate`: proporção total de respostas rejeitadas.
 
 Com um índice já construído:
 
 ~~~bash
 python evaluation.py
-python evaluation.py --k 1 3 5 --strict --min-recall 0.80 --min-ndcg 0.60
+python evaluation.py --k 1 3 5 10
+python evaluation.py --gate-only
+python evaluation.py --k 1 3 5 10 --strict --min-recall 0.80 --min-ndcg 0.60 --min-gate-rejection 0.80
 ~~~
 
-Os limiares do modo `--strict` são fornecidos pelo chamador e não são codificados como uma suposta nota universal do corpus. A finalidade é permitir comparar sistematicamente alterações de embedding, reranker e pesos contra o mesmo conjunto de referência.
+A avaliação de recuperação reutiliza o pipeline real de dense + BM25 + RRF + reranker, sem chamar o LLM. A avaliação do evidence gate é determinística e offline: ela usa as respostas adversariais e as fontes sintéticas versionadas no próprio dataset, permitindo detectar regressões do gate sem depender da disponibilidade do índice.
+
+Os limiares do modo `--strict` são fornecidos pelo chamador e não constituem uma nota universal do corpus. A finalidade é comparar sistematicamente alterações de embedding, reranker, pesos e regras do evidence gate contra o mesmo conjunto de referência.
 
 ## Temporalidade e vigência
 
