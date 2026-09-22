@@ -217,6 +217,32 @@ def _locate_piece(text, piece, expected_start, overlap):
     return expected_start, True
 
 
+def _take_prefix_words(text, budget):
+    if budget <= 0 or not text:
+        return ''
+    if len(text) <= budget:
+        return text
+    last_end = 0
+    for match in re.finditer(r'\S+', text):
+        if match.end() > budget:
+            break
+        last_end = match.end()
+    return text[:last_end].rstrip()
+
+
+def _take_suffix_words(text, budget):
+    if budget <= 0 or not text:
+        return ''
+    if len(text) <= budget:
+        return text
+    first_start = len(text)
+    for match in reversed(list(re.finditer(r'\S+', text))):
+        if match.start() < len(text) - budget:
+            break
+        first_start = match.start()
+    return text[first_start:].lstrip()
+
+
 def _excerpt_caput(caput, budget):
     label = 'CAPUT (trechos inicial e final): '
     if len(caput) <= budget:
@@ -226,15 +252,21 @@ def _excerpt_caput(caput, budget):
         return label[:budget].rstrip()
     ellipsis = ' […] '
     if available <= len(ellipsis) + 2:
-        return (label + caput[:available]).strip()[:budget]
+        return (label + _take_prefix_words(caput, available)).strip()[:budget]
     payload_budget = available - len(ellipsis)
     left_budget = max(1, payload_budget // 2)
     right_budget = max(1, payload_budget - left_budget)
-    excerpt = (
-        caput[:left_budget].rstrip()
-        + ellipsis
-        + caput[-right_budget:].lstrip()
-    )
+    left = _take_prefix_words(caput, left_budget)
+    right = _take_suffix_words(caput, right_budget)
+    excerpt = (left + ellipsis + right).strip()
+    while len(label + excerpt) > budget and (left or right):
+        if len(left) >= len(right) and left:
+            left = _take_prefix_words(caput, max(0, len(left) - 1))
+        elif right:
+            right = _take_suffix_words(caput, max(0, len(right) - 1))
+        else:
+            break
+        excerpt = (left + ellipsis + right).strip()
     return (label + excerpt).strip()[:budget]
 
 
@@ -553,6 +585,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     'unit_length': len(unit['text']),
                     'start': unit['start'] + found,
                     'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                     'hierarchy_headers': headers,
                     'hierarchy_path': headers + ([ref] if ref else []),
                     'parent_caput': None,
@@ -586,6 +619,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     'unit_length': len(unit['text']),
                     'start': unit['start'] + found,
                     'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                     'hierarchy_headers': headers,
                     'hierarchy_path': article_header,
                     'parent_caput': caput,
@@ -616,6 +650,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                 'unit_length': len(unit['text']),
                 'start': unit['start'] + found,
                 'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                 'hierarchy_headers': headers,
                 'hierarchy_path': article_header + ['CAPUT'],
                 'parent_caput': caput,
@@ -651,6 +686,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     'unit_length': len(unit['text']),
                     'start': unit['start'] + child_start + relative,
                     'page_uncertain': uncertain,
+                    'chunking_method': 'structural',
                     'hierarchy_headers': headers,
                     'hierarchy_path': child_path,
                     'parent_caput': caput,
