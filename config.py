@@ -62,6 +62,8 @@ LLM_TIMEOUT = int(os.getenv('RAG_LLM_TIMEOUT', '300'))
 LLM_MAX_TOKENS = int(os.getenv('RAG_LLM_MAX_TOKENS', '0'))
 AI_CHUNKING_ENABLED = os.getenv('RAG_AI_CHUNKING_ENABLED', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 AI_CHUNKING_REQUIRED = os.getenv('RAG_AI_CHUNKING_REQUIRED', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+# O chunking semântico é uma otimização; por padrão, uma falha do LLM não pode bloquear a indexação.
+AI_CHUNKING_FALLBACK_TO_STRUCTURAL = os.getenv('RAG_AI_CHUNKING_FALLBACK_TO_STRUCTURAL', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 AI_CHUNKING_MIN_CHARS = int(os.getenv('RAG_AI_CHUNKING_MIN_CHARS', '1800'))
 AI_CHUNKING_WINDOW_CHARS = int(os.getenv('RAG_AI_CHUNKING_WINDOW_CHARS', '9000'))
 AI_CHUNKING_ATTEMPTS = int(os.getenv('RAG_AI_CHUNKING_ATTEMPTS', '2'))
