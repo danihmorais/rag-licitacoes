@@ -251,8 +251,8 @@ def test_semantic_provider_initialization_failure_falls_back_to_structural(monke
     monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
     monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
 
-    def fail_provider():
-        raise RuntimeError("LLM indisponível")
+    def fail_provider(purpose="answer"):
+        raise RuntimeError(f"LLM indisponível para {purpose}")
 
     monkeypatch.setattr("llm.factory.get_llm_provider", fail_provider)
     chunks = build_structural_chunks(
