@@ -13,6 +13,25 @@ ARTIGO_INLINE_RE = re.compile(
     r"(?=\s|$)",
     re.IGNORECASE,
 )
+
+# Erros de OCR que preservam o comprimento do marcador, permitindo corrigir
+# apenas a visão estrutural sem alterar o texto-fonte nem seus offsets.
+OCR_STRUCTURE_REPLACEMENTS = (
+    (re.compile(r"\bArtig0\b", re.IGNORECASE), "Artigo"),
+    (re.compile(r"\bArt1go\b", re.IGNORECASE), "Artigo"),
+    (re.compile(r"\bArt1g0\b", re.IGNORECASE), "Artigo"),
+    (re.compile(r"\bParagraf0\b", re.IGNORECASE), "Paragrafo"),
+    (re.compile(r"\bunic0\b", re.IGNORECASE), "unico"),
+    (re.compile(r"\bCAP[IÍ]TUL0\b", re.IGNORECASE), "CAPITULO"),
+    (re.compile(r"\bT[IÍ]TUL0\b", re.IGNORECASE), "TITULO"),
+)
+
+
+def _ocr_structure_view(text):
+    value = text
+    for pattern, replacement in OCR_STRUCTURE_REPLACEMENTS:
+        value = pattern.sub(replacement, value)
+    return value
 ARTICLE_CITATION_TAIL_RE = re.compile(
     r"^[ \t]+(?:da|do|das|dos|de)[ \t]+"
     r"(?:CF|C\.F\.?|Constitui(?:ção|cao)|Lei|"
@@ -37,7 +56,7 @@ HEADER_RE = re.compile(
 )
 CHILD_RE = re.compile(
     r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|"
-    r"par[aá]grafo\s+único(?:\s*[.:])?|"
+    r"par[aá]graf[o0]\s+únic[o0](?:\s*[.:])?|"
     r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
@@ -69,24 +88,25 @@ def _find(text, rx, kind):
 def _headers_before(text, start):
     prefix = text[:start]
     headers = []
-    for line in prefix.splitlines():
+    for line in _ocr_structure_view(prefix).splitlines():
         normalized = re.sub(r'\s+', ' ', line).strip()
         if HEADER_RE.match(normalized):
             headers.append(normalized)
     return headers[-4:]
 
 
-def _merged_marker_matches(text, primary_re, inline_re):
-    matches = list(primary_re.finditer(text))
-    occupied = [(item.start(), item.end()) for item in matches]
-    for candidate in inline_re.finditer(text):
-        if any(
-            candidate.start() < end and candidate.end() > start
-            for start, end in occupied
-        ):
-            continue
-        matches.append(candidate)
-        occupied.append((candidate.start(), candidate.end()))
+def _merged_marker_matches(text, *regexes):
+    matches = []
+    occupied = []
+    for regex in regexes:
+        for candidate in regex.finditer(text):
+            if any(
+                candidate.start() < end and candidate.end() > start
+                for start, end in occupied
+            ):
+                continue
+            matches.append(candidate)
+            occupied.append((candidate.start(), candidate.end()))
 
     deduplicated = []
     for candidate in sorted(matches, key=lambda item: item.start()):
@@ -117,7 +137,7 @@ def _is_article_number_inline_child(text, match):
 def _article_children(article_text):
     matches = [
         match
-        for match in _merged_marker_matches(article_text, CHILD_RE, CHILD_INLINE_RE)
+        for match in _merged_marker_matches(structure_view, CHILD_RE, CHILD_INLINE_RE)
         if not _is_article_number_inline_child(article_text, match)
     ]
     if not matches:
@@ -135,7 +155,7 @@ def _article_children(article_text):
 
         kind = (
             'paragrafo'
-            if ref.startswith('§') or re.match(r'^par[aá]grafo\s+único', ref, re.I)
+            if ref.startswith('§') or re.match(r'^par[aá]graf[o0]\s+únic[o0]', ref, re.I)
             else 'inciso'
             if re.match(r'^[IVXLCDM]+', ref, re.I)
             else 'alinea'
@@ -294,9 +314,13 @@ def _split_child(child_text, prefix, max_size, overlap):
 
 
 def _article_units(text):
+    structure_view = _ocr_structure_view(text)
     matches = [
         match
-        for match in _merged_marker_matches(text, ARTIGO_RE, ARTIGO_INLINE_RE)
+        for match in _merged_marker_matches(
+            structure_view,
+            ARTIGO_RE,
+            ARTIGO_INLINE_RE,
         if _article_marker_is_real_header(text, match)
     ]
     if not matches:
