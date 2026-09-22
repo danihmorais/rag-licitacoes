@@ -111,7 +111,7 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
     length_fn=_token_length_factory(tokenizer)
     if length_fn(text)<=max_size:return [(text,0,len(text))]
-    protected=_protect_abbreviation_dots(text);effective_overlap=min(overlap,max(0,max_size-1))
+    effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text)
     splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,length_function=length_fn,separators=["\n\n","\n",". ","; ",": "," ",""],add_start_index=True)
     spans=[]
     for doc in splitter.create_documents([protected]):
@@ -120,14 +120,14 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
 
 def _split_text(text,max_size,overlap):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
-    effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text)
-    splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,separators=["\n\n","\n",". ","; ",": "," ",""])
+    effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text);splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,separators=["\n\n","\n",". ","; ",": "," ",""])
     return [_restore_abbreviation_dots(piece) for piece in splitter.split_text(protected) if piece.strip()]
 
 def _locate_piece(text,piece,expected_start,overlap):
-    expected_start=max(0,min(expected_start,len(text)))
-    if text[expected_start:expected_start+len(piece)]==piece:return expected_start,False
-    return expected_start,True
+    expected_start=max(0,min(expected_start,len(text)));first=text.find(piece,expected_start)
+    if first<0:return expected_start,True
+    second=text.find(piece,first+1)
+    return first,second>=0
 
 def _token_count(text,tokenizer=None):return _token_length_factory(tokenizer)(text)
 def _truncate_words_to_tokens(text,budget,tokenizer=None):
@@ -145,8 +145,7 @@ def _excerpt_caput(caput,budget,tokenizer=None):
     if _token_count(caput,tokenizer)<=budget:return caput
     available=max(0,budget-_token_count(label,tokenizer))
     if available<=0:return _truncate_words_to_tokens(label,budget,tokenizer)
-    ellipsis=" […] ";payload=max(1,available-_token_count(ellipsis,tokenizer));left_budget=max(1,int(payload*.30));right_budget=max(1,payload-left_budget)
-    left=_truncate_words_to_tokens(caput,left_budget,tokenizer);words=list(re.finditer(r"\S+",caput));lo,hi,best=0,len(words),""
+    ellipsis=" […] ";payload=max(1,available-_token_count(ellipsis,tokenizer));left_budget=max(1,int(payload*.30));right_budget=max(1,payload-left_budget);left=_truncate_words_to_tokens(caput,left_budget,tokenizer);words=list(re.finditer(r"\S+",caput));lo,hi,best=0,len(words),""
     while lo<=hi:
         mid=(lo+hi)//2;candidate=caput[words[len(words)-mid].start():].lstrip() if mid else ""
         if _token_count(candidate,tokenizer)<=right_budget:best=candidate;lo=mid+1
@@ -232,8 +231,7 @@ def _build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider=None
 def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_provider=None,tokenizer=None):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
     if overlap<0 or overlap>=max_size:raise ValueError("overlap deve ser maior ou igual a zero e menor que max_size")
-    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer();units=_units(full_text)
-    juris_units=_jurisprudencia_units(full_text)
+    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer();units=_units(full_text);juris_units=_jurisprudencia_units(full_text)
     if juris_units:
         semantic_labels={}
         if _should_use_ai_semantic(full_text,metadata):
@@ -246,12 +244,10 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
         for u in juris_units:
             ref=u.get("ref");ref_counts[ref]=ref_counts.get(ref,0)+1
         for u in juris_units:
-            ref=u.get("ref");unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
-            labels=semantic_labels.get(ref or u["start"]) or []
-            first_label=labels[0] if labels else {}
+            ref=u.get("ref");unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "");labels=semantic_labels.get(ref or u["start"]) or [];first_label=labels[0] if labels else {}
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
-                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False,"semantic_topic":first_label.get("semantic_topic"),"semantic_section":first_label.get("semantic_section"),"semantic_source_units":first_label.get("semantic_source_units") or []})
+                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"ai_semantic" if labels else "structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False,"semantic_topic":first_label.get("semantic_topic"),"semantic_section":first_label.get("semantic_section"),"semantic_source_units":first_label.get("semantic_source_units") or []})
         if output:return output
     if _should_use_ai_semantic(full_text,metadata) and not _is_normative_document(full_text,metadata):
         semantic=_build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider,tokenizer)
