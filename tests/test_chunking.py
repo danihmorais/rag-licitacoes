@@ -408,3 +408,31 @@ def test_locator_does_not_jump_to_repeated_text_before_expected_position():
     )
     assert found == second
     assert uncertain is False
+
+def test_ocr_structural_markers_are_normalized_without_changing_source_text():
+    text = (
+        "Preâmbulo.\n"
+        "Artig0 10. Regra principal.\n"
+        "Paragraf0 unic0. A Administração deverá observar a regra.\n"
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    assert len(chunks) == 2
+    assert chunks[0]["unit_ref"] == "Artigo 10."
+    assert chunks[0]["text"].startswith("Artig0 10.")
+    paragrafo = [item for item in chunks if item["segment_kind"] == "paragrafo"]
+    assert len(paragrafo) == 1
+    assert paragrafo[0]["segment_ref"].casefold().startswith("paragrafo unico")
+    assert "Paragraf0 unic0." in paragrafo[0]["text"]
+
+
+def test_ocr_article_marker_does_not_break_nested_hierarchy():
+    text = (
+        "Art1g0 20. Regra do caput. "
+        "I - hipótese; a) subhipótese; b) outra subhipótese."
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    alinea = [item for item in chunks if item["segment_kind"] == "alinea"]
+    assert [item["hierarchy_path"][-2:] for item in alinea] == [
+        ["I -", "a)"],
+        ["I -", "b)"],
+    ]
