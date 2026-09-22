@@ -126,6 +126,11 @@ def metadata_fingerprint(document):
         config.AI_CHUNKING_WINDOW_CHARS,
         config.AI_CHUNKING_ATTEMPTS,
         config.AI_CHUNKING_PROMPT_VERSION,
+        config.AI_CHUNKING_PROVIDER,
+        config.AI_CHUNKING_MODEL,
+        config.AI_CHUNKING_TEMPERATURE,
+        config.AI_CHUNKING_TIMEOUT,
+        config.AI_CHUNKING_MAX_TOKENS,
         config.LLM_PROVIDER,
         config.LLM_MODEL,
     )
