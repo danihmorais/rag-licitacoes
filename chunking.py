@@ -240,7 +240,7 @@ def _is_normative_document(full_text, metadata=None):
         r'(?im)^\s*(?:LEI\s+(?:COMPLEMENTAR\s+)?n?[ºo°.]*|DECRETO(?:-LEI)?\s+n?[ºo°.]*|'
         r'PORTARIA\s+n?[ºo°.]*|RESOLU(?:ÇÃO|CAO)\s+n?[ºo°.]*|INSTRU(?:ÇÃO|CAO)\s+NORMATIVA\b|'
         r'EMENDA\s+CONSTITUCIONAL\b|CONSTITUI(?:ÇÃO|CAO)\b)',
-        full_text,
+        full_text[:2000],
     ):
         return True
     return False
@@ -284,6 +284,7 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
             window_chars=config.AI_CHUNKING_WINDOW_CHARS,
             min_chars=config.AI_CHUNKING_MIN_CHARS,
             attempts=config.AI_CHUNKING_ATTEMPTS,
+            prompt_version=config.AI_CHUNKING_PROMPT_VERSION,
         )
     except SemanticChunkingError:
         if config.AI_CHUNKING_REQUIRED:
