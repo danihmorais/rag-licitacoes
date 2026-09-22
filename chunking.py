@@ -158,7 +158,7 @@ def _article_children(article_text):
 
         kind = (
             'paragrafo'
-            if ref.startswith('§') or re.match(r'^par[aá]graf[o0]\s+únic[o0]', ref, re.I)
+            if ref.startswith('§') or re.match(r'^par[aá]graf[o0]\s+[uú]nic[o0]', ref, re.I)
             else 'inciso'
             if re.match(r'^[IVXLCDM]+', ref, re.I)
             else 'alinea'
