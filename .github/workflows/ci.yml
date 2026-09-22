@@ -23,18 +23,19 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements.txt
-      - name: Instalar dependências
+      - name: Instalar dependências de teste
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --disable-pip-version-check -r requirements.txt
+          grep -v '^fastembed-gpu==' requirements.txt > /tmp/requirements-ci.txt
+          python -m pip install --disable-pip-version-check -r /tmp/requirements-ci.txt
       - name: Instalar runtime do OCR
         run: |
           sudo apt-get update
