@@ -195,6 +195,54 @@ def test_semantic_chunking_failure_falls_back_to_structural(monkeypatch):
     assert all(item["segment_kind"] == "generic" for item in chunks)
 
 
+def test_concatenated_jurisprudencia_falls_back_as_a_whole_when_one_unit_fails(monkeypatch):
+    class FailOnSecondCallProvider(FakeSemanticProvider):
+        def generate(self, system_prompt, user_prompt):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("segunda unidade indisponível")
+            ids = re.findall(r"^ID (B\d{4})$", user_prompt, re.MULTILINE)
+            return json.dumps(
+                {
+                    "groups": [
+                        {
+                            "ids": ids,
+                            "topic": "primeira unidade",
+                            "section": "fundamentação",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    text = (
+        "TRIBUNAL: TCU\nPROCESSO: TC 000.100/2026\n\n"
+        + ("Contexto TCU sobre planejamento. " * 20)
+        + "\n\nTRIBUNAL: STJ\nPROCESSO: REsp 000200/SP\n\n"
+        + ("Contexto STJ sobre habilitação. " * 20)
+    )
+    provider = FailOnSecondCallProvider()
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+
+    chunks = build_structural_chunks(
+        text,
+        500,
+        50,
+        metadata={"source_role": "jurisprudencia", "tipo_documento": "jurisprudencia"},
+        semantic_provider=provider,
+    )
+    assert provider.calls == 2
+    assert chunks
+    assert all(item["chunking_method"] == "structural" for item in chunks)
+    assert {item["unit_ref"] for item in chunks} == {
+        "TC 000.100/2026",
+        "REsp 000200/SP",
+    }
+
+
 def test_semantic_provider_initialization_failure_falls_back_to_structural(monkeypatch):
     text = "Manual TCU.\n\n" + ("Conteúdo jurídico do manual. " * 80)
     monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
