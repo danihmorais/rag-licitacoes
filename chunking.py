@@ -4,15 +4,27 @@ import config
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 ARTIGO_RE = re.compile(
-    r"^[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?)(?=\s|$)",
+    r"^[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?)"
+    r"(?=\s|$)",
     re.IGNORECASE | re.MULTILINE,
+)
+ARTIGO_INLINE_RE = re.compile(
+    r"(?<![\w])[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?)"
+    r"(?=\s|$)",
+    re.IGNORECASE,
+)
+ARTICLE_CITATION_TAIL_RE = re.compile(
+    r"^[ \t]+(?:da|do|das|dos|de)[ \t]+"
+    r"(?:CF|C\.F\.?|Constitui(?:ção|cao)|Lei|"
+    r"C[oó]digo|CPC|CC|CLT|STF|STJ|TCU|TCESP|TJSP)\b",
+    re.IGNORECASE,
 )
 SUMULA_RE = re.compile(
     r"^[ \t]*(S[uú]mula(?:\s+Vinculante)?\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 JURISPRUDENCIA_RE = re.compile(
-    r"^\s*TRIBUNAL:\s*.+\nPROCESSO:\s*.+$",
+    r"^[ \t]*TRIBUNAL:\s*.+$",
     re.IGNORECASE | re.MULTILINE,
 )
 TEMA_RE = re.compile(
@@ -25,6 +37,12 @@ HEADER_RE = re.compile(
 )
 CHILD_RE = re.compile(
     r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
+    re.IGNORECASE,
+)
+CHILD_INLINE_RE = re.compile(
+    r"(?<=[\f.;:])[ \t]+"
+    r"(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)–—-]|"
+    r"[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
 
@@ -55,8 +73,50 @@ def _headers_before(text, start):
     return headers[-4:]
 
 
+def _merged_marker_matches(text, primary_re, inline_re):
+    matches = list(primary_re.finditer(text))
+    occupied = [(item.start(), item.end()) for item in matches]
+    for candidate in inline_re.finditer(text):
+        if any(
+            candidate.start() < end and candidate.end() > start
+            for start, end in occupied
+        ):
+            continue
+        matches.append(candidate)
+        occupied.append((candidate.start(), candidate.end()))
+
+    deduplicated = []
+    for candidate in sorted(matches, key=lambda item: item.start()):
+        ref = candidate.group(1).strip().casefold()
+        if any(
+            ref == previous.group(1).strip().casefold()
+            and abs(candidate.start() - previous.start()) <= 2
+            for previous in deduplicated[-2:]
+        ):
+            continue
+        deduplicated.append(candidate)
+    return deduplicated
+
+
+def _article_marker_is_real_header(text, match):
+    tail = text[match.end():match.end() + 180]
+    return not ARTICLE_CITATION_TAIL_RE.match(tail)
+
+
+def _is_article_number_inline_child(text, match):
+    ref = match.group(1).strip()
+    if not re.fullmatch(r'\d+\s*[.)–—-]', ref, re.I):
+        return False
+    prefix = text[max(0, match.start() - 16):match.start()]
+    return bool(re.search(r'Art(?:igo)?\.?\s*$', prefix, re.I))
+
+
 def _article_children(article_text):
-    matches = list(CHILD_RE.finditer(article_text))
+    matches = [
+        match
+        for match in _merged_marker_matches(article_text, CHILD_RE, CHILD_INLINE_RE)
+        if not _is_article_number_inline_child(article_text, match)
+    ]
     if not matches:
         return article_text.strip(), []
     caput = article_text[:matches[0].start()].strip()
@@ -104,18 +164,75 @@ def _article_children(article_text):
     return caput, children
 
 
+ABBREVIATION_DOT_RE = re.compile(
+    r"\b(?:art|inc|inciso|par|p|n|no|fls|proc|cf|etc|sr|sra|dr|dra|prof|"
+    r"p[aá]g|pag|vol|ed)\.",
+    re.IGNORECASE,
+)
+ABBREVIATION_DOT_SENTINEL = "\ue000"
+
+
+def _protect_abbreviation_dots(text):
+    return ABBREVIATION_DOT_RE.sub(
+        lambda match: match.group(0)[:-1] + ABBREVIATION_DOT_SENTINEL,
+        text,
+    )
+
+
+def _restore_abbreviation_dots(text):
+    return text.replace(ABBREVIATION_DOT_SENTINEL, ".")
+
+
 def _split_text(text, max_size, overlap):
     if max_size <= 0:
         raise ValueError('max_size deve ser maior que zero')
     if len(text) <= max_size:
         return [text]
     effective_overlap = min(overlap, max(0, max_size - 1))
+    protected = _protect_abbreviation_dots(text)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=max_size,
         chunk_overlap=effective_overlap,
-        separators=['\n\n', '\n', '. ', '; ', ' ', ''],
+        separators=['\n\n', '\n', '. ', '; ', ': ', ' ', ''],
     )
-    return [piece for piece in splitter.split_text(text) if piece.strip()]
+    return [
+        _restore_abbreviation_dots(piece)
+        for piece in splitter.split_text(protected)
+        if piece.strip()
+    ]
+
+
+def _locate_piece(text, piece, expected_start, overlap):
+    expected_start = max(0, min(expected_start, len(text)))
+    found = text.find(piece, expected_start)
+    if found >= 0:
+        return found, False
+    fallback_start = max(0, expected_start - max(0, overlap))
+    found = text.find(piece, fallback_start)
+    if found >= 0 and found < expected_start:
+        return found, True
+    return expected_start, True
+
+
+def _excerpt_caput(caput, budget):
+    label = 'CAPUT (trechos inicial e final): '
+    if len(caput) <= budget:
+        return caput
+    available = max(0, budget - len(label))
+    if available <= 0:
+        return label[:budget].rstrip()
+    ellipsis = ' […] '
+    if available <= len(ellipsis) + 2:
+        return (label + caput[:available]).strip()[:budget]
+    payload_budget = available - len(ellipsis)
+    left_budget = max(1, payload_budget // 2)
+    right_budget = max(1, payload_budget - left_budget)
+    excerpt = (
+        caput[:left_budget].rstrip()
+        + ellipsis
+        + caput[-right_budget:].lstrip()
+    )
+    return (label + excerpt).strip()[:budget]
 
 
 def _fit_child_prefix(prefix, child_text, max_size):
@@ -125,16 +242,13 @@ def _fit_child_prefix(prefix, child_text, max_size):
     body_budget = min(len(child_text), max(1, max_size // 2))
     prefix_budget = max(1, max_size - body_budget - 1)
     if len(header) > prefix_budget:
-        return header[:prefix_budget].rstrip()
+        if prefix_budget == 1:
+            return '…'
+        return header[:prefix_budget - 1].rstrip() + '…'
     if len(header) + 1 >= prefix_budget:
-        return header
+        return header[:prefix_budget].rstrip()
     remaining = prefix_budget - len(header) - 1
-    original_caput = caput.rstrip()
-    if len(original_caput) > remaining:
-        caput = original_caput[:max(0, remaining - 1)].rstrip(' .,:;-') + ('…' if remaining > 0 else '')
-    else:
-        caput = original_caput
-    return f'{header}\n{caput}'.strip()
+    return f'{header}\n{_excerpt_caput(caput.rstrip(), remaining)}'.strip()
 
 def _split_child(child_text, prefix, max_size, overlap):
     prefix = _fit_child_prefix(prefix, child_text, max_size)
@@ -145,7 +259,11 @@ def _split_child(child_text, prefix, max_size, overlap):
 
 
 def _article_units(text):
-    matches = list(ARTIGO_RE.finditer(text))
+    matches = [
+        match
+        for match in _merged_marker_matches(text, ARTIGO_RE, ARTIGO_INLINE_RE)
+        if _article_marker_is_real_header(text, match)
+    ]
     if not matches:
         return None
     units = []
@@ -165,16 +283,48 @@ def _article_units(text):
     return units
 
 
-def _units(text):
-    if JURISPRUDENCIA_RE.search(text):
-        process_match = re.search(r"^PROCESSO:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
-        return [{
+def _jurisprudencia_units(text):
+    matches = list(JURISPRUDENCIA_RE.finditer(text))
+    if not matches:
+        return None
+    units = []
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        value = text[start:end].strip()
+        if not value:
+            continue
+        process_match = re.search(
+            r"^PROCESSO:\s*(.+)$",
+            value,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        sumula_match = re.search(
+            r"^S[ÚU]MULA:\s*(.+)$",
+            value,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        ref = (
+            process_match.group(1).strip()
+            if process_match
+            else sumula_match.group(1).strip()
+            if sumula_match
+            else None
+        )
+        units.append({
             'kind': 'jurisprudencia',
-            'ref': process_match.group(1).strip() if process_match else None,
-            'start': 0,
-            'text': text.strip(),
+            'ref': ref,
+            'start': start,
+            'text': value,
             'headers': [],
-        }]
+        })
+    return units or None
+
+
+def _units(text):
+    jurisprudencia_units = _jurisprudencia_units(text)
+    if jurisprudencia_units:
+        return jurisprudencia_units
     article_units = _article_units(text)
     if article_units:
         return article_units
@@ -297,14 +447,46 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
         raise ValueError('max_size deve ser maior que zero')
     if overlap < 0 or overlap >= max_size:
         raise ValueError('overlap deve ser maior ou igual a zero e menor que max_size')
+    units = _units(full_text)
+
     if _should_use_ai_semantic(full_text, metadata):
-        chunks = _build_ai_semantic_chunks(full_text, max_size, metadata or {}, semantic_provider=semantic_provider)
-        if chunks:
-            return chunks
+        if len(units) == 1 or not all(
+            unit['kind'] == 'jurisprudencia' for unit in units
+        ):
+            semantic_chunks = _build_ai_semantic_chunks(
+                full_text,
+                max_size,
+                metadata or {},
+                semantic_provider=semantic_provider,
+            )
+            if semantic_chunks:
+                return semantic_chunks
+        else:
+            semantic_chunks = []
+            for unit in units:
+                unit_metadata = dict(metadata or {})
+                if unit.get('ref'):
+                    unit_metadata['processo'] = unit['ref']
+                chunks = _build_ai_semantic_chunks(
+                    unit['text'],
+                    max_size,
+                    unit_metadata,
+                    semantic_provider=semantic_provider,
+                )
+                for chunk in chunks:
+                    chunk['start'] = unit['start'] + int(chunk.get('start') or 0)
+                    chunk['unit_ref'] = unit.get('ref')
+                    chunk['unit_length'] = len(unit['text'])
+                    chunk['unit_id'] = (
+                        f"jurisprudencia:{unit.get('ref') or unit['start']}:"
+                        f"{int(chunk.get('chunk_index') or 0):04d}"
+                    )
+                semantic_chunks.extend(chunks)
+            if semantic_chunks:
+                return semantic_chunks
 
     output = []
     ref_counts = {}
-    units = _units(full_text)
     for unit in units:
         ref = unit.get('ref')
         if ref:
@@ -323,9 +505,12 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
             pieces = _split_text(unit['text'], max_size, overlap)
             position = 0
             for index, piece in enumerate(pieces):
-                found = unit['text'].find(piece, max(0, position - overlap))
-                uncertain = found < 0
-                found = position if uncertain else found
+                found, uncertain = _locate_piece(
+                    unit['text'],
+                    piece,
+                    position,
+                    overlap,
+                )
                 output.append({
                     'text': piece,
                     'full_unit_text': piece if len(unit['text']) <= max_size else None,
@@ -353,9 +538,12 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
             pieces = _split_text(unit['text'], max_size, overlap)
             position = 0
             for index, piece in enumerate(pieces):
-                found = unit['text'].find(piece, max(0, position - overlap))
-                uncertain = found < 0
-                found = position if uncertain else found
+                found, uncertain = _locate_piece(
+                    unit['text'],
+                    piece,
+                    position,
+                    overlap,
+                )
                 output.append({
                     'text': piece,
                     'full_unit_text': piece if len(unit['text']) <= max_size else None,
@@ -380,9 +568,12 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
         caput_index = 0
         caput_position = 0
         for piece in caput_chunks:
-            found = caput.find(piece, max(0, caput_position - overlap))
-            uncertain = found < 0
-            found = caput_position if uncertain else found
+            found, uncertain = _locate_piece(
+                caput,
+                piece,
+                caput_position,
+                overlap,
+            )
             output.append({
                 'text': piece,
                 'full_unit_text': caput if len(caput) <= max_size else None,
@@ -411,9 +602,12 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
             pieces = _split_child(child_text, child_prefix, max_size, overlap)
             position = 0
             for local_index, piece in enumerate(pieces):
-                relative = child_text.find(piece, max(0, position - overlap))
-                uncertain = relative < 0
-                relative = position if uncertain else relative
+                relative, uncertain = _locate_piece(
+                    child_text,
+                    piece,
+                    position,
+                    overlap,
+                )
                 rendered = f"{child_prefix}\n{piece}".strip()
                 output.append({
                     'text': rendered,

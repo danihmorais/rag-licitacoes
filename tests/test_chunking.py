@@ -159,3 +159,123 @@ def test_semantic_group_validation_rejects_missing_or_reordered_ids():
             {"groups": [{"ids": ["B0001", "B0000"], "topic": "", "section": ""}]},
             ["B0000", "B0001"],
         )
+
+
+def test_pdf_soft_wrap_detects_inline_article_and_nested_children():
+    text = (
+        "Texto anterior sem quebra Art. 10. Regra do caput: "
+        "I - hipótese um; a) subhipótese A; b) subhipótese B; "
+        "II - hipótese dois; a) subhipótese C."
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    articles = [item for item in chunks if item["segment_kind"] == "alinea"]
+    assert len(articles) == 3
+    assert articles[0]["hierarchy_path"][-2:] == ["I -", "a)"]
+    assert articles[1]["hierarchy_path"][-2:] == ["I -", "b)"]
+    assert articles[2]["hierarchy_path"][-2:] == ["II -", "a)"]
+
+
+def test_article_citation_at_line_start_is_not_mistaken_for_article_unit():
+    text = (
+        "Art. 5º da CF garante direitos fundamentais citados no parecer.\n"
+        "Art. 6º Regra normativa efetiva."
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    assert [item["unit_ref"] for item in chunks] == ["Art. 6º"]
+
+
+def test_concatenated_jurisprudencia_is_split_into_independent_units(monkeypatch):
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", False)
+    text = (
+        "TRIBUNAL: TCU\nPROCESSO: TC 000.001/2026\n"
+        "EMENTA: Primeira decisão sobre planejamento da contratação.\n"
+        + ("Fundamentação do TCU. " * 20)
+        + "\n\nTRIBUNAL: STJ\nPROCESSO: REsp 000002/SP\n"
+        "EMENTA: Segunda decisão sobre habilitação.\n"
+        + ("Fundamentação do STJ. " * 20)
+    )
+    chunks = build_structural_chunks(text, 300, 30)
+    assert {item["unit_ref"] for item in chunks} == {
+        "TC 000.001/2026",
+        "REsp 000002/SP",
+    }
+    assert all(
+        not (
+            item["unit_ref"] == "TC 000.001/2026"
+            and "TRIBUNAL: STJ" in item["text"]
+        )
+        for item in chunks
+    )
+    assert all(
+        not (
+            item["unit_ref"] == "REsp 000002/SP"
+            and "TRIBUNAL: TCU" in item["text"]
+        )
+        for item in chunks
+    )
+
+
+def test_ai_semantic_chunking_keeps_concatenated_jurisprudencia_separate(monkeypatch):
+    text = (
+        "TRIBUNAL: TCU\nPROCESSO: TC 000.010/2026\n\n"
+        + ("Contexto TCU sobre planejamento. " * 80)
+        + "\n\nTRIBUNAL: STJ\nPROCESSO: REsp 000020/SP\n\n"
+        + ("Contexto STJ sobre habilitação. " * 80)
+    )
+    provider = FakeSemanticProvider()
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+    chunks = build_structural_chunks(
+        text,
+        1000,
+        50,
+        metadata={"source_role": "jurisprudencia", "tipo_documento": "jurisprudencia"},
+        semantic_provider=provider,
+    )
+    refs = {item["unit_ref"] for item in chunks}
+    assert refs == {"TC 000.010/2026", "REsp 000020/SP"}
+    assert provider.calls == 2
+    assert all(item["chunking_method"] == "ai_semantic" for item in chunks)
+
+
+def test_child_prefix_keeps_both_ends_of_long_caput():
+    from chunking import _fit_child_prefix
+
+    caput = (
+        "INICIO DA REGRA: planejamento obrigatório e transparente. "
+        + ("Meio do dispositivo. " * 30)
+        + "CONDICAO FINAL OBRIGATORIA: somente nos casos expressamente previstos."
+    )
+    prefix = _fit_child_prefix(
+        f"Art. 20.\n{caput}",
+        "I - hipótese subordinada.",
+        180,
+    )
+    assert "CAPUT (trechos inicial e final):" in prefix
+    assert "INICIO DA REGRA" in prefix
+    assert "CONDICAO FINAL OBRIGATORIA" in prefix
+
+
+def test_split_text_does_not_split_after_common_legal_abbreviation():
+    from chunking import _split_text
+
+    text = "Art. 1º A regra inicial. " + ("Conteúdo jurídico complementar. " * 30)
+    pieces = _split_text(text, 30, 0)
+    assert all(piece.strip() != "Art." for piece in pieces)
+    assert "Art. 1º" in pieces[0]
+
+
+def test_locator_does_not_jump_to_repeated_text_before_expected_position():
+    from chunking import _locate_piece
+
+    text = "Parágrafo único. primeiro bloco. Parágrafo único. segundo bloco."
+    first = text.find("Parágrafo único.")
+    second = text.find("Parágrafo único.", first + 1)
+    found, uncertain = _locate_piece(
+        text,
+        "Parágrafo único.",
+        first + 4,
+        second - first,
+    )
+    assert found == second
+    assert uncertain is False
