@@ -543,6 +543,7 @@ Com um índice já construído:
 ~~~bash
 python evaluation.py
 python evaluation.py --k 1 3 5 10
+python evaluation.py --gate-only
 python evaluation.py --k 1 3 5 10 --strict --min-recall 0.80 --min-ndcg 0.60 --min-gate-rejection 0.80
 ~~~
 
