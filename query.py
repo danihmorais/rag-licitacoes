@@ -259,11 +259,6 @@ def qfilter(filters=None, query=None):
             filters[key] = inferred_value
 
     explicit_regime = filters.get('regime_juridico')
-    if explicit_regime is None and query and _is_transition_query(query):
-        inferred_transition = list(_transition_regimes(query))
-        if inferred_transition:
-            filters['regime_juridico'] = inferred_transition
-            explicit_regime = filters['regime_juridico']
 
     for key, value in filters.items():
         if key in NUMERIC_FILTERS and isinstance(value, dict):
