@@ -50,7 +50,7 @@ def test_roman_false_positive_is_not_classified_as_inciso():
 def test_prefix_truncation_is_explicit():
     tokenizer = FakeTokenizer()
     prefix = "Art. 1º\n" + " ".join(["condição"] * 80)
-    fitted, truncated = chunking._fit_child_prefix(prefix, "IV - consequência " + "texto " * 20, 32, tokenizer)
+    fitted, truncated = chunking._fit_child_prefix_info(prefix, "IV - consequência " + "texto " * 20, 32, tokenizer)
     assert truncated is True
     assert fitted
     assert chunking._token_count(fitted, tokenizer) <= 32
