@@ -1,5 +1,40 @@
+import json
 import re
+
+import pytest
+
 from chunking import build_structural_chunks
+from llm.semantic_chunker import SemanticChunkingError, _validate_groups
+
+
+class FakeSemanticProvider:
+    model = "fake-semantic"
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, system_prompt, user_prompt):
+        self.calls += 1
+        ids = re.findall(r"^ID (B\d{4})$", user_prompt, re.MULTILINE)
+        groups = []
+        for index in range(0, len(ids), 2):
+            groups.append({
+                "ids": ids[index:index + 2],
+                "topic": f"tema-{index // 2 + 1}",
+                "section": "fundamentação",
+            })
+        return json.dumps({"groups": groups}, ensure_ascii=False)
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, system_prompt, user_prompt):
+        self.calls += 1
+        raise AssertionError("provider não deveria ser chamado para norma")
+
+
 
 def test_long_unit_is_not_duplicated():
     text='Art. 1º '+'Texto juridico. '*200+'\n\nArt. 2º Regra.\n\nArt. 3º Regra.\n\nArt. 4º Regra.'
@@ -64,3 +99,63 @@ def test_item_preserves_alinea_parent_hierarchy():
     assert len(items) == 2
     assert items[0]['hierarchy_path'][-3:] == ['I -', 'a)', '1)']
     assert items[1]['hierarchy_path'][-3:] == ['I -', 'a)', '2)']
+
+def test_ai_semantic_chunking_preserves_source_and_returns_metadata(monkeypatch):
+    text = (
+        "TRIBUNAL: TCU\nPROCESSO: TC 000.000/2026\n\n"
+        "Contexto fático e histórico da contratação. A Administração descreveu a necessidade do objeto e os fatos relevantes.\n\n"
+        "A questão jurídica submetida ao tribunal envolve habilitação e qualificação técnica. Foram analisados os requisitos do edital e a legislação aplicável.\n\n"
+        "A fundamentação examina a proporcionalidade da exigência e os efeitos sobre a competitividade do certame.\n\n"
+        "Conclusão: o colegiado fixou o entendimento aplicável ao caso concreto, conforme a fundamentação apresentada."
+    )
+    provider = FakeSemanticProvider()
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+    chunks = build_structural_chunks(
+        text,
+        1000,
+        50,
+        metadata={
+            "source_role": "jurisprudencia",
+            "tipo_documento": "jurisprudencia",
+            "processo": "TC 000.000/2026",
+        },
+        semantic_provider=provider,
+    )
+    assert provider.calls >= 1
+    assert chunks
+    assert all(item["chunking_method"] == "ai_semantic" for item in chunks)
+    assert all(item["page_content"] == item["text"] for item in chunks)
+    assert all(item["chunking_model"] == "fake-semantic" for item in chunks)
+    assert all(item["semantic_source_units"] for item in chunks)
+    assert any("A questão jurídica submetida" in item["text"] for item in chunks)
+    assert any("Conclusão:" in item["text"] for item in chunks)
+
+
+def test_normative_documents_never_call_semantic_provider(monkeypatch):
+    text = (
+        "LEI Nº 14.133, DE 1º DE ABRIL DE 2021\n\n"
+        "Art. 1º Esta Lei estabelece normas gerais de licitação e contratação.\n"
+        "Parágrafo único. A Administração deverá observar os princípios previstos nesta Lei."
+    ) * 20
+    provider = ExplodingProvider()
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+    chunks = build_structural_chunks(
+        text,
+        1000,
+        50,
+        metadata={"source_role": "norma", "tipo_documento": "lei"},
+        semantic_provider=provider,
+    )
+    assert provider.calls == 0
+    assert chunks
+    assert all(item["segment_kind"] in {"caput", "paragrafo"} for item in chunks)
+
+
+def test_semantic_group_validation_rejects_missing_or_reordered_ids():
+    with pytest.raises(SemanticChunkingError):
+        _validate_groups(
+            {"groups": [{"ids": ["B0001", "B0000"], "topic": "", "section": ""}]},
+            ["B0000", "B0001"],
+        )

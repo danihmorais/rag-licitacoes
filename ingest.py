@@ -27,7 +27,7 @@ PAYLOAD_INDEX_TYPES = {
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 
 def sync_sources():
@@ -105,6 +105,13 @@ def metadata_fingerprint(document):
     metadata_path = Path(__file__).with_name('metadata.py')
     digest.update(b'metadata.py\0')
     digest.update(metadata_path.read_bytes())
+    chunking_path = Path(__file__).with_name('chunking.py')
+    digest.update(b'chunking.py\0')
+    digest.update(chunking_path.read_bytes())
+    semantic_chunker_path = Path(__file__).with_name('llm') / 'semantic_chunker.py'
+    if semantic_chunker_path.exists():
+        digest.update(b'llm/semantic_chunker.py\0')
+        digest.update(semantic_chunker_path.read_bytes())
     config_values = (
         config.OCR_ENABLED,
         config.OCR_REQUIRED,
@@ -112,6 +119,14 @@ def metadata_fingerprint(document):
         config.OCR_MIN_NATIVE_CONFIDENCE,
         config.OCR_DPI,
         config.OCR_LANGUAGE,
+        config.AI_CHUNKING_ENABLED,
+        config.AI_CHUNKING_REQUIRED,
+        config.AI_CHUNKING_MIN_CHARS,
+        config.AI_CHUNKING_WINDOW_CHARS,
+        config.AI_CHUNKING_ATTEMPTS,
+        config.AI_CHUNKING_PROMPT_VERSION,
+        config.LLM_PROVIDER,
+        config.LLM_MODEL,
     )
     digest.update(json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
     sidecar = document.with_suffix('.json')
@@ -323,7 +338,7 @@ def build_chunks(document, pages, page_records=None):
     ]
     prefix = embedding_metadata_prefix(meta)
     output = []
-    for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP):
+    for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP, metadata=meta):
         if not chunk['text'].strip():
             continue
         start = chunk['start']
@@ -370,6 +385,12 @@ def build_chunks(document, pages, page_records=None):
             'extraction_confidence': round(extraction_confidence, 4),
             'page_extraction': page_details,
             **meta,
+            'chunking_method': chunk.get('chunking_method') or 'structural',
+            'chunking_model': chunk.get('chunking_model'),
+            'chunking_prompt_version': chunk.get('chunking_prompt_version'),
+            'semantic_topic': chunk.get('semantic_topic'),
+            'semantic_section': chunk.get('semantic_section'),
+            'semantic_source_units': chunk.get('semantic_source_units') or [],
         })
     return output
 

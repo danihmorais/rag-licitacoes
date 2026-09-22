@@ -33,7 +33,7 @@ QDRANT_PAYLOAD_INDEXES = {
     'tipo_documento': 'keyword', 'source_role': 'keyword', 'status': 'keyword', 'municipio': 'keyword',
     'modalidade': 'keyword', 'tipo': 'keyword', 'numero_sumula': 'keyword', 'regime_juridico': 'keyword',
     'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
-    'revogado': 'bool',
+    'revogado': 'bool', 'chunking_method': 'keyword', 'semantic_topic': 'keyword', 'semantic_section': 'keyword',
 }
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
@@ -60,6 +60,12 @@ LLM_MODEL = os.getenv('RAG_LLM_MODEL', 'local')
 LLM_TEMPERATURE = float(os.getenv('RAG_LLM_TEMPERATURE', '0.1'))
 LLM_TIMEOUT = int(os.getenv('RAG_LLM_TIMEOUT', '300'))
 LLM_MAX_TOKENS = int(os.getenv('RAG_LLM_MAX_TOKENS', '0'))
+AI_CHUNKING_ENABLED = os.getenv('RAG_AI_CHUNKING_ENABLED', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+AI_CHUNKING_REQUIRED = os.getenv('RAG_AI_CHUNKING_REQUIRED', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+AI_CHUNKING_MIN_CHARS = int(os.getenv('RAG_AI_CHUNKING_MIN_CHARS', '1800'))
+AI_CHUNKING_WINDOW_CHARS = int(os.getenv('RAG_AI_CHUNKING_WINDOW_CHARS', '9000'))
+AI_CHUNKING_ATTEMPTS = int(os.getenv('RAG_AI_CHUNKING_ATTEMPTS', '2'))
+AI_CHUNKING_PROMPT_VERSION = os.getenv('RAG_AI_CHUNKING_PROMPT_VERSION', '1')
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 OLLAMA_NUM_CTX = int(os.getenv('RAG_OLLAMA_NUM_CTX', '16384'))
 OPENAI_COMPATIBLE_BASE_URL = os.getenv('RAG_OPENAI_BASE_URL', 'http://127.0.0.1:8888/v1')
@@ -96,6 +102,11 @@ def validate_config() -> None:
         (abs((RERANK_RELEVANCE_WEIGHT + RERANK_AUTHORITY_WEIGHT + RERANK_JURISDICTION_WEIGHT) - 1.0) < 1e-9, 'Os pesos de reranking devem somar 1.'),
         (LLM_TIMEOUT > 0, 'RAG_LLM_TIMEOUT deve ser maior que zero.'),
         (LLM_MAX_TOKENS >= 0, 'RAG_LLM_MAX_TOKENS não pode ser negativo.'),
+        (AI_CHUNKING_MIN_CHARS > 0, 'RAG_AI_CHUNKING_MIN_CHARS deve ser maior que zero.'),
+        (AI_CHUNKING_WINDOW_CHARS > 0, 'RAG_AI_CHUNKING_WINDOW_CHARS deve ser maior que zero.'),
+        (AI_CHUNKING_WINDOW_CHARS >= AI_CHUNKING_MIN_CHARS, 'RAG_AI_CHUNKING_WINDOW_CHARS deve ser maior ou igual a RAG_AI_CHUNKING_MIN_CHARS.'),
+        (AI_CHUNKING_ATTEMPTS > 0, 'RAG_AI_CHUNKING_ATTEMPTS deve ser maior que zero.'),
+        (bool(str(AI_CHUNKING_PROMPT_VERSION).strip()), 'RAG_AI_CHUNKING_PROMPT_VERSION não pode ser vazio.'),
         (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL > 0, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL <= JURISPRUDENCIA_LIMIT, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL não pode exceder RAG_JURISPRUDENCIA_LIMIT.'),

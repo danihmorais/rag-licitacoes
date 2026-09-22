@@ -16,10 +16,15 @@ def chunking_algorithm_sha256():
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def semantic_chunking_algorithm_sha256():
+    path = Path(__file__).with_name('llm') / 'semantic_chunker.py'
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
-    'chunking_algorithm_sha256', 'dense_max_tokens', 'payload_indexes', 'schema',
+    'chunking_algorithm_sha256', 'semantic_chunking_algorithm_sha256', 'dense_max_tokens', 'payload_indexes', 'schema',
     'manifest_schema_version', 'ocr_settings',
 )
 
@@ -39,10 +44,11 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'context_neighbors': config.CONTEXT_NEIGHBORS,
         'max_context_chars': config.MAX_CONTEXT_CHARS,
         'chunking_algorithm_sha256': chunking_algorithm_sha256(),
+        'semantic_chunking_algorithm_sha256': semantic_chunking_algorithm_sha256(),
         'dense_max_tokens': config.DENSE_MAX_TOKENS,
         'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
-        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/tipo_documento/numero_sumula/text_origin/extraction_confidence/page_extraction/page_content/embedding_text',
-        'manifest_schema_version': 5,
+        'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/tipo_documento/numero_sumula/text_origin/extraction_confidence/page_extraction/page_content/embedding_text/chunking_method/chunking_model/chunking_prompt_version/semantic_topic/semantic_section/semantic_source_units',
+        'manifest_schema_version': 6,
         'ocr_settings': {
             'enabled': config.OCR_ENABLED,
             'required': config.OCR_REQUIRED,
