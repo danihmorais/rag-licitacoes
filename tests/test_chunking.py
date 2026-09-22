@@ -156,9 +156,9 @@ def test_normative_documents_never_call_semantic_provider(monkeypatch):
 
 def test_written_paragrafo_unico_resets_hierarchy_for_items():
     text = (
-        "Art. 70. Regra do caput.\\n"
-        "I - hipótese um;\\n"
-        "II - hipótese dois;\\n"
+        "Art. 70. Regra do caput.\n"
+        "I - hipótese um;\n"
+        "II - hipótese dois;\n"
         "Parágrafo único. Considera-se: 1. bem público; 2. bem dominical."
     )
     chunks = build_structural_chunks(text, 500, 50)
@@ -174,7 +174,7 @@ def test_written_paragrafo_unico_resets_hierarchy_for_items():
 
 def test_semantic_chunking_failure_falls_back_to_structural(monkeypatch):
     text = (
-        "MANUAL DE LICITAÇÕES DO TCU\\n\\n"
+        "MANUAL DE LICITAÇÕES DO TCU\n\n"
         + ("Orientação sobre planejamento, governança e fiscalização da contratação. " * 80)
     )
     provider = ExplodingProvider()
@@ -196,7 +196,7 @@ def test_semantic_chunking_failure_falls_back_to_structural(monkeypatch):
 
 
 def test_semantic_provider_initialization_failure_falls_back_to_structural(monkeypatch):
-    text = "Manual TCU.\\n\\n" + ("Conteúdo jurídico do manual. " * 80)
+    text = "Manual TCU.\n\n" + ("Conteúdo jurídico do manual. " * 80)
     monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
     monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
     monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
@@ -217,7 +217,7 @@ def test_semantic_provider_initialization_failure_falls_back_to_structural(monke
 
 
 def test_semantic_chunking_strict_mode_still_raises(monkeypatch):
-    text = "Manual TCU.\\n\\n" + ("Conteúdo jurídico do manual. " * 80)
+    text = "Manual TCU.\n\n" + ("Conteúdo jurídico do manual. " * 80)
     provider = ExplodingProvider()
     monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
     monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
