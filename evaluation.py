@@ -368,12 +368,24 @@ def main() -> int:
     parser.add_argument('--min-recall', type=float, default=0.0)
     parser.add_argument('--min-ndcg', type=float, default=0.0)
     parser.add_argument('--min-gate-rejection', type=float, default=0.0, help='Taxa mínima de rejeição correta para os casos negativos do evidence gate.')
+    parser.add_argument('--gate-only', action='store_true', help='Executa somente a suíte determinística do evidence gate, sem abrir o índice Qdrant.')
     args = parser.parse_args()
     if not args.k or any(k <= 0 for k in args.k):
         parser.error('--k deve conter inteiros positivos.')
 
-    cases = load_cases(args.dataset)
     gate_cases = load_evidence_gate_cases(args.dataset)
+    if args.gate_only:
+        report = {'evidence_gate': evaluate_evidence_gate(gate_cases)}
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        gate_summary = report['evidence_gate']['summary']
+        if args.strict and (
+            gate_summary['correct_rejection_rate'] is not None
+            and gate_summary['correct_rejection_rate'] < args.min_gate_rejection
+        ):
+            return 2
+        return 0
+
+    cases = load_cases(args.dataset)
     report = run_live_evaluation(cases, gate_cases, tuple(sorted(set(args.k))))
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.strict:
