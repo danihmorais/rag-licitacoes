@@ -25,7 +25,7 @@ COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
     'chunking_algorithm_sha256', 'semantic_chunking_algorithm_sha256', 'dense_max_tokens', 'payload_indexes', 'schema',
-    'manifest_schema_version', 'ocr_settings',
+    'manifest_schema_version', 'ocr_settings', 'semantic_chunking_settings',
 )
 
 
@@ -48,7 +48,7 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'dense_max_tokens': config.DENSE_MAX_TOKENS,
         'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
         'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/tipo_documento/numero_sumula/text_origin/extraction_confidence/page_extraction/page_content/embedding_text/chunking_method/chunking_model/chunking_prompt_version/semantic_topic/semantic_section/semantic_source_units',
-        'manifest_schema_version': 6,
+        'manifest_schema_version': 7,
         'ocr_settings': {
             'enabled': config.OCR_ENABLED,
             'required': config.OCR_REQUIRED,
@@ -56,6 +56,20 @@ def current_manifest(documents=None, deletions=None, revocations=None):
             'min_native_confidence': config.OCR_MIN_NATIVE_CONFIDENCE,
             'dpi': config.OCR_DPI,
             'language': config.OCR_LANGUAGE,
+        },
+        'semantic_chunking_settings': {
+            'enabled': config.AI_CHUNKING_ENABLED,
+            'required': config.AI_CHUNKING_REQUIRED,
+            'fallback_to_structural': config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL,
+            'provider': config.AI_CHUNKING_PROVIDER,
+            'model': config.AI_CHUNKING_MODEL,
+            'temperature': config.AI_CHUNKING_TEMPERATURE,
+            'timeout': config.AI_CHUNKING_TIMEOUT,
+            'max_tokens': config.AI_CHUNKING_MAX_TOKENS,
+            'window_chars': config.AI_CHUNKING_WINDOW_CHARS,
+            'min_chars': config.AI_CHUNKING_MIN_CHARS,
+            'attempts': config.AI_CHUNKING_ATTEMPTS,
+            'prompt_version': config.AI_CHUNKING_PROMPT_VERSION,
         },
         'documents': documents or {},
         'deletions': deletions or [],
