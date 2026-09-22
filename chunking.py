@@ -1,5 +1,6 @@
 import re
 
+import config
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 ARTIGO_RE = re.compile(
@@ -190,8 +191,115 @@ def _units(text):
     return [{'kind': 'generic', 'ref': None, 'start': 0, 'text': text.strip(), 'headers': []}]
 
 
-def build_structural_chunks(full_text, max_size, overlap):
+
+SEMANTIC_SOURCE_ROLES = {
+    'jurisprudencia',
+    'jurisprudencia_controle',
+    'orientacao_oficial',
+    'doutrina',
+}
+SEMANTIC_DOCUMENT_TYPES = {
+    'jurisprudencia',
+    'acordao',
+    'decisao',
+    'sumula',
+    'tema',
+    'materia',
+    'artigo',
+    'noticia',
+    'manual',
+    'guia',
+    'orientacao',
+    'portal_oficial',
+    'doutrina',
+}
+NORMATIVE_DOCUMENT_TYPES = {
+    'norma',
+    'lei',
+    'lei_ordinaria',
+    'lei_complementar',
+    'decreto',
+    'decreto_lei',
+    'portaria',
+    'resolucao',
+    'instrucao_normativa',
+    'ato_normativo',
+    'emenda_constitucional',
+    'constituicao',
+    'constituicao_estadual',
+}
+
+
+def _is_normative_document(full_text, metadata=None):
+    metadata = metadata or {}
+    source_role = str(metadata.get('source_role') or '').strip().casefold()
+    tipo_documento = str(metadata.get('tipo_documento') or '').strip().casefold()
+    if source_role == 'norma' or tipo_documento in NORMATIVE_DOCUMENT_TYPES:
+        return True
+    if re.search(
+        r'(?im)^\s*(?:LEI\s+(?:COMPLEMENTAR\s+)?n?[ºo°.]*|DECRETO(?:-LEI)?\s+n?[ºo°.]*|'
+        r'PORTARIA\s+n?[ºo°.]*|RESOLU(?:ÇÃO|CAO)\s+n?[ºo°.]*|INSTRU(?:ÇÃO|CAO)\s+NORMATIVA\b|'
+        r'EMENDA\s+CONSTITUCIONAL\b|CONSTITUI(?:ÇÃO|CAO)\b)',
+        full_text,
+    ):
+        return True
+    return False
+
+
+def _should_use_ai_semantic(full_text, metadata=None):
+    if not config.AI_CHUNKING_ENABLED or len(full_text.strip()) < config.AI_CHUNKING_MIN_CHARS:
+        return False
+    metadata = metadata or {}
+    source_role = str(metadata.get('source_role') or '').strip().casefold()
+    tipo_documento = str(metadata.get('tipo_documento') or '').strip().casefold()
+    if _is_normative_document(full_text, metadata):
+        return False
+    if source_role in SEMANTIC_SOURCE_ROLES or tipo_documento in SEMANTIC_DOCUMENT_TYPES:
+        return True
+    if JURISPRUDENCIA_RE.search(full_text):
+        return True
+    if re.search(r'(?im)^\s*FONTE:\s*.+\n\s*T[IÍ]TULO:\s*.+\n\s*DATA[_ ]PUBLICACAO\s*:', full_text):
+        return True
+    return False
+
+
+def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=None):
+    from llm.semantic_chunker import SemanticChunkingError, build_semantic_chunks
+
+    unit_kind = str(metadata.get('tipo_documento') or '').strip() or (
+        'jurisprudencia' if JURISPRUDENCIA_RE.search(full_text) else 'materia'
+    )
+    unit_ref = (
+        str(metadata.get('processo') or '').strip()
+        or str(metadata.get('source_id') or '').strip()
+        or None
+    )
+    try:
+        return build_semantic_chunks(
+            full_text,
+            max_size,
+            unit_kind=unit_kind,
+            unit_ref=unit_ref,
+            provider=semantic_provider,
+            window_chars=config.AI_CHUNKING_WINDOW_CHARS,
+            min_chars=config.AI_CHUNKING_MIN_CHARS,
+            attempts=config.AI_CHUNKING_ATTEMPTS,
+        )
+    except SemanticChunkingError:
+        if config.AI_CHUNKING_REQUIRED:
+            raise
+        return []
+
+
+def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, semantic_provider=None):
     if max_size <= 0:
+        raise ValueError('max_size deve ser maior que zero')
+    if overlap < 0 or overlap >= max_size:
+        raise ValueError('overlap deve ser maior ou igual a zero e menor que max_size')
+    if _should_use_ai_semantic(full_text, metadata):
+        chunks = _build_ai_semantic_chunks(full_text, max_size, metadata or {}, semantic_provider=semantic_provider)
+        if chunks:
+            return chunks
         raise ValueError('max_size deve ser maior que zero')
     if overlap < 0 or overlap >= max_size:
         raise ValueError('overlap deve ser maior ou igual a zero e menor que max_size')
