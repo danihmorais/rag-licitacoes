@@ -150,7 +150,87 @@ def test_normative_documents_never_call_semantic_provider(monkeypatch):
     )
     assert provider.calls == 0
     assert chunks
+    assert any(item["segment_kind"] == "paragrafo" for item in chunks)
     assert all(item["segment_kind"] in {"caput", "paragrafo"} for item in chunks)
+
+
+def test_written_paragrafo_unico_resets_hierarchy_for_items():
+    text = (
+        "Art. 70. Regra do caput.\\n"
+        "I - hipótese um;\\n"
+        "II - hipótese dois;\\n"
+        "Parágrafo único. Considera-se: 1. bem público; 2. bem dominical."
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    paragrafo = [item for item in chunks if item["segment_kind"] == "paragrafo"]
+    items = [item for item in chunks if item["segment_kind"] == "item"]
+    assert len(paragrafo) == 1
+    assert paragrafo[0]["segment_ref"].casefold().startswith("parágrafo único")
+    assert [item["segment_ref"] for item in items] == ["1.", "2."]
+    assert items[0]["hierarchy_path"][-2:] == ["Parágrafo único.", "1."]
+    assert items[1]["hierarchy_path"][-2:] == ["Parágrafo único.", "2."]
+    assert all("II -" not in item["hierarchy_path"] for item in items)
+
+
+def test_semantic_chunking_failure_falls_back_to_structural(monkeypatch):
+    text = (
+        "MANUAL DE LICITAÇÕES DO TCU\\n\\n"
+        + ("Orientação sobre planejamento, governança e fiscalização da contratação. " * 80)
+    )
+    provider = ExplodingProvider()
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+    chunks = build_structural_chunks(
+        text,
+        500,
+        50,
+        metadata={"source_role": "orientacao_oficial", "tipo_documento": "manual"},
+        semantic_provider=provider,
+    )
+    assert provider.calls >= 1
+    assert chunks
+    assert all(item["chunking_method"] == "structural" for item in chunks)
+    assert all(item["segment_kind"] == "generic" for item in chunks)
+
+
+def test_semantic_provider_initialization_failure_falls_back_to_structural(monkeypatch):
+    text = "Manual TCU.\\n\\n" + ("Conteúdo jurídico do manual. " * 80)
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+
+    def fail_provider():
+        raise RuntimeError("LLM indisponível")
+
+    monkeypatch.setattr("llm.factory.get_llm_provider", fail_provider)
+    chunks = build_structural_chunks(
+        text,
+        500,
+        50,
+        metadata={"source_role": "orientacao_oficial", "tipo_documento": "manual"},
+    )
+    assert chunks
+    assert all(item["chunking_method"] == "structural" for item in chunks)
+
+
+def test_semantic_chunking_strict_mode_still_raises(monkeypatch):
+    text = "Manual TCU.\\n\\n" + ("Conteúdo jurídico do manual. " * 80)
+    provider = ExplodingProvider()
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", False)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+    with pytest.raises(SemanticChunkingError):
+        build_structural_chunks(
+            text,
+            500,
+            50,
+            metadata={"source_role": "orientacao_oficial", "tipo_documento": "manual"},
+            semantic_provider=provider,
+        )
 
 
 def test_semantic_group_validation_rejects_missing_or_reordered_ids():
