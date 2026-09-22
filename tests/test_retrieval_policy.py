@@ -157,15 +157,11 @@ def test_qfilter_infers_state_constitution_scope():
     assert conditions["jurisdicao"] == "estadual_sp"
 
 
-def test_transition_query_filters_current_and_historical_regimes():
-    from query import qfilter
+def test_transition_regimes_select_current_and_historical_frameworks():
+    from query import _transition_regimes
 
-    query_filter = qfilter(query="O que mudou na nova lei de licitações em relação ao regime anterior?")
-    regime_condition = next(
-        condition for condition in query_filter.must if condition.key == "regime_juridico"
-    )
-    regimes = set(getattr(getattr(regime_condition, "match", None), "any", []))
-    assert regimes == {"lei_14133", "lei_8666"}
+    regimes = _transition_regimes("O que mudou na nova lei de licitações em relação ao regime anterior?")
+    assert regimes == ("lei_14133", "lei_8666")
 
 
 def test_transition_retrieval_query_mentions_both_regimes():
