@@ -427,30 +427,40 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
     units = _units(full_text)
 
     if _should_use_ai_semantic(full_text, metadata):
-        semantic_chunks = []
-        for unit in units:
-            if unit['kind'] != 'jurisprudencia' and len(units) > 1:
-                continue
-            unit_metadata = dict(metadata or {})
-            if unit.get('ref'):
-                unit_metadata['processo'] = unit['ref']
-            chunks = _build_ai_semantic_chunks(
-                unit['text'],
+        if len(units) == 1 or not all(
+            unit['kind'] == 'jurisprudencia' for unit in units
+        ):
+            semantic_chunks = _build_ai_semantic_chunks(
+                full_text,
                 max_size,
-                unit_metadata,
+                metadata or {},
                 semantic_provider=semantic_provider,
             )
-            for chunk in chunks:
-                chunk['start'] = unit['start'] + int(chunk.get('start') or 0)
-                chunk['unit_ref'] = unit.get('ref')
-                chunk['unit_length'] = len(unit['text'])
-                chunk['unit_id'] = (
-                    f"jurisprudencia:{unit.get('ref') or unit['start']}:"
-                    f"{int(chunk.get('chunk_index') or 0):04d}"
+            if semantic_chunks:
+                return semantic_chunks
+        else:
+            semantic_chunks = []
+            for unit in units:
+                unit_metadata = dict(metadata or {})
+                if unit.get('ref'):
+                    unit_metadata['processo'] = unit['ref']
+                chunks = _build_ai_semantic_chunks(
+                    unit['text'],
+                    max_size,
+                    unit_metadata,
+                    semantic_provider=semantic_provider,
                 )
-            semantic_chunks.extend(chunks)
-        if semantic_chunks:
-            return semantic_chunks
+                for chunk in chunks:
+                    chunk['start'] = unit['start'] + int(chunk.get('start') or 0)
+                    chunk['unit_ref'] = unit.get('ref')
+                    chunk['unit_length'] = len(unit['text'])
+                    chunk['unit_id'] = (
+                        f"jurisprudencia:{unit.get('ref') or unit['start']}:"
+                        f"{int(chunk.get('chunk_index') or 0):04d}"
+                    )
+                semantic_chunks.extend(chunks)
+            if semantic_chunks:
+                return semantic_chunks
 
     output = []
     ref_counts = {}
