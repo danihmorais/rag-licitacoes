@@ -300,9 +300,6 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
         chunks = _build_ai_semantic_chunks(full_text, max_size, metadata or {}, semantic_provider=semantic_provider)
         if chunks:
             return chunks
-        raise ValueError('max_size deve ser maior que zero')
-    if overlap < 0 or overlap >= max_size:
-        raise ValueError('overlap deve ser maior ou igual a zero e menor que max_size')
 
     output = []
     ref_counts = {}
