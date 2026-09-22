@@ -556,15 +556,27 @@ def expand_context(client, points):
                     abs(index - int(point.payload.get('chunk_index', 0)))
                     for point in group_points
                 ]
-                within_neighbor_window = any(distance <= config.CONTEXT_NEIGHBORS for distance in distances)
+                related_indexes = [
+                    idx for idx, distance in enumerate(distances)
+                    if distance <= config.CONTEXT_NEIGHBORS
+                ]
                 is_forced_article_caput = is_article and index == 0
-                if not within_neighbor_window and not is_forced_article_caput:
+                if not related_indexes and not is_forced_article_caput:
                     continue
 
+                related_points = (
+                    [group_points[idx] for idx in related_indexes]
+                    if related_indexes
+                    else group_points
+                )
                 priority = max(
                     float(point.payload.get('_evidence_score', 0.0))
-                    for point in group_points
+                    for point in related_points
                 )
+                distance = min(
+                    distances[idx] for idx in related_indexes
+                ) if related_indexes else min(distances)
+
                 existing = selected.get(neighbor.id)
                 if existing is not None:
                     existing.payload['_context_priority'] = max(
@@ -575,7 +587,7 @@ def expand_context(client, points):
 
                 neighbor.payload['_context_only'] = True
                 neighbor.payload['_context_priority'] = priority
-                neighbor.payload['_context_distance'] = min(distances)
+                neighbor.payload['_context_distance'] = distance
                 selected[neighbor.id] = neighbor
             if offset is None:
                 break
