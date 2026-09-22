@@ -487,7 +487,7 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
     try:
         if semantic_provider is None:
             from llm.factory import get_llm_provider
-            semantic_provider = get_llm_provider()
+            semantic_provider = get_llm_provider(purpose='semantic_chunking')
         return build_semantic_chunks(
             full_text,
             max_size,
