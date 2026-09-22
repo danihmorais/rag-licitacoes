@@ -138,7 +138,9 @@ def _is_transition_query(query):
         'transicao', 'transicao legislativa', 'regime anterior',
         'lei 8.666', 'lei 8666', '8.666/1993',
         'lei 10.520', 'lei 10520', '10.520/2002',
-        'historico', 'histórico',
+        'historico', 'historico', 'antes e depois',
+        'diferenca entre', 'diferencas entre', 'comparar', 'comparacao',
+        'o que mudou', 'mudancas da nova lei', 'nova lei',
     ))
 
 
@@ -242,7 +244,7 @@ def _infer_query_filters(query):
 
 
 def qfilter(filters=None, query=None):
-    filters = filters or {}
+    filters = dict(filters or {})
     if not filters and not query:
         return None
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
@@ -304,7 +306,7 @@ def embedding_kwargs():
 
 def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
     if dense_vector is None:
-        query_embedding_text = 'query: ' + _retrieval_query(query)
+        query_embedding_text = 'query: ' + query
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
         dense_vector = list(dense.embed([query_embedding_text]))[0]
     sparse_vector = list(sparse.embed([query]))[0]
@@ -745,7 +747,7 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     query, filters = parse_filters(raw)
     if not query:
         return '', [], []
-    query_embedding_text = 'query: ' + query
+    query_embedding_text = 'query: ' + _retrieval_query(query)
     validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
     dense_vector = list(dense.embed([query_embedding_text]))[0]
     points = rerank(
