@@ -410,19 +410,29 @@ def test_locator_does_not_jump_to_repeated_text_before_expected_position():
     assert uncertain is False
 
 def test_ocr_structural_markers_are_normalized_without_changing_source_text():
+    from chunking import _article_children, _article_units
+
     text = (
         "Preâmbulo.\n"
         "Artig0 10. Regra principal.\n"
         "Paragraf0 unic0. A Administração deverá observar a regra.\n"
     )
+    units = _article_units(text)
+    assert len(units) == 1
+    assert units[0]["ref"] == "Artigo 10."
+    assert units[0]["text"].startswith("Artig0 10.")
+
+    caput, children = _article_children(units[0]["text"])
+    assert caput == "Artig0 10. Regra principal."
+    assert len(children) == 1
+    kind, ref, child_text, _, _ = children[0]
+    assert kind == "paragrafo"
+    assert ref.casefold().startswith("paragrafo unico")
+    assert child_text.startswith("Paragraf0 unic0.")
+
     chunks = build_structural_chunks(text, 500, 50)
-    assert len(chunks) == 1
-    assert chunks[0]["unit_ref"] == "Artigo 10."
     assert chunks[0]["text"].startswith("Artig0 10.")
-    paragrafo = [item for item in chunks if item["segment_kind"] == "paragrafo"]
-    assert len(paragrafo) == 1
-    assert paragrafo[0]["segment_ref"].casefold().startswith("paragrafo unico")
-    assert "Paragraf0 unic0." in paragrafo[0]["text"]
+    assert "Paragraf0 unic0." in chunks[0]["text"]
 
 
 def test_ocr_article_marker_does_not_break_nested_hierarchy():
