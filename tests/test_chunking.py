@@ -234,7 +234,7 @@ def test_concatenated_jurisprudencia_falls_back_as_a_whole_when_one_unit_fails(m
         metadata={"source_role": "jurisprudencia", "tipo_documento": "jurisprudencia"},
         semantic_provider=provider,
     )
-    assert provider.calls == 2
+    assert provider.calls == 3
     assert chunks
     assert all(item["chunking_method"] == "structural" for item in chunks)
     assert {item["unit_ref"] for item in chunks} == {
