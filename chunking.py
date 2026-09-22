@@ -64,7 +64,7 @@ CHILD_RE = re.compile(
 CHILD_INLINE_RE = re.compile(
     r"(?<=[\f.;:])[ \t]+"
     r"(§\s*\d+[ºo]?|§\s*[uú]nico|"
-    r"par[aá]grafo\s+único(?:\s*[.:])?|"
+    r"par[aá]graf[o0]\s+únic[o0](?:\s*[.:])?|"
     r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
@@ -324,6 +324,7 @@ def _article_units(text):
             structure_view,
             ARTIGO_RE,
             ARTIGO_INLINE_RE,
+        )
         if _article_marker_is_real_header(text, match)
     ]
     if not matches:
