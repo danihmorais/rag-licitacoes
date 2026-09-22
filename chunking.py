@@ -254,7 +254,7 @@ def _excerpt_caput(caput, budget):
     if available <= len(ellipsis) + 2:
         return (label + _take_prefix_words(caput, available)).strip()[:budget]
     payload_budget = available - len(ellipsis)
-    left_budget = max(1, int(payload_budget * 0.45))
+    left_budget = max(1, int(payload_budget * 0.30))
     right_budget = max(1, payload_budget - left_budget)
     left = _take_prefix_words(caput, left_budget)
     right = _take_suffix_words(caput, right_budget)
