@@ -36,13 +36,16 @@ HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 CHILD_RE = re.compile(
-    r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
+    r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|"
+    r"par[aá]grafo\s+único(?:\s*[.:])?|"
+    r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
 CHILD_INLINE_RE = re.compile(
     r"(?<=[\f.;:])[ \t]+"
-    r"(§\s*\d+[ºo]?|§\s*[uú]nico|[IVXLCDM]+\s*[.)–—-]|"
-    r"[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
+    r"(§\s*\d+[ºo]?|§\s*[uú]nico|"
+    r"par[aá]grafo\s+único(?:\s*[.:])?|"
+    r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
 
@@ -132,7 +135,7 @@ def _article_children(article_text):
 
         kind = (
             'paragrafo'
-            if ref.startswith('§')
+            if ref.startswith('§') or re.match(r'^par[aá]grafo\s+único', ref, re.I)
             else 'inciso'
             if re.match(r'^[IVXLCDM]+', ref, re.I)
             else 'alinea'
@@ -425,6 +428,9 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
         or None
     )
     try:
+        if semantic_provider is None:
+            from llm.factory import get_llm_provider
+            semantic_provider = get_llm_provider()
         return build_semantic_chunks(
             full_text,
             max_size,
@@ -436,9 +442,16 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
             attempts=config.AI_CHUNKING_ATTEMPTS,
             prompt_version=config.AI_CHUNKING_PROMPT_VERSION,
         )
-    except SemanticChunkingError:
-        if config.AI_CHUNKING_REQUIRED:
+    except SemanticChunkingError as exc:
+        if (
+            config.AI_CHUNKING_REQUIRED
+            and not config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL
+        ):
             raise
+        print(
+            'Aviso: chunking semântico indisponível; '
+            f'fallback estrutural aplicado: {exc}'
+        )
         return []
 
 
