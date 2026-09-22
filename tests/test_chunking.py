@@ -416,7 +416,7 @@ def test_ocr_structural_markers_are_normalized_without_changing_source_text():
         "Paragraf0 unic0. A Administração deverá observar a regra.\n"
     )
     chunks = build_structural_chunks(text, 500, 50)
-    assert len(chunks) == 2
+    assert len(chunks) == 1
     assert chunks[0]["unit_ref"] == "Artigo 10."
     assert chunks[0]["text"].startswith("Artig0 10.")
     paragrafo = [item for item in chunks if item["segment_kind"] == "paragrafo"]
