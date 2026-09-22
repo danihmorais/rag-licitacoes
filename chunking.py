@@ -57,7 +57,7 @@ HEADER_RE = re.compile(
 )
 CHILD_RE = re.compile(
     r"(?m)^[ \t]*(§\s*\d+[ºo]?|§\s*[uú]nico|"
-    r"par[aá]graf[o0]\s+únic[o0](?:\s*[.:])?|"
+    r"par[aá]graf[o0]\s+[uú]nic[o0](?:\s*[.:])?|"
     r"[IVXLCDM]+\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*",
     re.IGNORECASE,
 )
