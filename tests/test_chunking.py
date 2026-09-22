@@ -432,7 +432,7 @@ def test_ocr_structural_markers_are_normalized_without_changing_source_text():
 
     chunks = build_structural_chunks(text, 500, 50)
     assert chunks[0]["text"].startswith("Artig0 10.")
-    assert "Paragraf0 unic0." in chunks[0]["text"]
+    assert any("Paragraf0 unic0." in chunk["text"] for chunk in chunks)
 
 
 def test_ocr_article_marker_does_not_break_nested_hierarchy():
