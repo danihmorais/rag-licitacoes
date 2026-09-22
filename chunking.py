@@ -490,6 +490,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                 return semantic_chunks
         else:
             semantic_chunks = []
+            semantic_failed = False
             for unit in units:
                 unit_metadata = dict(metadata or {})
                 if unit.get('ref'):
@@ -500,6 +501,9 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                     unit_metadata,
                     semantic_provider=semantic_provider,
                 )
+                if not chunks:
+                    semantic_failed = True
+                    break
                 for chunk in chunks:
                     chunk['start'] = unit['start'] + int(chunk.get('start') or 0)
                     chunk['unit_ref'] = unit.get('ref')
@@ -509,7 +513,7 @@ def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, sema
                         f"{int(chunk.get('chunk_index') or 0):04d}"
                     )
                 semantic_chunks.extend(chunks)
-            if semantic_chunks:
+            if semantic_chunks and not semantic_failed:
                 return semantic_chunks
 
     output = []
