@@ -1,10 +1,50 @@
 {
-  "version": 1,
-  "description": "Perguntas de referência para regressão da recuperação jurídica. As fontes esperadas são IDs do catálogo versionado.",
+  "version": 2,
+  "description": "Conjunto versionado para regressão da recuperação jurídica e do evidence gate. Inclui casos suportados, premissas falsas, perguntas fora do corpus e conflitos de jurisdição federal x São Paulo.",
   "cases": [
     {
       "id": "lei-14133-modalidades",
       "query": "Quais são as modalidades de licitação previstas na Lei nº 14.133/2021?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "lei-14133-fases",
+      "query": "Quais são as fases do processo licitatório na Lei nº 14.133/2021?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "lei-14133-agente",
+      "query": "Qual é o papel do agente de contratação na Lei nº 14.133/2021?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "lei-14133-contratacao-direta",
+      "query": "Como a Lei nº 14.133/2021 disciplina a contratação direta?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "lei-14133-dispensa",
+      "query": "Quais hipóteses de dispensa de licitação estão previstas na Lei nº 14.133/2021?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "lei-14133-inexigibilidade",
+      "query": "Quando a contratação por inexigibilidade é cabível segundo a Lei nº 14.133/2021?",
       "expected_source_ids": [
         "lei14133"
       ],
@@ -19,8 +59,40 @@
       "expected_jurisdicao": "federal"
     },
     {
+      "id": "registro-precos-ata",
+      "query": "Quais regras do Decreto nº 11.462/2023 tratam da ata de registro de preços?",
+      "expected_source_ids": [
+        "decreto11462"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "registro-precos-vigencia",
+      "query": "Qual é a disciplina de vigência da ata no Sistema de Registro de Preços federal?",
+      "expected_source_ids": [
+        "decreto11462"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
       "id": "etp-federal",
       "query": "Quais elementos e requisitos devem ser considerados no Estudo Técnico Preliminar?",
+      "expected_source_ids": [
+        "in58"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "etp-estimativa",
+      "query": "Como o Estudo Técnico Preliminar trata a estimativa da demanda da contratação?",
+      "expected_source_ids": [
+        "in58"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "etp-riscos",
+      "query": "Quais aspectos de risco e solução devem ser avaliados no ETP segundo a IN SEGES nº 58/2022?",
       "expected_source_ids": [
         "in58"
       ],
@@ -35,6 +107,22 @@
       "expected_jurisdicao": "federal"
     },
     {
+      "id": "termo-referencia-solucao",
+      "query": "Como deve ser caracterizada a solução no Termo de Referência?",
+      "expected_source_ids": [
+        "in81"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "termo-referencia-requisitos",
+      "query": "Quais requisitos da contratação devem ser descritos no Termo de Referência?",
+      "expected_source_ids": [
+        "in81"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
       "id": "pesquisa-precos",
       "query": "Quais parâmetros devem ser observados na pesquisa de preços para contratação pública?",
       "expected_source_ids": [
@@ -43,8 +131,40 @@
       "expected_jurisdicao": "federal"
     },
     {
+      "id": "pesquisa-precos-fontes",
+      "query": "Quais fontes de preços podem ser utilizadas na pesquisa de preços segundo a IN SEGES/ME nº 65/2021?",
+      "expected_source_ids": [
+        "in65"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "pesquisa-precos-metodo",
+      "query": "Como deve ser definida a metodologia para obtenção do preço estimado na contratação pública?",
+      "expected_source_ids": [
+        "in65"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
       "id": "processo-sp",
       "query": "Como é disciplinado o processo administrativo no Estado de São Paulo?",
+      "expected_source_ids": [
+        "sp-lei10177"
+      ],
+      "expected_jurisdicao": "estadual_sp"
+    },
+    {
+      "id": "processo-sp-deveres",
+      "query": "Quais regras gerais de processo administrativo a Lei SP nº 10.177/1998 estabelece?",
+      "expected_source_ids": [
+        "sp-lei10177"
+      ],
+      "expected_jurisdicao": "estadual_sp"
+    },
+    {
+      "id": "processo-sp-recursos",
+      "query": "Como a Lei SP nº 10.177/1998 disciplina recursos no processo administrativo?",
       "expected_source_ids": [
         "sp-lei10177"
       ],
@@ -60,6 +180,22 @@
       "expected_jurisdicao": "estadual_sp"
     },
     {
+      "id": "cadin-sp-lei",
+      "query": "Quais regras legais regem o CADIN Estadual de São Paulo?",
+      "expected_source_ids": [
+        "sp-lei12799"
+      ],
+      "expected_jurisdicao": "estadual_sp"
+    },
+    {
+      "id": "cadin-sp-regulamento",
+      "query": "Qual decreto paulista regulamenta o CADIN Estadual?",
+      "expected_source_ids": [
+        "sp-decreto53455"
+      ],
+      "expected_jurisdicao": "estadual_sp"
+    },
+    {
       "id": "lei-8666-historico",
       "query": "Qual era o regime histórico da Lei nº 8.666/1993 em dezembro de 2023?",
       "expected_source_ids": [
@@ -68,6 +204,17 @@
       "expected_jurisdicao": "federal",
       "temporal": {
         "effective_on": "2023-12-15"
+      }
+    },
+    {
+      "id": "lei-8666-fim-vigencia",
+      "query": "Até quando a Lei nº 8.666/1993 permaneceu aplicável no regime histórico?",
+      "expected_source_ids": [
+        "lei8666"
+      ],
+      "expected_jurisdicao": "federal",
+      "temporal": {
+        "effective_on": "2023-12-30"
       }
     },
     {
@@ -91,6 +238,308 @@
       "temporal": {
         "effective_on": "2026-06-15"
       }
+    },
+    {
+      "id": "tcu-manual-planejamento",
+      "query": "Como o Manual do TCU orienta o planejamento das contratações públicas?",
+      "expected_source_ids": [
+        "tcu-manual-licitacoes"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "tcu-manual-fiscalizacao",
+      "query": "Quais orientações do Manual do TCU tratam da fiscalização de contratos?",
+      "expected_source_ids": [
+        "tcu-manual-licitacoes"
+      ],
+      "expected_jurisdicao": "federal"
+    },
+    {
+      "id": "conflito-federal-sp-processo",
+      "query": "Em uma contratação realizada por órgão sujeito simultaneamente a uma regra federal de licitação e a uma regra paulista de processo administrativo, quais fontes devem ser consideradas para distinguir a disciplina federal da estadual?",
+      "expected_source_ids": [
+        "lei14133",
+        "sp-lei10177"
+      ],
+      "expected_jurisdicao": [
+        "federal",
+        "estadual_sp"
+      ],
+      "case_type": "jurisdiction_conflict"
+    },
+    {
+      "id": "conflito-federal-sp-cadin",
+      "query": "Em uma contratação pública relacionada a fornecedor em São Paulo, como distinguir a disciplina federal da licitação das regras paulistas do CADIN, sem tratar uma esfera como substituta da outra?",
+      "expected_source_ids": [
+        "lei14133",
+        "sp-lei12799"
+      ],
+      "expected_jurisdicao": [
+        "federal",
+        "estadual_sp"
+      ],
+      "case_type": "jurisdiction_conflict"
+    },
+    {
+      "id": "conflito-federal-sp-cadin-regulamento",
+      "query": "Para analisar uma questão de contratação pública e CADIN em São Paulo, quais documentos representam, respectivamente, a disciplina federal da licitação e a regulamentação paulista do CADIN?",
+      "expected_source_ids": [
+        "lei14133",
+        "sp-decreto53455"
+      ],
+      "expected_jurisdicao": [
+        "federal",
+        "estadual_sp"
+      ],
+      "case_type": "jurisdiction_conflict"
+    },
+    {
+      "id": "premissa-falsa-convite",
+      "query": "A Lei nº 14.133/2021 criou novamente a modalidade convite. Qual artigo institui essa modalidade?",
+      "expected_source_ids": [
+        "lei14133"
+      ],
+      "expected_jurisdicao": "federal",
+      "case_type": "false_premise"
+    },
+    {
+      "id": "premissa-falsa-8666-vigente",
+      "query": "A Lei nº 8.666/1993 continua vigente em 2026 para novas licitações. Qual regra confirma essa vigência?",
+      "expected_source_ids": [
+        "lei8666"
+      ],
+      "expected_jurisdicao": "federal",
+      "case_type": "false_premise",
+      "temporal": {
+        "effective_on": "2026-06-15"
+      }
+    },
+    {
+      "id": "fora-corpus-irpf",
+      "query": "Qual é a alíquota efetiva do IRPF para um contribuinte com três dependentes em 2026?",
+      "expected_source_ids": [],
+      "expected_rejection": true,
+      "rejection_test": true,
+      "expected_jurisdicao": null,
+      "case_type": "out_of_corpus"
+    },
+    {
+      "id": "fora-corpus-criminal",
+      "query": "Qual é a pena do crime de furto qualificado praticado mediante escalada?",
+      "expected_source_ids": [],
+      "expected_rejection": true,
+      "rejection_test": true,
+      "expected_jurisdicao": null,
+      "case_type": "out_of_corpus"
+    }
+  ],
+  "evidence_gate_cases": [
+    {
+      "id": "gate-aceita-citacao-direta",
+      "category": "supported",
+      "question": "Qual regra consta no documento?",
+      "answer": "O Art. 1º da Lei 14.133/2021 determina a observância da legalidade e da eficiência. [F1]",
+      "expected_accept": true,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Lei 14.133/2021. Art. 1º A licitação observará a legalidade e a eficiência."
+        }
+      ]
+    },
+    {
+      "id": "gate-aceita-citacao-linha-seguinte",
+      "category": "supported",
+      "question": "Qual regra consta no documento?",
+      "answer": "A contratação deve observar planejamento e eficiência.\n[F1]",
+      "expected_accept": true,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "A contratação deve observar planejamento e eficiência."
+        }
+      ]
+    },
+    {
+      "id": "gate-aceita-multifonte",
+      "category": "supported",
+      "question": "Quais são as regras relevantes?",
+      "answer": "A Lei 14.133/2021 disciplina a licitação federal. [F1]\nA Lei SP 10.177/1998 disciplina o processo administrativo paulista. [F2]",
+      "expected_accept": true,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Lei 14.133/2021 disciplina a licitação e os contratos administrativos federais."
+        },
+        {
+          "source": "sp-lei10177",
+          "unit_id": "artigo:1",
+          "text": "Lei SP 10.177/1998 disciplina o processo administrativo paulista."
+        }
+      ]
+    },
+    {
+      "id": "gate-aceita-bracket-unicode",
+      "category": "supported",
+      "question": "Qual orientação aparece na evidência?",
+      "answer": "O manual apresenta orientação oficial do TCU sobre contratações públicas. 【F1】",
+      "expected_accept": true,
+      "sources": [
+        {
+          "source": "tcu-manual-licitacoes",
+          "unit_id": "secao:planejamento",
+          "text": "O manual apresenta orientação oficial do TCU sobre contratações públicas."
+        }
+      ]
+    },
+    {
+      "id": "gate-aceita-dois-identificadores",
+      "category": "supported",
+      "question": "Qual legislação é mencionada?",
+      "answer": "A Lei 14.133/2021 e o Art. 1º tratam da matéria indicada. [F1]",
+      "expected_accept": true,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Lei 14.133/2021. Art. 1º Trata da matéria indicada."
+        }
+      ]
+    },
+    {
+      "id": "gate-aceita-frase-curta",
+      "category": "supported",
+      "question": "Qual é a regra?",
+      "answer": "Planejamento e eficiência. [F1]",
+      "expected_accept": true,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Planejamento e eficiência."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-fonte-inexistente",
+      "category": "unsupported",
+      "question": "Há suporte para a afirmação?",
+      "answer": "A regra é esta. [F9]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "A licitação observará a legalidade."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-identificador",
+      "category": "false_premise",
+      "question": "O documento confirma o artigo?",
+      "answer": "O Art. 8º da Lei 14.133/2021 determina outra regra. [F1]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Art. 1º A licitação observará a legalidade."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-sem-citacao",
+      "category": "uncited",
+      "question": "Qual é a regra?",
+      "answer": "A contratação deve observar planejamento, eficiência e fiscalização.",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "A contratação deve observar planejamento, eficiência e fiscalização."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-baixo-overlap",
+      "category": "unsupported",
+      "question": "A fonte sustenta a conclusão?",
+      "answer": "A empresa pode ser punida com multa automática e impedimento imediato. [F1]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "O planejamento da contratação deverá considerar necessidades administrativas."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-identificador-processo",
+      "category": "fabricated_identifier",
+      "question": "O processo citado está na fonte?",
+      "answer": "O processo 1234567/2026 determinou a nulidade da contratação. [F1]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "tcu-manual-licitacoes",
+          "unit_id": "secao:orientacoes",
+          "text": "O manual apresenta orientações gerais para contratações públicas e não contém o processo citado."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-fora-corpus",
+      "category": "out_of_corpus",
+      "question": "Qual é a alíquota do IRPF em 2026?",
+      "answer": "A alíquota efetiva é de 27,5% para o caso apresentado. [F1]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Lei 14.133/2021. Art. 1º Esta Lei estabelece normas gerais de licitação e contratação."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-afirmacao-sem-fonte",
+      "category": "unsupported",
+      "question": "O contexto permite afirmar isso?",
+      "answer": "## Conclusão\nA regra estadual sempre prevalece sobre a lei federal. [F1]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "sp-lei10177",
+          "unit_id": "artigo:1",
+          "text": "Lei SP 10.177/1998 disciplina o processo administrativo estadual paulista."
+        }
+      ]
+    },
+    {
+      "id": "gate-rejeita-mistura-fontes",
+      "category": "jurisdiction_conflict",
+      "question": "As fontes permitem afirmar aplicação indistinta?",
+      "answer": "A Lei 14.133/2021 e a Lei SP 10.177/1998 são a mesma norma e têm a mesma abrangência. [F1][F2]",
+      "expected_accept": false,
+      "sources": [
+        {
+          "source": "lei14133",
+          "unit_id": "artigo:1",
+          "text": "Lei 14.133/2021 disciplina normas gerais de licitação e contratação."
+        },
+        {
+          "source": "sp-lei10177",
+          "unit_id": "artigo:1",
+          "text": "Lei SP 10.177/1998 disciplina processo administrativo no âmbito estadual paulista."
+        }
+      ]
     }
   ]
 }
