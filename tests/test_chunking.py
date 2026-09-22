@@ -28,3 +28,39 @@ def test_split_text_clamps_overlap_when_available_chunk_is_smaller():
     from chunking import _split_text
     xs = _split_text('abcdef', 1, 150)
     assert xs == list('abcdef')
+
+
+def test_article_children_preserve_parent_hierarchy():
+    text = (
+        'Art. 10. Regra do caput.\n'
+        'I - hipótese um;\n'
+        'a) subhipótese A;\n'
+        'b) subhipótese B;\n'
+        'II - hipótese dois;\n'
+        'a) subhipótese C;\n'
+        'b) subhipótese D;\n'
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    alinea_chunks = [item for item in chunks if item['segment_kind'] == 'alinea']
+    assert [item['segment_ref'] for item in alinea_chunks] == ['a)', 'b)', 'a)', 'b)']
+    assert alinea_chunks[0]['hierarchy_path'][-2:] == ['I -', 'a)']
+    assert alinea_chunks[1]['hierarchy_path'][-2:] == ['I -', 'b)']
+    assert alinea_chunks[2]['hierarchy_path'][-2:] == ['II -', 'a)']
+    assert alinea_chunks[3]['hierarchy_path'][-2:] == ['II -', 'b)']
+    assert 'Art. 10. > I - > a)' in alinea_chunks[0]['text']
+    assert 'Art. 10. > II - > a)' in alinea_chunks[2]['text']
+
+
+def test_item_preserves_alinea_parent_hierarchy():
+    text = (
+        'Art. 11. Regra do caput.\n'
+        'I - hipótese;\n'
+        'a) subhipótese;\n'
+        '1) item um;\n'
+        '2) item dois;\n'
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    items = [item for item in chunks if item['segment_kind'] == 'item']
+    assert len(items) == 2
+    assert items[0]['hierarchy_path'][-3:] == ['I -', 'a)', '1)']
+    assert items[1]['hierarchy_path'][-3:] == ['I -', 'a)', '2)']
