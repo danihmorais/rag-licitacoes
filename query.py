@@ -138,7 +138,9 @@ def _is_transition_query(query):
         'transicao', 'transicao legislativa', 'regime anterior',
         'lei 8.666', 'lei 8666', '8.666/1993',
         'lei 10.520', 'lei 10520', '10.520/2002',
-        'historico', 'histórico',
+        'historico', 'historico', 'antes e depois',
+        'diferenca entre', 'diferencas entre', 'comparar', 'comparacao',
+        'o que mudou', 'mudancas da nova lei', 'nova lei',
     ))
 
 
@@ -156,8 +158,93 @@ def _query_regime(query):
     return None
 
 
+def _transition_regimes(query):
+    normalized = _normalize_query_text(query)
+    regimes = []
+
+    explicit_markers = (
+        ('lei_14133', ('lei 14.133', 'lei 14133', '14.133/2021')),
+        ('lei_8666', ('lei 8.666', 'lei 8666', '8.666/1993')),
+        ('lei_10520', ('lei 10.520', 'lei 10520', '10.520/2002')),
+        ('lei_12462', ('lei 12.462', 'lei 12462', '12.462/2011')),
+    )
+    for regime, markers in explicit_markers:
+        if any(marker in normalized for marker in markers):
+            regimes.append(regime)
+
+    if not regimes:
+        regimes.extend(('lei_14133', 'lei_8666'))
+    elif 'lei_14133' not in regimes and (
+        'mudou' in normalized or 'diferenca' in normalized or 'compar' in normalized
+    ):
+        regimes.insert(0, 'lei_14133')
+
+    if 'pregao' in normalized and 'lei_10520' not in regimes and _is_transition_query(query):
+        regimes.append('lei_10520')
+    if 'rdc' in normalized and 'lei_12462' not in regimes and _is_transition_query(query):
+        regimes.append('lei_12462')
+    return tuple(dict.fromkeys(regimes))
+
+
+def _retrieval_query(query):
+    if not _is_transition_query(query):
+        return query
+    labels = {
+        'lei_14133': 'Lei 14.133/2021',
+        'lei_8666': 'Lei 8.666/1993',
+        'lei_10520': 'Lei 10.520/2002',
+        'lei_12462': 'Lei 12.462/2011',
+    }
+    regimes = _transition_regimes(query)
+    comparison = '; '.join(labels[regime] for regime in regimes if regime in labels)
+    if not comparison:
+        return query
+    return f'{query} [FOCO TEMPORAL: comparar os regimes {comparison}]'
+
+
+def _infer_query_filters(query):
+    normalized = _normalize_query_text(query)
+    inferred = {}
+
+    jurisdiction = _query_jurisdiction(query)
+    if jurisdiction:
+        inferred['jurisdicao'] = jurisdiction
+
+    tribunal_markers = (
+        ('tcesp', 'tcesp'),
+        ('tce-sp', 'tcesp'),
+        ('tribunal de contas do estado de sao paulo', 'tcesp'),
+        ('tcu', 'tcu'),
+        ('stj', 'stj'),
+        ('stf', 'stf'),
+        ('tjsp', 'tjsp'),
+        ('tribunal de justica de sao paulo', 'tjsp'),
+    )
+    for marker, tribunal in tribunal_markers:
+        if marker in normalized:
+            inferred['tribunal'] = tribunal
+            break
+
+    if 'manual de licitacoes' in normalized and 'tcu' in normalized:
+        inferred['source_id'] = 'tcu-manual-licitacoes'
+    elif (
+        'constituicao do estado de sao paulo' in normalized
+        or 'constituicao estadual de sao paulo' in normalized
+        or 'constituicao paulista' in normalized
+    ):
+        inferred['source_id'] = 'sp-const'
+    elif 'constituicao federal' in normalized or normalized == 'constituicao' or 'segundo a constituicao' in normalized:
+        inferred['source_id'] = 'cf1988'
+
+    if inferred.get('source_id') in {'cf1988', 'sp-const'}:
+        inferred['authority_level'] = 1
+        inferred['normative_rank'] = 1
+
+    return inferred
+
+
 def qfilter(filters=None, query=None):
-    filters = filters or {}
+    filters = dict(filters or {})
     if not filters and not query:
         return None
     unknown = sorted(set(filters) - ALLOWED_FILTERS)
@@ -166,6 +253,13 @@ def qfilter(filters=None, query=None):
     conditions = []
     must_not = []
     explicit_regime = filters.get('regime_juridico')
+    inferred_filters = _infer_query_filters(query) if query else {}
+    for key, inferred_value in inferred_filters.items():
+        if key not in filters:
+            filters[key] = inferred_value
+
+    explicit_regime = filters.get('regime_juridico')
+
     for key, value in filters.items():
         if key in NUMERIC_FILTERS and isinstance(value, dict):
             if 'eq' in value:
@@ -207,7 +301,7 @@ def embedding_kwargs():
 
 def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
     if dense_vector is None:
-        query_embedding_text = 'query: ' + query
+        query_embedding_text = 'query: ' + _retrieval_query(query)
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
         dense_vector = list(dense.embed([query_embedding_text]))[0]
     sparse_vector = list(sparse.embed([query]))[0]
@@ -316,6 +410,42 @@ def _evidence_tokens(text):
     }
 
 
+EVIDENCE_STEM_SUFFIXES = (
+    'amentos', 'imentos', 'adores', 'adoras', 'idades',
+    'amento', 'imento', 'ador', 'adora', 'idade',
+    'acoes', 'icoes', 'ucoes', 'acao', 'icao', 'ucao',
+    'mente', 'ando', 'endo', 'indo', 'ar', 'er', 'ir',
+    'os', 'as', 'es', 's',
+)
+
+
+def _evidence_stem(token):
+    value = token
+    for suffix in EVIDENCE_STEM_SUFFIXES:
+        if value.endswith(suffix) and len(value) - len(suffix) >= 4:
+            return value[:-len(suffix)]
+    return value
+
+
+def _evidence_stems(text):
+    return {_evidence_stem(token) for token in _evidence_tokens(text)}
+
+
+def _evidence_overlap(factual, cited_text):
+    factual_tokens = _evidence_tokens(factual)
+    if not factual_tokens:
+        return 1.0, 0.0, 0
+    cited_tokens = _evidence_tokens(cited_text)
+    direct_shared = factual_tokens & cited_tokens
+    direct_overlap = len(direct_shared) / len(factual_tokens)
+
+    factual_stems = {_evidence_stem(token) for token in factual_tokens}
+    cited_stems = {_evidence_stem(token) for token in cited_tokens}
+    stem_shared = factual_stems & cited_stems
+    stem_overlap = len(stem_shared) / len(factual_stems)
+    return direct_overlap, stem_overlap, len(stem_shared)
+
+
 def _normalized_identifier(value):
     return re.sub(r'[^a-z0-9]+', '', _normalize_query_text(value))
 
@@ -383,11 +513,18 @@ def validate_generated_answer(answer, sources):
                         f'Identificador jurídico não sustentado pela fonte citada: {identifier}.'
                     )
         if len(tokens) >= 3:
-            cited_tokens = _evidence_tokens(cited_text)
-            overlap = len(tokens & cited_tokens) / max(1, len(tokens))
-            if overlap < config.EVIDENCE_TOKEN_OVERLAP:
+            direct_overlap, stem_overlap, shared_stems = _evidence_overlap(factual, cited_text)
+            if (
+                direct_overlap < config.EVIDENCE_TOKEN_OVERLAP
+                and not (
+                    shared_stems >= config.EVIDENCE_MIN_SHARED_STEMS
+                    and stem_overlap >= config.EVIDENCE_STEM_OVERLAP
+                )
+            ):
                 raise EvidenceGateError(
-                    f'Citação insuficiente para a afirmação: sobreposição lexical={overlap:.3f}.'
+                    'Citação insuficiente para a afirmação: '
+                    f'sobreposição direta={direct_overlap:.3f}, '
+                    f'stem={stem_overlap:.3f}, compartilhamentos={shared_stems}.'
                 )
     return True
 
@@ -648,7 +785,7 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     query, filters = parse_filters(raw)
     if not query:
         return '', [], []
-    query_embedding_text = 'query: ' + query
+    query_embedding_text = 'query: ' + _retrieval_query(query)
     validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
     dense_vector = list(dense.embed([query_embedding_text]))[0]
     points = rerank(

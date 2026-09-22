@@ -251,8 +251,8 @@ def test_semantic_provider_initialization_failure_falls_back_to_structural(monke
     monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
     monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
 
-    def fail_provider():
-        raise RuntimeError("LLM indisponível")
+    def fail_provider(purpose="answer"):
+        raise RuntimeError(f"LLM indisponível para {purpose}")
 
     monkeypatch.setattr("llm.factory.get_llm_provider", fail_provider)
     chunks = build_structural_chunks(
@@ -408,3 +408,41 @@ def test_locator_does_not_jump_to_repeated_text_before_expected_position():
     )
     assert found == second
     assert uncertain is False
+
+def test_ocr_structural_markers_are_normalized_without_changing_source_text():
+    from chunking import _article_children, _article_units
+
+    text = (
+        "Preâmbulo.\n"
+        "Artig0 10. Regra principal.\n"
+        "Paragraf0 unic0. A Administração deverá observar a regra.\n"
+    )
+    units = _article_units(text)
+    assert len(units) == 1
+    assert units[0]["ref"] == "Artigo 10."
+    assert units[0]["text"].startswith("Artig0 10.")
+
+    caput, children = _article_children(units[0]["text"])
+    assert caput == "Artig0 10. Regra principal."
+    assert len(children) == 1
+    kind, ref, child_text, _, _ = children[0]
+    assert kind == "paragrafo"
+    assert ref.casefold().startswith("paragrafo unico")
+    assert child_text.startswith("Paragraf0 unic0.")
+
+    chunks = build_structural_chunks(text, 500, 50)
+    assert chunks[0]["text"].startswith("Artig0 10.")
+    assert any("Paragraf0 unic0." in chunk["text"] for chunk in chunks)
+
+
+def test_ocr_article_marker_does_not_break_nested_hierarchy():
+    text = (
+        "Art1g0 20. Regra do caput. "
+        "I - hipótese; a) subhipótese; b) outra subhipótese."
+    )
+    chunks = build_structural_chunks(text, 500, 50)
+    alinea = [item for item in chunks if item["segment_kind"] == "alinea"]
+    assert [item["hierarchy_path"][-2:] for item in alinea] == [
+        ["I -", "a)"],
+        ["I -", "b)"],
+    ]

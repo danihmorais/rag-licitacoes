@@ -75,3 +75,33 @@ def test_openai_compatible_maps_rate_limit(monkeypatch):
     provider = OpenAICompatibleProvider("http://example.test/v1", "", "local", 0.1, 1)
     with pytest.raises(LLMQuotaError):
         provider.generate("system", "question")
+
+
+def test_factory_uses_dedicated_semantic_chunking_settings(monkeypatch):
+    from llm import factory
+
+    captured = {}
+
+    class FakeProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(factory, "OpenAICompatibleProvider", FakeProvider)
+    monkeypatch.setattr("config.AI_CHUNKING_PROVIDER", "openai_compatible")
+    monkeypatch.setattr("config.AI_CHUNKING_MODEL", "small-local-model")
+    monkeypatch.setattr("config.AI_CHUNKING_TEMPERATURE", 0.0)
+    monkeypatch.setattr("config.AI_CHUNKING_TIMEOUT", 17)
+    monkeypatch.setattr("config.AI_CHUNKING_MAX_TOKENS", 384)
+    monkeypatch.setattr("config.OPENAI_COMPATIBLE_BASE_URL", "http://example.test/v1")
+    monkeypatch.setattr("config.OPENAI_COMPATIBLE_API_KEY", "")
+
+    factory.get_llm_provider(purpose="semantic_chunking")
+
+    assert captured == {
+        "base_url": "http://example.test/v1",
+        "api_key": "",
+        "model": "small-local-model",
+        "temperature": 0.0,
+        "timeout": 17,
+        "max_tokens": 384,
+    }

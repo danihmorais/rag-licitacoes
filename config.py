@@ -10,7 +10,7 @@ SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 QDRANT_PATH = DB_DIR / 'qdrant'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
-INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '15')
+INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '16')
 DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
 DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', '512'))
@@ -37,6 +37,8 @@ QDRANT_PAYLOAD_INDEXES = {
 }
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
+EVIDENCE_STEM_OVERLAP = float(os.getenv('RAG_EVIDENCE_STEM_OVERLAP', '0.20'))
+EVIDENCE_MIN_SHARED_STEMS = int(os.getenv('RAG_EVIDENCE_MIN_SHARED_STEMS', '2'))
 FASTEMBED_PROVIDERS = tuple(x.strip() for x in os.getenv('RAG_FASTEMBED_PROVIDERS', 'CUDAExecutionProvider').split(',') if x.strip())
 FASTEMBED_REQUIRE_CUDA = os.getenv('RAG_FASTEMBED_REQUIRE_CUDA', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 OCR_ENABLED = os.getenv('RAG_OCR_ENABLED', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
@@ -68,6 +70,11 @@ AI_CHUNKING_MIN_CHARS = int(os.getenv('RAG_AI_CHUNKING_MIN_CHARS', '1800'))
 AI_CHUNKING_WINDOW_CHARS = int(os.getenv('RAG_AI_CHUNKING_WINDOW_CHARS', '9000'))
 AI_CHUNKING_ATTEMPTS = int(os.getenv('RAG_AI_CHUNKING_ATTEMPTS', '2'))
 AI_CHUNKING_PROMPT_VERSION = os.getenv('RAG_AI_CHUNKING_PROMPT_VERSION', '1')
+AI_CHUNKING_PROVIDER = os.getenv('RAG_AI_CHUNKING_PROVIDER', LLM_PROVIDER).strip()
+AI_CHUNKING_MODEL = os.getenv('RAG_AI_CHUNKING_MODEL', LLM_MODEL).strip()
+AI_CHUNKING_TEMPERATURE = float(os.getenv('RAG_AI_CHUNKING_TEMPERATURE', '0.0'))
+AI_CHUNKING_TIMEOUT = int(os.getenv('RAG_AI_CHUNKING_TIMEOUT', str(LLM_TIMEOUT)))
+AI_CHUNKING_MAX_TOKENS = int(os.getenv('RAG_AI_CHUNKING_MAX_TOKENS', '512'))
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 OLLAMA_NUM_CTX = int(os.getenv('RAG_OLLAMA_NUM_CTX', '16384'))
 OPENAI_COMPATIBLE_BASE_URL = os.getenv('RAG_OPENAI_BASE_URL', 'http://127.0.0.1:8888/v1')
@@ -91,6 +98,8 @@ def validate_config() -> None:
         (QDRANT_UPSERT_BATCH_SIZE > 0, 'RAG_QDRANT_UPSERT_BATCH_SIZE deve ser maior que zero.'),
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
         (0 <= EVIDENCE_TOKEN_OVERLAP <= 1, 'RAG_EVIDENCE_TOKEN_OVERLAP deve estar entre zero e um.'),
+        (0 <= EVIDENCE_STEM_OVERLAP <= 1, 'RAG_EVIDENCE_STEM_OVERLAP deve estar entre zero e um.'),
+        (EVIDENCE_MIN_SHARED_STEMS > 0, 'RAG_EVIDENCE_MIN_SHARED_STEMS deve ser maior que zero.'),
         (OLLAMA_NUM_CTX >= 16384, 'RAG_OLLAMA_NUM_CTX deve ser maior ou igual a 16384.'),
         (FASTEMBED_PROVIDERS and all(provider in {'CUDAExecutionProvider', 'CPUExecutionProvider'} for provider in FASTEMBED_PROVIDERS), 'RAG_FASTEMBED_PROVIDERS deve conter somente CUDAExecutionProvider e/ou CPUExecutionProvider.'),
         (not FASTEMBED_REQUIRE_CUDA or 'CUDAExecutionProvider' in FASTEMBED_PROVIDERS, 'RAG_FASTEMBED_REQUIRE_CUDA=1 exige CUDAExecutionProvider em RAG_FASTEMBED_PROVIDERS.'),
@@ -109,6 +118,11 @@ def validate_config() -> None:
         (AI_CHUNKING_WINDOW_CHARS >= AI_CHUNKING_MIN_CHARS, 'RAG_AI_CHUNKING_WINDOW_CHARS deve ser maior ou igual a RAG_AI_CHUNKING_MIN_CHARS.'),
         (AI_CHUNKING_ATTEMPTS > 0, 'RAG_AI_CHUNKING_ATTEMPTS deve ser maior que zero.'),
         (bool(str(AI_CHUNKING_PROMPT_VERSION).strip()), 'RAG_AI_CHUNKING_PROMPT_VERSION não pode ser vazio.'),
+        (bool(AI_CHUNKING_PROVIDER), 'RAG_AI_CHUNKING_PROVIDER não pode ser vazio.'),
+        (bool(AI_CHUNKING_MODEL), 'RAG_AI_CHUNKING_MODEL não pode ser vazio.'),
+        (0 <= AI_CHUNKING_TEMPERATURE <= 2, 'RAG_AI_CHUNKING_TEMPERATURE deve estar entre zero e dois.'),
+        (AI_CHUNKING_TIMEOUT > 0, 'RAG_AI_CHUNKING_TIMEOUT deve ser maior que zero.'),
+        (AI_CHUNKING_MAX_TOKENS >= 0, 'RAG_AI_CHUNKING_MAX_TOKENS não pode ser negativo.'),
         (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL > 0, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL <= JURISPRUDENCIA_LIMIT, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL não pode exceder RAG_JURISPRUDENCIA_LIMIT.'),

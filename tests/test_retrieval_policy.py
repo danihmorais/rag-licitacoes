@@ -120,3 +120,53 @@ def test_retrieve_context_places_mandatory_sources_in_context(monkeypatch):
     assert [item.payload["source"] for item in sources] == ["lei14133", "tcu-manual-licitacoes"]
     assert "Lei nº 14.133/2021" in context_text
     assert "Manual de Licitações e Contratos do TCU" in context_text
+
+
+def _match_value(condition):
+    return getattr(getattr(condition, "match", None), "value", None)
+
+
+def test_qfilter_infers_federal_constitution_scope():
+    from query import qfilter
+
+    query_filter = qfilter(query="Segundo a Constituição, qual é o princípio aplicável à licitação?")
+    values = {_match_value(condition) for condition in query_filter.must}
+    keys = {condition.key for condition in query_filter.must}
+    assert "source_id" in keys
+    assert "cf1988" in values
+    assert "authority_level" in keys
+    assert "normative_rank" in keys
+
+
+def test_qfilter_infers_tcu_manual_and_jurisdiction():
+    from query import qfilter
+
+    query_filter = qfilter(query="Segundo o Manual de Licitações e Contratos do TCU, como fiscalizar?")
+    conditions = {condition.key: _match_value(condition) for condition in query_filter.must}
+    assert conditions["source_id"] == "tcu-manual-licitacoes"
+    assert conditions["tribunal"] == "tcu"
+    assert conditions["jurisdicao"] == "federal"
+
+
+def test_qfilter_infers_state_constitution_scope():
+    from query import qfilter
+
+    query_filter = qfilter(query="O que diz a Constituição do Estado de São Paulo sobre controle?")
+    conditions = {condition.key: _match_value(condition) for condition in query_filter.must}
+    assert conditions["source_id"] == "sp-const"
+    assert conditions["jurisdicao"] == "estadual_sp"
+
+
+def test_transition_regimes_select_current_and_historical_frameworks():
+    from query import _transition_regimes
+
+    regimes = _transition_regimes("O que mudou na nova lei de licitações em relação ao regime anterior?")
+    assert regimes == ("lei_14133", "lei_8666")
+
+
+def test_transition_retrieval_query_mentions_both_regimes():
+    from query import _retrieval_query
+
+    query = _retrieval_query("O que mudou na nova lei de licitações?")
+    assert "Lei 14.133/2021" in query
+    assert "Lei 8.666/1993" in query
