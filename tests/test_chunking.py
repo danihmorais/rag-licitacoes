@@ -226,6 +226,7 @@ def test_concatenated_jurisprudencia_falls_back_as_a_whole_when_one_unit_fails(m
     monkeypatch.setattr("config.AI_CHUNKING_REQUIRED", True)
     monkeypatch.setattr("config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL", True)
     monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+    monkeypatch.setattr("config.AI_CHUNKING_ATTEMPTS", 1)
 
     chunks = build_structural_chunks(
         text,
@@ -234,7 +235,7 @@ def test_concatenated_jurisprudencia_falls_back_as_a_whole_when_one_unit_fails(m
         metadata={"source_role": "jurisprudencia", "tipo_documento": "jurisprudencia"},
         semantic_provider=provider,
     )
-    assert provider.calls == 3
+    assert provider.calls == 2
     assert chunks
     assert all(item["chunking_method"] == "structural" for item in chunks)
     assert {item["unit_ref"] for item in chunks} == {
