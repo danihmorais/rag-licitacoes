@@ -35,7 +35,7 @@ def _find(text, rx, kind):
 
 def _headers_before(text,start):
     levels={}
-    level_patterns=(("parte",re.compile(r"^\s*PARTE\b.*$",re.I)),("livro",re.compile(r"^\s*LIVRO\b.*$",re.I)),("titulo",re.compile(r"^\s*T[IÍ]TULO\b.*$",re.I)),("capitulo",re.compile(r"^\s*CAP[IÍ]TULO\b.*$",re.I)),("secao",re.compile(r"^\s*SE[CÇ][AÃ]O\b.*$",re.I)),("subsecao",re.compile(r"^\s*SUBSE[CÇ][AÃ]O\b.*$",re.I)),("anexo",re.compile(r"^\s*ANEXO\b.*$",re.I)))
+    level_patterns=(("norma",re.compile(r"^\s*(?:LEI|DECRETO(?:-LEI)?|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO)\b.*$",re.I)),("parte",re.compile(r"^\s*PARTE\b.*$",re.I)),("livro",re.compile(r"^\s*LIVRO\b.*$",re.I)),("titulo",re.compile(r"^\s*T[IÍ]TULO\b.*$",re.I)),("capitulo",re.compile(r"^\s*CAP[IÍ]TULO\b.*$",re.I)),("secao",re.compile(r"^\s*SE[CÇ][AÃ]O\b.*$",re.I)),("subsecao",re.compile(r"^\s*SUBSE[CÇ][AÃ]O\b.*$",re.I)),("anexo",re.compile(r"^\s*ANEXO\b.*$",re.I)))
     for line in _ocr_structure_view(text[:start]).splitlines():
         normalized=re.sub(r"\s+"," ",line).strip()
         for key,pattern in level_patterns:
@@ -99,9 +99,11 @@ def _default_tokenizer():
 def _token_length_factory(tokenizer:Any|None)->Callable[[str],int]:
     if tokenizer is None:return len
     def length(text):
-        try:return len(getattr(tokenizer.encode(text),"ids",tokenizer.encode(text)))
+        try:
+            encoded=tokenizer.encode(text);return len(getattr(encoded,"ids",encoded))
         except Exception:
-            try:return len(getattr(tokenizer.encode_batch([text])[0],"ids",tokenizer.encode_batch([text])[0]))
+            try:
+                encoded=tokenizer.encode_batch([text])[0];return len(getattr(encoded,"ids",encoded))
             except Exception:return len(text)
     return length
 
@@ -115,6 +117,17 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
     for doc in splitter.create_documents([protected]):
         piece=_restore_abbreviation_dots(doc.page_content);start=int(doc.metadata.get("start_index",0));spans.append((piece,start,start+len(piece)))
     return spans
+
+def _split_text(text,max_size,overlap):
+    if max_size<=0:raise ValueError("max_size deve ser maior que zero")
+    effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text)
+    splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,separators=["\n\n","\n",". ","; ",": "," ",""])
+    return [_restore_abbreviation_dots(piece) for piece in splitter.split_text(protected) if piece.strip()]
+
+def _locate_piece(text,piece,expected_start,overlap):
+    expected_start=max(0,min(expected_start,len(text)))
+    if text[expected_start:expected_start+len(piece)]==piece:return expected_start,False
+    return expected_start,True
 
 def _token_count(text,tokenizer=None):return _token_length_factory(tokenizer)(text)
 def _truncate_words_to_tokens(text,budget,tokenizer=None):
@@ -140,11 +153,14 @@ def _excerpt_caput(caput,budget,tokenizer=None):
         else:hi=mid-1
     return _truncate_words_to_tokens((label+left+ellipsis+best).strip(),budget,tokenizer)
 
-def _fit_child_prefix(prefix,child_text,max_size,tokenizer=None):
+def _fit_child_prefix_info(prefix,child_text,max_size,tokenizer=None):
     if _token_count(prefix,tokenizer)+_token_count(child_text,tokenizer)+1<=max_size:return prefix,False
     header,_,caput=prefix.partition("\n");child_tokens=_token_count(child_text,tokenizer);prefix_budget=max(1,max_size-child_tokens-1)
     if _token_count(header,tokenizer)>prefix_budget:return _truncate_words_to_tokens(header,prefix_budget,tokenizer),True
     remaining=max(1,prefix_budget-_token_count(header,tokenizer)-1);return f"{header}\n{_excerpt_caput(caput.rstrip(),remaining,tokenizer)}".strip(),True
+
+def _fit_child_prefix(prefix,child_text,max_size,tokenizer=None):
+    fitted,_truncated=_fit_child_prefix_info(prefix,child_text,max_size,tokenizer);return fitted
 
 def _article_units(text):
     matches=[m for m in _merged_marker_matches(_ocr_structure_view(text),ARTIGO_RE,ARTIGO_INLINE_RE) if _article_marker_is_real_header(text,m)]
@@ -202,7 +218,7 @@ def _should_use_ai_semantic(full_text,metadata=None):
     metadata=metadata or {};role=str(metadata.get("source_role") or "").strip().casefold();typ=str(metadata.get("tipo_documento") or "").strip().casefold()
     return not _is_normative_document(full_text,metadata) and (role in SEMANTIC_SOURCE_ROLES or typ in SEMANTIC_DOCUMENT_TYPES or bool(JURISPRUDENCIA_RE.search(full_text)) or bool(re.search(r"(?im)^\s*FONTE:\s*.+\n\s*T[IÍ]TULO:\s*.+\n\s*DATA[_ ]PUBLICACAO\s*:",full_text)))
 def _build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider=None,tokenizer=None):
-    from llm.semantic_chunker import SemanticChunkingError,build_semantic_chunks
+    from llm.semantic_chunker import build_semantic_chunks
     unit_kind=str(metadata.get("tipo_documento") or "").strip() or ("jurisprudencia" if JURISPRUDENCIA_RE.search(full_text) else "materia");unit_ref=str(metadata.get("processo") or metadata.get("source_id") or "").strip() or None
     try:
         if semantic_provider is None:
@@ -219,14 +235,23 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
     tokenizer=tokenizer if tokenizer is not None else _default_tokenizer();units=_units(full_text)
     juris_units=_jurisprudencia_units(full_text)
     if juris_units:
+        semantic_labels={}
+        if _should_use_ai_semantic(full_text,metadata):
+            for u in juris_units:
+                unit_metadata=dict(metadata or {})
+                if u.get("ref"):unit_metadata["processo"]=u["ref"]
+                semantic=_build_ai_semantic_chunks(u["text"],max_size,unit_metadata,semantic_provider,tokenizer)
+                if semantic:semantic_labels[u.get("ref") or u["start"]]=semantic
         output=[];ref_counts={}
         for u in juris_units:
             ref=u.get("ref");ref_counts[ref]=ref_counts.get(ref,0)+1
         for u in juris_units:
             ref=u.get("ref");unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
+            labels=semantic_labels.get(ref or u["start"]) or []
+            first_label=labels[0] if labels else {}
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
-                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
+                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False,"semantic_topic":first_label.get("semantic_topic"),"semantic_section":first_label.get("semantic_section"),"semantic_source_units":first_label.get("semantic_source_units") or []})
         if output:return output
     if _should_use_ai_semantic(full_text,metadata) and not _is_normative_document(full_text,metadata):
         semantic=_build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider,tokenizer)
@@ -252,7 +277,7 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
             output.append({"text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False});caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
-            child_path=article_header+path_tail;raw_prefix=" > ".join(child_path)+"\n"+caput;child_prefix,prefix_truncated=_fit_child_prefix(raw_prefix,child_text,max_size,tokenizer);child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1);child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
+            child_path=article_header+path_tail;raw_prefix=" > ".join(child_path)+"\n"+caput;child_prefix,prefix_truncated=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer);child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1);child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
             for local_index,(piece,relative,_end) in enumerate(child_spans):
                 rendered=f"{child_prefix}\n{piece}".strip()
                 if _token_count(rendered,tokenizer)>max_size:
