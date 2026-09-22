@@ -453,6 +453,20 @@ def _build_ai_semantic_chunks(full_text, max_size, metadata, semantic_provider=N
             f'fallback estrutural aplicado: {exc}'
         )
         return []
+    except Exception as exc:
+        wrapped = SemanticChunkingError(
+            f'Falha ao inicializar/executar chunking semântico: {exc}'
+        )
+        if (
+            config.AI_CHUNKING_REQUIRED
+            and not config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL
+        ):
+            raise wrapped from exc
+        print(
+            'Aviso: provider de chunking semântico indisponível; '
+            f'fallback estrutural aplicado: {exc}'
+        )
+        return []
 
 
 def build_structural_chunks(full_text, max_size, overlap, *, metadata=None, semantic_provider=None):
