@@ -60,13 +60,46 @@ def _article_children(article_text):
         return article_text.strip(), []
     caput = article_text[:matches[0].start()].strip()
     children = []
+    current_level1 = None
+    current_level2 = None
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(article_text)
         value = article_text[match.start():end].strip()
         ref = match.group(1).strip()
-        if value:
-            kind = 'paragrafo' if ref.startswith('§') else 'inciso' if re.match(r'^[IVXLCDM]+', ref, re.I) else 'alinea' if re.match(r'^[a-z]', ref, re.I) else 'item'
-            children.append((kind, ref, value, match.start()))
+        if not value:
+            continue
+
+        kind = (
+            'paragrafo'
+            if ref.startswith('§')
+            else 'inciso'
+            if re.match(r'^[IVXLCDM]+', ref, re.I)
+            else 'alinea'
+            if re.match(r'^[a-z]', ref, re.I)
+            else 'item'
+        )
+
+        if kind in {'paragrafo', 'inciso'}:
+            # Parágrafo e inciso são níveis de primeiro grau e reiniciam
+            # os descendentes (alíneas e itens) do bloco anterior.
+            current_level1 = ref
+            current_level2 = None
+            path_tail = [ref]
+        elif kind == 'alinea':
+            # A alínea pertence ao último parágrafo/inciso visto.
+            current_level2 = ref
+            path_tail = [ref] if current_level1 is None else [current_level1, ref]
+        else:
+            # O item pertence à última alínea. Se o texto vier sem alínea,
+            # preservamos a melhor hierarquia disponível como fallback.
+            if current_level2 is not None:
+                path_tail = [x for x in (current_level1, current_level2, ref) if x]
+            elif current_level1 is not None:
+                path_tail = [current_level1, ref]
+            else:
+                path_tail = [ref]
+
+        children.append((kind, ref, value, match.start(), path_tail))
     return caput, children
 
 
@@ -265,9 +298,9 @@ def build_structural_chunks(full_text, max_size, overlap):
             caput_index += 1
 
         next_index = max(1, caput_index)
-        for child_index, (kind, child_ref, child_text, child_start) in enumerate(children):
-            child_path = article_header + [f'{child_ref}']
-            child_prefix = f"{' > '.join(article_header)} > {child_ref}\n{caput}".strip()
+        for child_index, (kind, child_ref, child_text, child_start, child_path_tail) in enumerate(children):
+            child_path = article_header + child_path_tail
+            child_prefix = f"{' > '.join(child_path)}\n{caput}".strip()
             child_prefix = _fit_child_prefix(child_prefix, child_text, max_size)
             pieces = _split_child(child_text, child_prefix, max_size, overlap)
             position = 0
