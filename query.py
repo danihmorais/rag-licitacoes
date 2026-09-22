@@ -513,42 +513,85 @@ def rerank(reranker, query, points, filters=None, limit=None):
 
 
 def expand_context(client, points):
-    """Expande evidências pelos chunks vizinhos da mesma unidade jurídica."""
-    if not points or config.CONTEXT_NEIGHBORS <= 0:
+    """Expande evidências pelos chunks vizinhos da mesma unidade jurídica.
+
+    Para artigos, o primeiro chunk (caput, chunk_index=0) é sempre trazido,
+    mesmo quando a evidência recuperada está distante dele.
+    """
+    if not points:
         return points
     groups = {}
     selected = {}
     for point in points:
         payload = point.payload
         key = (payload.get('source'), payload.get('unit_id'))
-        groups.setdefault(key, set()).add(int(payload.get('chunk_index', 0)))
+        groups.setdefault(key, []).append(point)
         payload['_context_only'] = False
         payload['_context_priority'] = float(payload.get('_evidence_score', 0.0))
         selected[point.id] = point
-    for (source, unit_id), indexes in groups.items():
+
+    for (source, unit_id), group_points in groups.items():
         if not source or not unit_id:
             continue
-        query_filter = models.Filter(must=[models.FieldCondition(key='source', match=models.MatchValue(value=source)), models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id))])
+        is_article = any(point.payload.get('unit_kind') == 'artigo' for point in group_points)
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(key='source', match=models.MatchValue(value=source)),
+                models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id)),
+            ]
+        )
         offset = None
         while True:
-            neighbors, offset = client.scroll(collection_name=config.COLLECTION_NAME, scroll_filter=query_filter, limit=256, offset=offset, with_payload=True, with_vectors=False)
+            neighbors, offset = client.scroll(
+                collection_name=config.COLLECTION_NAME,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
             for neighbor in neighbors:
                 index = int(neighbor.payload.get('chunk_index', 0))
-                parent_scores = [float(point.payload.get('_evidence_score', 0.0)) for point in points if point.payload.get('source') == source and point.payload.get('unit_id') == unit_id and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS]
-                if not parent_scores:
+                distances = [
+                    abs(index - int(point.payload.get('chunk_index', 0)))
+                    for point in group_points
+                ]
+                within_neighbor_window = any(distance <= config.CONTEXT_NEIGHBORS for distance in distances)
+                is_forced_article_caput = is_article and index == 0
+                if not within_neighbor_window and not is_forced_article_caput:
                     continue
+
+                priority = max(
+                    float(point.payload.get('_evidence_score', 0.0))
+                    for point in group_points
+                )
                 existing = selected.get(neighbor.id)
                 if existing is not None:
-                    existing.payload['_context_priority'] = max(float(existing.payload.get('_context_priority', 0.0)), max(parent_scores))
+                    existing.payload['_context_priority'] = max(
+                        float(existing.payload.get('_context_priority', 0.0)),
+                        priority,
+                    )
                     continue
+
                 neighbor.payload['_context_only'] = True
-                neighbor.payload['_context_priority'] = max(parent_scores)
-                neighbor.payload['_context_distance'] = min(abs(index - int(point.payload.get('chunk_index', 0))) for point in points if point.payload.get('source') == source and point.payload.get('unit_id') == unit_id and abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS)
+                neighbor.payload['_context_priority'] = priority
+                neighbor.payload['_context_distance'] = min(distances)
                 selected[neighbor.id] = neighbor
             if offset is None:
                 break
+
     expanded = list(selected.values())
-    expanded.sort(key=lambda p: (1 if p.payload.get('_context_only', False) else 0, -float(p.payload.get('_evidence_score', p.payload.get('_context_priority', 0.0))), -float(p.payload.get('_context_priority', 0.0)), int(p.payload.get('_context_distance', 0)), p.payload.get('source') or '', p.payload.get('unit_id') or '', int(p.payload.get('chunk_index', 0))))
+    expanded.sort(
+        key=lambda p: (
+            1 if p.payload.get('_context_only', False) else 0,
+            -float(p.payload.get('_evidence_score', p.payload.get('_context_priority', 0.0))),
+            -float(p.payload.get('_context_priority', 0.0)),
+            int(p.payload.get('_context_distance', 0)),
+            p.payload.get('source') or '',
+            p.payload.get('unit_id') or '',
+            int(p.payload.get('chunk_index', 0)),
+        )
+    )
     return expanded
 
 
