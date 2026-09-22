@@ -415,6 +415,42 @@ def _evidence_tokens(text):
     }
 
 
+EVIDENCE_STEM_SUFFIXES = (
+    'amentos', 'imentos', 'adores', 'adoras', 'idades',
+    'amento', 'imento', 'ador', 'adora', 'idade',
+    'acoes', 'icoes', 'ucoes', 'acao', 'icao', 'ucao',
+    'mente', 'ando', 'endo', 'indo', 'ar', 'er', 'ir',
+    'os', 'as', 'es', 's',
+)
+
+
+def _evidence_stem(token):
+    value = token
+    for suffix in EVIDENCE_STEM_SUFFIXES:
+        if value.endswith(suffix) and len(value) - len(suffix) >= 4:
+            return value[:-len(suffix)]
+    return value
+
+
+def _evidence_stems(text):
+    return {_evidence_stem(token) for token in _evidence_tokens(text)}
+
+
+def _evidence_overlap(factual, cited_text):
+    factual_tokens = _evidence_tokens(factual)
+    if not factual_tokens:
+        return 1.0, 0.0, 0
+    cited_tokens = _evidence_tokens(cited_text)
+    direct_shared = factual_tokens & cited_tokens
+    direct_overlap = len(direct_shared) / len(factual_tokens)
+
+    factual_stems = {_evidence_stem(token) for token in factual_tokens}
+    cited_stems = {_evidence_stem(token) for token in cited_tokens}
+    stem_shared = factual_stems & cited_stems
+    stem_overlap = len(stem_shared) / len(factual_stems)
+    return direct_overlap, stem_overlap, len(stem_shared)
+
+
 def _normalized_identifier(value):
     return re.sub(r'[^a-z0-9]+', '', _normalize_query_text(value))
 
@@ -482,11 +518,18 @@ def validate_generated_answer(answer, sources):
                         f'Identificador jurídico não sustentado pela fonte citada: {identifier}.'
                     )
         if len(tokens) >= 3:
-            cited_tokens = _evidence_tokens(cited_text)
-            overlap = len(tokens & cited_tokens) / max(1, len(tokens))
-            if overlap < config.EVIDENCE_TOKEN_OVERLAP:
+            direct_overlap, stem_overlap, shared_stems = _evidence_overlap(factual, cited_text)
+            if (
+                direct_overlap < config.EVIDENCE_TOKEN_OVERLAP
+                and not (
+                    shared_stems >= config.EVIDENCE_MIN_SHARED_STEMS
+                    and stem_overlap >= config.EVIDENCE_STEM_OVERLAP
+                )
+            ):
                 raise EvidenceGateError(
-                    f'Citação insuficiente para a afirmação: sobreposição lexical={overlap:.3f}.'
+                    'Citação insuficiente para a afirmação: '
+                    f'sobreposição direta={direct_overlap:.3f}, '
+                    f'stem={stem_overlap:.3f}, compartilhamentos={shared_stems}.'
                 )
     return True
 
