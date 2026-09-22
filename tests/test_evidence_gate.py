@@ -80,3 +80,15 @@ def test_evidence_gate_accepts_citation_on_following_line():
         "A contratação deve observar planejamento e eficiência.\n[F1]",
         [source],
     )
+
+
+def test_evidence_gate_accepts_inflectional_paraphrase():
+    source = make_point(
+        "lei14133",
+        "artigo:1",
+        "A Administração deverá planejar, documentar, controlar e fiscalizar continuamente os procedimentos, garantindo transparência e eficiência.",
+    )
+    assert validate_generated_answer(
+        "A autoridade administrativa deve realizar o planejamento, a documentação, o controle e a fiscalização contínua dos procedimentos, assegurando transparência e eficiência. [F1]",
+        [source],
+    )
