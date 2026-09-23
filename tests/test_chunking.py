@@ -1,5 +1,6 @@
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,7 +29,7 @@ class TruncatingTokenizer:
         tokens = text.split()
         if self.truncated:
             tokens = tokens[:self.max_length]
-        return FakeEncoding(tokens)
+        return SimpleNamespace(ids=tokens)
 
 
 class FakeSemanticProvider:
