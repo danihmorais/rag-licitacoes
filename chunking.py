@@ -92,12 +92,17 @@ def _default_tokenizer():
     try:
         from fastembed import TextEmbedding
         model=TextEmbedding(model_name=config.DENSE_MODEL,max_length=config.DENSE_MAX_TOKENS,providers=list(config.FASTEMBED_PROVIDERS))
-        return getattr(getattr(model,"model",None),"tokenizer",None)
+        tokenizer=getattr(getattr(model,"model",None),"tokenizer",None)
+        if tokenizer is not None and hasattr(tokenizer,"no_truncation"):
+            tokenizer.no_truncation()
+        return tokenizer
     except Exception as exc:
         print(f"Aviso: tokenizer do embedding indisponível no chunking; fallback por caracteres: {exc}");return None
 
 def _token_length_factory(tokenizer:Any|None)->Callable[[str],int]:
     if tokenizer is None:return len
+    if hasattr(tokenizer,"no_truncation"):
+        tokenizer.no_truncation()
     def length(text):
         try:
             encoded=tokenizer.encode(text);return len(getattr(encoded,"ids",encoded))
@@ -117,17 +122,6 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
     for doc in splitter.create_documents([protected]):
         piece=_restore_abbreviation_dots(doc.page_content);start=int(doc.metadata.get("start_index",0));spans.append((piece,start,start+len(piece)))
     return spans
-
-def _split_text(text,max_size,overlap):
-    if max_size<=0:raise ValueError("max_size deve ser maior que zero")
-    effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text);splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,separators=["\n\n","\n",". ","; ",": "," ",""])
-    return [_restore_abbreviation_dots(piece) for piece in splitter.split_text(protected) if piece.strip()]
-
-def _locate_piece(text,piece,expected_start,overlap):
-    expected_start=max(0,min(expected_start,len(text)));first=text.find(piece,expected_start)
-    if first<0:return expected_start,True
-    second=text.find(piece,first+1)
-    return first,second>=0
 
 def _token_count(text,tokenizer=None):return _token_length_factory(tokenizer)(text)
 def _truncate_words_to_tokens(text,budget,tokenizer=None):
@@ -231,24 +225,21 @@ def _build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider=None
 def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_provider=None,tokenizer=None):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
     if overlap<0 or overlap>=max_size:raise ValueError("overlap deve ser maior ou igual a zero e menor que max_size")
-    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer()
+    if tokenizer is None:
+        tokenizer=_default_tokenizer()
+    elif hasattr(tokenizer,"no_truncation"):
+        tokenizer.no_truncation()
     units=_units(full_text)
     juris_units=_jurisprudencia_units(full_text)
     if juris_units:
         semantic_chunks={}
-        semantic_failed=False
         if _should_use_ai_semantic(full_text,metadata):
             for u in juris_units:
                 unit_metadata=dict(metadata or {})
                 if u.get("ref"):unit_metadata["processo"]=u["ref"]
                 semantic=_build_ai_semantic_chunks(u["text"],max_size,unit_metadata,semantic_provider,tokenizer)
-                if semantic is None:
-                    semantic_failed=True
-                    continue
-                if semantic:
+                if semantic is not None:
                     semantic_chunks[u.get("ref") or u["start"]]=semantic
-            if semantic_failed:
-                semantic_chunks={}
         output=[];ref_counts={}
         for u in juris_units:
             ref=u.get("ref");ref_counts[ref]=ref_counts.get(ref,0)+1

@@ -328,7 +328,7 @@ def document_id_for(document, metadata=None):
     return f'{source_id}::{document.stem}'
 
 
-def build_chunks(document, pages, page_records=None):
+def build_chunks(document, pages, page_records=None, *, tokenizer=None):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     doc_id = document_id_for(document, meta)
@@ -344,7 +344,13 @@ def build_chunks(document, pages, page_records=None):
     ]
     prefix = embedding_metadata_prefix(meta)
     output = []
-    for chunk in build_structural_chunks(full, config.CHUNK_SIZE, config.CHUNK_OVERLAP, metadata=meta):
+    for chunk in build_structural_chunks(
+        full,
+        config.CHUNK_SIZE,
+        config.CHUNK_OVERLAP,
+        metadata=meta,
+        tokenizer=tokenizer,
+    ):
         if not chunk['text'].strip():
             continue
         start = chunk['start']
@@ -618,6 +624,9 @@ def main():
         raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
 
     dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
+    dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
+    if dense_tokenizer is None:
+        raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
     active_names = {document_id_for(document) for document in files}
@@ -656,7 +665,7 @@ def main():
         try:
             page_records = extract_page_records(document)
             pages = [record['text'] for record in page_records]
-            chunks = build_chunks(document, pages, page_records=page_records)
+            chunks = build_chunks(document, pages, page_records=page_records, tokenizer=dense_tokenizer)
             if not chunks:
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)

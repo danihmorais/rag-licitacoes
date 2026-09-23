@@ -7,6 +7,29 @@ from chunking import build_structural_chunks
 from llm.semantic_chunker import SemanticChunkingError, _validate_groups
 
 
+class TruncatingTokenizer:
+    def __init__(self, max_length=512):
+        self.max_length = max_length
+        self.truncated = True
+
+    @property
+    def truncation(self):
+        return {"max_length": self.max_length} if self.truncated else {}
+
+    def no_truncation(self):
+        self.truncated = False
+
+    def enable_truncation(self, max_length=512):
+        self.max_length = max_length
+        self.truncated = True
+
+    def encode(self, text):
+        tokens = text.split()
+        if self.truncated:
+            tokens = tokens[:self.max_length]
+        return FakeEncoding(tokens)
+
+
 class FakeSemanticProvider:
     model = "fake-semantic"
 
@@ -36,6 +59,36 @@ class ExplodingProvider:
 
 
 
+def test_default_tokenizer_disables_fastembed_truncation(monkeypatch):
+    import fastembed
+
+    tokenizer = TruncatingTokenizer()
+    text = " ".join(["palavra"] * 2000)
+
+    class FakeTextEmbedding:
+        def __init__(self, **kwargs):
+            self.model = SimpleNamespace(tokenizer=tokenizer)
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", FakeTextEmbedding)
+    chunking._default_tokenizer.cache_clear()
+    try:
+        loaded = chunking._default_tokenizer()
+        assert loaded is tokenizer
+        assert len(loaded.encode(text).ids) == 2000
+    finally:
+        chunking._default_tokenizer.cache_clear()
+
+
+def test_truncating_tokenizer_is_disabled_before_chunk_sizing():
+    tokenizer = TruncatingTokenizer()
+    text = " ".join(["palavra"] * 2000)
+    chunks = chunking.build_structural_chunks(text, 1000, 0, tokenizer=tokenizer)
+
+    assert len(chunks) > 1
+    assert chunking._token_count(text, tokenizer) == 2000
+    assert all(chunking._token_count(item["text"], tokenizer) <= 1000 for item in chunks)
+
+
 def test_long_unit_is_not_duplicated():
     text='Art. 1º '+'Texto juridico. '*200+'\n\nArt. 2º Regra.\n\nArt. 3º Regra.\n\nArt. 4º Regra.'
     xs=[x for x in build_structural_chunks(text,500,50) if x['unit_ref'].startswith('Art. 1')]
@@ -57,12 +110,6 @@ def test_child_chunking_handles_long_caput_with_default_overlap():
     assert children
     assert all(len(item['text']) <= 1000 for item in children)
     assert all(' > § 1º' in item['text'] for item in children)
-
-
-def test_split_text_clamps_overlap_when_available_chunk_is_smaller():
-    from chunking import _split_text
-    xs = _split_text('abcdef', 1, 150)
-    assert xs == list('abcdef')
 
 
 def test_article_children_preserve_parent_hierarchy():
@@ -195,7 +242,7 @@ def test_semantic_chunking_failure_falls_back_to_structural(monkeypatch):
     assert all(item["segment_kind"] == "generic" for item in chunks)
 
 
-def test_concatenated_jurisprudencia_falls_back_as_a_whole_when_one_unit_fails(monkeypatch):
+def test_concatenated_jurisprudencia_falls_back_only_for_failed_unit(monkeypatch):
     class FailOnSecondCallProvider(FakeSemanticProvider):
         def generate(self, system_prompt, user_prompt):
             self.calls += 1
@@ -237,11 +284,20 @@ def test_concatenated_jurisprudencia_falls_back_as_a_whole_when_one_unit_fails(m
     )
     assert provider.calls == 2
     assert chunks
-    assert all(item["chunking_method"] == "structural" for item in chunks)
     assert {item["unit_ref"] for item in chunks} == {
         "TC 000.100/2026",
         "REsp 000200/SP",
     }
+    assert any(
+        item["unit_ref"] == "TC 000.100/2026"
+        and item["chunking_method"] == "ai_semantic"
+        for item in chunks
+    )
+    assert all(
+        item["chunking_method"] == "structural"
+        for item in chunks
+        if item["unit_ref"] == "REsp 000200/SP"
+    )
 
 
 def test_semantic_provider_initialization_failure_falls_back_to_structural(monkeypatch):
@@ -384,30 +440,6 @@ def test_child_prefix_keeps_both_ends_of_long_caput():
     assert "INICIO DA REGRA" in prefix
     assert "CONDICAO FINAL OBRIGATORIA" in prefix
 
-
-def test_split_text_does_not_split_after_common_legal_abbreviation():
-    from chunking import _split_text
-
-    text = "Art. 1º A regra inicial. " + ("Conteúdo jurídico complementar. " * 30)
-    pieces = _split_text(text, 30, 0)
-    assert all(piece.strip() != "Art." for piece in pieces)
-    assert "Art. 1º" in pieces[0]
-
-
-def test_locator_does_not_jump_to_repeated_text_before_expected_position():
-    from chunking import _locate_piece
-
-    text = "Parágrafo único. primeiro bloco. Parágrafo único. segundo bloco."
-    first = text.find("Parágrafo único.")
-    second = text.find("Parágrafo único.", first + 1)
-    found, uncertain = _locate_piece(
-        text,
-        "Parágrafo único.",
-        first + 4,
-        second - first,
-    )
-    assert found == second
-    assert uncertain is False
 
 def test_ocr_structural_markers_are_normalized_without_changing_source_text():
     from chunking import _article_children, _article_units
