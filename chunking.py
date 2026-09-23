@@ -231,31 +231,35 @@ def _build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider=None
 def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_provider=None,tokenizer=None):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
     if overlap<0 or overlap>=max_size:raise ValueError("overlap deve ser maior ou igual a zero e menor que max_size")
-    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer();units=_units(full_text);juris_units=_jurisprudencia_units(full_text    if juris_units:
-        semantic_chunks = {}
-        semantic_failed = False
+    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer()
+    units=_units(full_text)
+    juris_units=_jurisprudencia_units(full_text)
+    if juris_units:
+        semantic_chunks={}
+        semantic_failed=False
         if _should_use_ai_semantic(full_text,metadata):
             for u in juris_units:
                 unit_metadata=dict(metadata or {})
                 if u.get("ref"):unit_metadata["processo"]=u["ref"]
                 semantic=_build_ai_semantic_chunks(u["text"],max_size,unit_metadata,semantic_provider,tokenizer)
                 if semantic is None:
-                    semantic_failed = True
+                    semantic_failed=True
                     continue
                 if semantic:
-                    semantic_chunks[u.get("ref") or u["start"]] = semantic
+                    semantic_chunks[u.get("ref") or u["start"]]=semantic
             if semantic_failed:
-                semantic_chunks = {}
+                semantic_chunks={}
         output=[];ref_counts={}
         for u in juris_units:
             ref=u.get("ref");ref_counts[ref]=ref_counts.get(ref,0)+1
         for u in juris_units:
-            ref=u.get("ref");unit_key=ref or u["start"];unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
+            ref=u.get("ref")
+            unit_key=ref or u["start"]
+            unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
             labels=semantic_chunks.get(unit_key)
             if labels:
                 for semantic in labels:
                     item=dict(semantic)
-                    item["text"]=item["text"]
                     item["page_content"]=item["text"]
                     item["full_unit_text"]=u["text"] if _token_count(u["text"],tokenizer)<=max_size else None
                     item["unit_kind"]="jurisprudencia"
@@ -287,26 +291,36 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
         if ref:ref_counts[(unit["kind"],ref)]=ref_counts.get((unit["kind"],ref),0)+1
     for unit in units:
         if not unit["text"].strip():continue
-        ref=unit.get("ref");unit_id=f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}"+(f":{unit['start']}" if ref and ref_counts.get((unit['kind'],ref),0)>1 else "");headers=list(unit.get("headers") or [])
+        ref=unit.get("ref");unit_id=f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}"+(f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
+        headers=list(unit.get("headers") or [])
         if unit["kind"]!="artigo":
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
                 output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False})
             continue
-        caput,children=_article_children(unit["text"]);article_ref=ref or "Artigo";article_header=[*headers,article_ref]
+        caput,children=_article_children(unit["text"])
+        article_ref=ref or "Artigo"
+        article_header=[*headers,article_ref]
         if not children:
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
                 output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
             continue
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False});caput_index+=1
+            output.append({"text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
+            caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
-            child_path=article_header+path_tail;raw_prefix=" > ".join(child_path)+"\n"+caput;child_prefix,prefix_truncated=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer);child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1);child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
+            child_path=article_header+path_tail
+            raw_prefix=" > ".join(child_path)+"\n"+caput
+            child_prefix,prefix_truncated=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer)
+            child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1)
+            child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
             for local_index,(piece,relative,_end) in enumerate(child_spans):
                 rendered=f"{child_prefix}\n{piece}".strip()
                 if _token_count(rendered,tokenizer)>max_size:
-                    piece=_truncate_words_to_tokens(piece,max(1,max_size-_token_count(child_prefix+"\n",tokenizer)),tokenizer);rendered=f"{child_prefix}\n{piece}".strip();prefix_truncated=True
+                    piece=_truncate_words_to_tokens(piece,max(1,max_size-_token_count(child_prefix+"\n",tokenizer)),tokenizer)
+                    rendered=f"{child_prefix}\n{piece}".strip()
+                    prefix_truncated=True
                 output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":prefix_truncated})
             next_index+=len(child_spans)
     return output
