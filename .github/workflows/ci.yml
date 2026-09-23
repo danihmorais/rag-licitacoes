@@ -34,8 +34,7 @@ jobs:
       - name: Instalar dependências de teste
         run: |
           python -m pip install --upgrade pip
-          grep -v '^fastembed-gpu==' requirements.txt > /tmp/requirements-ci.txt
-          python -m pip install --disable-pip-version-check -r /tmp/requirements-ci.txt
+          python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Instalar runtime do OCR
         run: |
           sudo apt-get update
