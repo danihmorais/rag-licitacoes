@@ -226,28 +226,57 @@ def _build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider=None
         return build_semantic_chunks(full_text,max_size,unit_kind=unit_kind,unit_ref=unit_ref,provider=semantic_provider,window_chars=config.AI_CHUNKING_WINDOW_CHARS,min_chars=config.AI_CHUNKING_MIN_CHARS,attempts=config.AI_CHUNKING_ATTEMPTS,prompt_version=config.AI_CHUNKING_PROMPT_VERSION,tokenizer=tokenizer)
     except Exception as exc:
         if config.AI_CHUNKING_REQUIRED and not config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL:raise
-        print(f"Aviso: chunking semântico indisponível; fallback estrutural aplicado: {exc}");return []
+        print(f"Aviso: chunking semântico indisponível; fallback estrutural aplicado: {exc}");return None
 
 def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_provider=None,tokenizer=None):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
     if overlap<0 or overlap>=max_size:raise ValueError("overlap deve ser maior ou igual a zero e menor que max_size")
-    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer();units=_units(full_text);juris_units=_jurisprudencia_units(full_text)
-    if juris_units:
-        semantic_labels={}
+    tokenizer=tokenizer if tokenizer is not None else _default_tokenizer();units=_units(full_text);juris_units=_jurisprudencia_units(full_text    if juris_units:
+        semantic_chunks = {}
+        semantic_failed = False
         if _should_use_ai_semantic(full_text,metadata):
             for u in juris_units:
                 unit_metadata=dict(metadata or {})
                 if u.get("ref"):unit_metadata["processo"]=u["ref"]
                 semantic=_build_ai_semantic_chunks(u["text"],max_size,unit_metadata,semantic_provider,tokenizer)
-                if semantic:semantic_labels[u.get("ref") or u["start"]]=semantic
+                if semantic is None:
+                    semantic_failed = True
+                    continue
+                if semantic:
+                    semantic_chunks[u.get("ref") or u["start"]] = semantic
+            if semantic_failed:
+                semantic_chunks = {}
         output=[];ref_counts={}
         for u in juris_units:
             ref=u.get("ref");ref_counts[ref]=ref_counts.get(ref,0)+1
         for u in juris_units:
-            ref=u.get("ref");unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "");labels=semantic_labels.get(ref or u["start"]) or [];first_label=labels[0] if labels else {}
+            ref=u.get("ref");unit_key=ref or u["start"];unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
+            labels=semantic_chunks.get(unit_key)
+            if labels:
+                for semantic in labels:
+                    item=dict(semantic)
+                    item["text"]=item["text"]
+                    item["page_content"]=item["text"]
+                    item["full_unit_text"]=u["text"] if _token_count(u["text"],tokenizer)<=max_size else None
+                    item["unit_kind"]="jurisprudencia"
+                    item["unit_ref"]=ref
+                    item["unit_id"]=unit_id
+                    item["chunk_index"]=len(output)
+                    item["unit_length"]=len(u["text"])
+                    item["start"]=u["start"]+int(semantic.get("start",0))
+                    item["page_uncertain"]=False
+                    item["hierarchy_headers"]=[]
+                    item["hierarchy_path"]=list(item.get("hierarchy_path") or [])
+                    item["parent_caput"]=None
+                    item["child_index"]=None
+                    item["segment_kind"]="semantic"
+                    item["segment_ref"]=item.get("semantic_topic") or item.get("segment_ref")
+                    item["chunking_method"]="ai_semantic"
+                    output.append(item)
+                continue
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
-                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"ai_semantic" if labels else "structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False,"semantic_topic":first_label.get("semantic_topic"),"semantic_section":first_label.get("semantic_section"),"semantic_source_units":first_label.get("semantic_source_units") or []})
+                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
         if output:return output
     if _should_use_ai_semantic(full_text,metadata) and not _is_normative_document(full_text,metadata):
         semantic=_build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider,tokenizer)
