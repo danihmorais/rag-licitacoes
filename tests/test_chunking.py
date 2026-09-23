@@ -3,6 +3,7 @@ import re
 
 import pytest
 
+import chunking
 from chunking import build_structural_chunks
 from llm.semantic_chunker import SemanticChunkingError, _validate_groups
 
