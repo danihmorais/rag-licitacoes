@@ -84,6 +84,8 @@ RAG_RERANK_AUTHORITY_WEIGHT=0.20
 RAG_RERANK_JURISDICTION_WEIGHT=0.12
 ~~~
 
+O tamanho configurado e um teto desejado. A ingestao reduz o chunk efetivo para reservar tokens aos metadados, ao prefixo E5 e a hierarquia juridica. A validacao final rejeita qualquer entrada que ainda exceda `RAG_DENSE_MAX_TOKENS`.
+
 ### Integridade da evidência
 
 Cada fragmento pode carregar, entre outros:

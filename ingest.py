@@ -343,11 +343,43 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
         for index, text in enumerate(pages, 1)
     ]
     prefix = embedding_metadata_prefix(meta)
+    # The structural splitter budgets only its own text. The dense model also
+    # receives the metadata prefix, the E5 passage prefix, and the hierarchy
+    # label added below. Reserve those tokens before splitting so the configured
+    # chunk size cannot exceed the embedding model's real input limit.
+    if tokenizer is not None and hasattr(tokenizer, 'no_truncation'):
+        tokenizer.no_truncation()
+
+    def token_count(text):
+        if tokenizer is None:
+            return len(text)
+        try:
+            encoded = tokenizer.encode(text)
+            return len(getattr(encoded, 'ids', encoded))
+        except Exception:
+            try:
+                encoded = tokenizer.encode_batch([text])[0]
+                return len(getattr(encoded, 'ids', encoded))
+            except Exception as exc:
+                raise RuntimeError('Could not safely count embedding-prefix tokens.') from exc
+
+    embedding_overhead = token_count('passage: ' + prefix)
+    hierarchy_reserve = min(64, max(0, config.DENSE_MAX_TOKENS // 8))
+    chunk_size = min(
+        config.CHUNK_SIZE,
+        config.DENSE_MAX_TOKENS - embedding_overhead - hierarchy_reserve,
+    )
+    if chunk_size <= 0:
+        raise RuntimeError(
+            'O prefixo de metadados excede o limite de tokens do embedding; '
+            'reduza os metadados da fonte ou aumente RAG_DENSE_MAX_TOKENS.'
+        )
+    chunk_overlap = min(config.CHUNK_OVERLAP, chunk_size - 1)
     output = []
     for chunk in build_structural_chunks(
         full,
-        config.CHUNK_SIZE,
-        config.CHUNK_OVERLAP,
+        chunk_size,
+        chunk_overlap,
         metadata=meta,
         tokenizer=tokenizer,
     ):
