@@ -386,7 +386,9 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
         if not chunk['text'].strip():
             continue
         start = chunk['start']
-        end = start + len(chunk['text'])
+        # `end` é o fim do trecho NA FONTE; em chunks filhos `text` inclui o prefixo hierárquico e
+        # len(text) superestimaria page_end perto de quebras de página.
+        end = chunk.get('end', start + len(chunk['text']))
         page_start = _page(start, starts)
         page_end = _page(max(start, end - 1), starts)
         page_details = [
@@ -408,12 +410,23 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
             sum(item['extraction_confidence'] for item in page_details) / len(page_details)
             if page_details else 0.0
         )
-        hierarchy = chunk.get('hierarchy_path') or []
-        hierarchy_label = ' > '.join(str(item) for item in hierarchy)
-        page_content = prefix
-        if hierarchy_label:
-            page_content += f' [HIERARQUIA: {hierarchy_label}]'
-        page_content += '\n' + chunk.get('page_content', chunk['text'])
+        hierarchy = [str(item) for item in (chunk.get('hierarchy_path') or [])]
+        body = chunk.get('page_content', chunk['text'])
+
+        def compose_page_content(parts):
+            label = ' > '.join(parts)
+            content = prefix
+            # Chunks filhos já carregam o caminho hierárquico no próprio texto; repeti-lo gasta tokens à toa.
+            if label and not body.startswith(label):
+                content += f' [HIERARQUIA: {label}]'
+            return content + '\n' + body
+
+        page_content = compose_page_content(hierarchy)
+        # Títulos de capítulo/seção enriquecem a busca, mas o embedding trunca em silêncio acima de
+        # DENSE_MAX_TOKENS: descarta primeiro o nível mais genérico (título da norma) até caber.
+        while len(hierarchy) > 1 and token_count('passage: ' + page_content) > config.DENSE_MAX_TOKENS:
+            hierarchy = hierarchy[1:]
+            page_content = compose_page_content(hierarchy)
         embedding_text = 'passage: ' + page_content
         output.append({
             **chunk,

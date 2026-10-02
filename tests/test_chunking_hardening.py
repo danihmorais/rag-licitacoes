@@ -28,7 +28,8 @@ Art. 2º Outro texto.
 """
     units = chunking._article_units(text)
     assert units[0]["headers"] == ["LIVRO I", "TÍTULO I", "CAPÍTULO I", "SEÇÃO I", "SUBSEÇÃO I"]
-    assert units[1]["headers"] == ["LIVRO I", "TÍTULO I", "CAPÍTULO I", "SEÇÃO II", "SUBSEÇÃO I"]
+    # SEÇÃO II encerra a SUBSEÇÃO I da seção anterior: o nível inferior não pode ser herdado.
+    assert units[1]["headers"] == ["LIVRO I", "TÍTULO I", "CAPÍTULO I", "SEÇÃO II"]
 
 
 def test_paragrafo_emendado_is_structural_unit():

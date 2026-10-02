@@ -5,8 +5,12 @@ from typing import Any, Callable
 import config
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-ARTIGO_RE = re.compile(r"^[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?)" r"(?=\s|$)", re.IGNORECASE | re.MULTILINE)
-ARTIGO_INLINE_RE = re.compile(r"(?<![\w])[ \t]*(Art(?:igo)?\.?[ \t]+\d+[ºo°]?(?:-[A-Z])?\.?)" r"(?=\s|$)", re.IGNORECASE)
+# Número de artigo: 5, 5º, 5-A, 337-AB, 1.045 (milhar). O ponto final faz parte da referência.
+_ART_NUMBER = r"(?:\d{1,3}(?:\.\d{3})+|\d+)[ºo°]?(?:-[A-Z]{1,2})?\.?"
+ARTIGO_RE = re.compile(rf"^[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)", re.IGNORECASE | re.MULTILINE)
+ARTIGO_INLINE_RE = re.compile(rf"(?<![\w])[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)", re.IGNORECASE)
+# Só títulos estruturais em MAIÚSCULAS (sem re.I) separam um artigo do que vem depois dele.
+STRUCT_HEADING_RE = re.compile(r"^[ \t]*(?:LIVRO|PARTE|T[IÍ]TULO|CAP[IÍ]TULO|SE[CÇ][AÃ]O|SUBSE[CÇ][AÃ]O|ANEXO)\b[^\n]*$", re.MULTILINE)
 OCR_STRUCTURE_REPLACEMENTS = ((re.compile(r"\bArtig0\b", re.I), "Artigo"),(re.compile(r"\bArt1go\b", re.I), "Artigo"),(re.compile(r"\bArt1g0\b", re.I), "Artigo"),(re.compile(r"\bParagraf0\b", re.I), "Paragrafo"),(re.compile(r"\bunic0\b", re.I), "unico"),(re.compile(r"\bCAP[IÍ]TUL0\b", re.I), "CAPITULO"),(re.compile(r"\bT[IÍ]TUL0\b", re.I), "TITULO"))
 
 def _ocr_structure_view(text):
@@ -18,10 +22,17 @@ SUMULA_RE = re.compile(r"^[ \t]*(S[uú]mula(?:\s+Vinculante)?\s+n?[ºo°.]*\s*\d
 JURISPRUDENCIA_RE = re.compile(r"^[ \t]*TRIBUNAL:\s*.+$", re.I | re.M)
 TEMA_RE = re.compile(r"^[ \t]*(Tema\s+n?[ºo°.]*\s*\d+)\b", re.I | re.M)
 HEADER_RE = re.compile(r"^\s*((?:LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|LIVRO|PARTE|TÍTULO|TITULO|CAPÍTULO|CAPITULO|SEÇÃO|SECAO|SUBSEÇÃO|SUBSECAO|ANEXO)\b.*)$", re.I)
-PARAGRAFO_RE = r"§\s*\d+[ºo]?(?:-[A-Z])?|§\s*[uú]nico"
+PARAGRAFO_RE = r"§\s*\d+[ºo°]?(?:-[A-Z])?|§\s*[uú]nico"
 ROMAN_RE = r"(?:XXXIX|XXXVIII|XXXVII|XXXVI|XXXV|XXXIV|XXXIII|XXXII|XXXI|XXX|XXIX|XXVIII|XXVII|XXVI|XXV|XXIV|XXIII|XXII|XXI|XX|XIX|XVIII|XVII|XVI|XV|XIV|XIII|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)"
-CHILD_RE = re.compile(rf"(?m)^[ \t]*({PARAGRAFO_RE}|par[aá]graf[o0]\s+[uú]nic[o0](?:\s*[.:])?|{ROMAN_RE}\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*", re.I)
-CHILD_INLINE_RE = re.compile(rf"(?<=[\f.;:])[ \t]+({PARAGRAFO_RE}|par[aá]graf[o0]\s+[uú]nic[o0](?:\s*[.:])?|{ROMAN_RE}\s*[.)–—-]|[a-z]\s*[.)–—-]|\d+\s*[.)–—-])[ \t]*", re.I)
+# Algarismo romano e alínea são CASE-SENSITIVE (?-i:): "civil-", "mil." ou "p. 12" no início de linha
+# quebrada não são incisos/alíneas. Itens numéricos exigem espaço depois do separador, para que
+# "14.133" (Lei nº\n14.133/2021) não vire o item "14.".
+_CHILD_MARKER = (rf"{PARAGRAFO_RE}|par[aá]graf[o0]\s+[uú]nic[o0](?:\s*[.:])?"
+                 rf"|(?-i:{ROMAN_RE})\s*(?:\)|[.–—-](?=\s|$))"
+                 rf"|(?-i:[a-z])\s*(?:\)|[–—-](?=\s))"
+                 rf"|\d{{1,2}}\s*(?:\)|[.–—-](?=\s|$))")
+CHILD_RE = re.compile(rf"(?m)^[ \t]*({_CHILD_MARKER})[ \t]*", re.I)
+CHILD_INLINE_RE = re.compile(rf"(?<=[\f.;:])[ \t]+({_CHILD_MARKER})[ \t]*", re.I)
 
 def _find(text, rx, kind):
     matches=list(rx.finditer(text))
@@ -33,14 +44,34 @@ def _find(text, rx, kind):
         if value:out.append({"kind":kind,"ref":m.group(1).strip(),"start":start,"text":value})
     return out
 
+_HEADER_LEVELS=(("norma",0,re.compile(r"^\s*(?:LEI|DECRETO(?:-LEI)?|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO)\b.*$",re.I)),("parte",1,re.compile(r"^\s*PARTE\b.*$",re.I)),("livro",2,re.compile(r"^\s*LIVRO\b.*$",re.I)),("titulo",3,re.compile(r"^\s*T[IÍ]TULO\b.*$",re.I)),("capitulo",4,re.compile(r"^\s*CAP[IÍ]TULO\b.*$",re.I)),("secao",5,re.compile(r"^\s*SE[CÇ][AÃ]O\b.*$",re.I)),("subsecao",6,re.compile(r"^\s*SUBSE[CÇ][AÃ]O\b.*$",re.I)),("anexo",1,re.compile(r"^\s*ANEXO\b.*$",re.I)))
+_HEADER_TITLE_MAX=90
+
+def _heading_title(lines,index):
+    """Título em maiúsculas na linha seguinte ao cabeçalho (ex.: CAPÍTULO II / DA CONTRATAÇÃO DIRETA)."""
+    for line in lines[index+1:index+3]:
+        candidate=re.sub(r"\s+"," ",line).strip()
+        if not candidate:continue
+        if candidate.isupper() and len(candidate)<=_HEADER_TITLE_MAX and not any(p.match(candidate) for _k,_r,p in _HEADER_LEVELS) and not ARTIGO_RE.match(candidate):return candidate
+        return None
+    return None
+
 def _headers_before(text,start):
     levels={}
-    level_patterns=(("norma",re.compile(r"^\s*(?:LEI|DECRETO(?:-LEI)?|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO)\b.*$",re.I)),("parte",re.compile(r"^\s*PARTE\b.*$",re.I)),("livro",re.compile(r"^\s*LIVRO\b.*$",re.I)),("titulo",re.compile(r"^\s*T[IÍ]TULO\b.*$",re.I)),("capitulo",re.compile(r"^\s*CAP[IÍ]TULO\b.*$",re.I)),("secao",re.compile(r"^\s*SE[CÇ][AÃ]O\b.*$",re.I)),("subsecao",re.compile(r"^\s*SUBSE[CÇ][AÃ]O\b.*$",re.I)),("anexo",re.compile(r"^\s*ANEXO\b.*$",re.I)))
-    for line in _ocr_structure_view(text[:start]).splitlines():
+    lines=_ocr_structure_view(text[:start]).splitlines()
+    for index,line in enumerate(lines):
         normalized=re.sub(r"\s+"," ",line).strip()
-        for key,pattern in level_patterns:
-            if pattern.match(normalized):levels[key]=normalized;break
-    return [levels[key] for key,_ in level_patterns if key in levels]
+        # Linha quebrada de PDF ("... conforme a\nLei nº 8.666...") não é cabeçalho: exige maiúscula inicial.
+        if not normalized or not normalized[0].isupper() or len(normalized)>220:continue
+        for key,rank,pattern in _HEADER_LEVELS:
+            if not pattern.match(normalized):continue
+            # Depois do título da norma, só outra linha TODA em maiúsculas substitui a norma corrente.
+            if key=="norma" and "norma" in levels and not normalized.isupper():break
+            title=_heading_title(lines,index) if key!="norma" else None
+            # Um nível novo encerra os níveis iguais/inferiores (SEÇÃO II não herda a SUBSEÇÃO I da SEÇÃO I).
+            for other in [k for k,(r,_t) in levels.items() if r>=rank]:del levels[other]
+            levels[key]=(rank,f"{normalized} — {title}" if title and title not in normalized else normalized);break
+    return [levels[key][1] for key,_r,_p in _HEADER_LEVELS if key in levels]
 
 def _merged_marker_matches(text,*regexes):
     matches=[];occupied=[]
@@ -55,31 +86,44 @@ def _merged_marker_matches(text,*regexes):
         dedup.append(candidate)
     return dedup
 
-def _article_marker_is_real_header(text,match):return not ARTICLE_CITATION_TAIL_RE.match(text[match.end():match.end()+180])
+CITATION_WORD_RE=re.compile(r"[ \t]+(?:desta|deste|dessa|desse|daquela|daquele|da|do|das|dos|de|e|ou|a|à|ao|aos|no|na|nos|nas|pelo|pela|pelos|pelas|c/c|combinado|caput|incisos?|par[aá]grafos?|al[ií]neas?|bem|todos|seguintes?|anterior(?:es)?|supra|infra|acima|abaixo|cit|mencionado|referido|supracitado)\b")  # case-sensitive: "A regra..." (maiúscula) abre o texto do artigo; "a" minúsculo é preposição
+def _article_marker_is_real_header(text,match):
+    """Distingue o cabeçalho "Art. 75." de uma citação ("art. 76 desta Lei", "o art. 77 do Decreto")."""
+    ref=match.group(1).strip();tail=text[match.end():match.end()+180]
+    if not ref[:1].isupper():return False
+    if ARTICLE_CITATION_TAIL_RE.match(tail):return False
+    # "Art. 76 desta Lei": número sem ponto final seguido de palavra de citação é referência, não cabeçalho.
+    if not ref.endswith(".") and CITATION_WORD_RE.match(tail):return False
+    line_start=text.rfind("\n",0,match.start(1))+1;before=text[line_start:match.start(1)]
+    if before.strip() and not re.search(r"[.;:!?”\"“»)\f]\s*$",before):
+        # PDF achatado (sem quebra de linha): só aceita "Art. N." seguido de maiúscula, § ou abre-parêntese.
+        if not (ref.endswith(".") and re.match(r"\s*[A-ZÀ-Ý§(“\"]",tail)):return False
+    return True
 def _is_article_number_inline_child(text,match):
     ref=match.group(1).strip()
     if not re.fullmatch(r"\d+\s*[.)–—-]",ref,re.I):return False
     return bool(re.search(r"Art(?:igo)?\.?\s*$",_ocr_structure_view(text[max(0,match.start()-16):match.start()]),re.I))
 def _classify_child(ref):
     if ref.startswith("§") or re.match(r"^par[aá]graf[o0]\s+[uú]nic[o0]",ref,re.I):return "paragrafo"
-    if re.fullmatch(rf"{ROMAN_RE}\s*[.)–—-]",ref,re.I):return "inciso"
-    if re.fullmatch(r"[a-z]\s*[.)–—-]",ref,re.I):return "alinea"
+    if re.fullmatch(rf"{ROMAN_RE}\s*[.)–—-]",ref):return "inciso"
+    if re.fullmatch(r"[a-z]\s*[)–—-]",ref):return "alinea"
     return "item"
+
+_CHILD_RANK={"paragrafo":1,"inciso":2,"alinea":3,"item":4}
 
 def _article_children(article_text):
     matches=[m for m in _merged_marker_matches(_ocr_structure_view(article_text),CHILD_RE,CHILD_INLINE_RE) if not _is_article_number_inline_child(article_text,m)]
     if not matches:return article_text.strip(),[]
-    caput=article_text[:matches[0].start()].strip();children=[];current_level1=None;current_level2=None
+    caput=article_text[:matches[0].start()].strip();children=[];stack=[]
     for i,m in enumerate(matches):
         end=matches[i+1].start() if i+1<len(matches) else len(article_text);value=article_text[m.start():end].strip();ref=m.group(1).strip()
         if not value:continue
-        kind=_classify_child(ref)
-        if kind in {"paragrafo","inciso"}:current_level1,current_level2=ref,None;path_tail=[ref]
-        elif kind=="alinea":
-            if current_level1 is None:continue
-            current_level2=ref;path_tail=[current_level1,ref]
-        else:path_tail=[x for x in (current_level1,current_level2,ref) if x]
-        children.append((kind,ref,value,m.start(),path_tail))
+        kind=_classify_child(ref);rank=_CHILD_RANK[kind]
+        # Pilha: § > inciso > alínea > item. Inciso de § carrega o §; alínea/item sem pai ficam sob o caput
+        # (antes eram descartados e o texto sumia do índice).
+        while stack and stack[-1][0]>=rank:stack.pop()
+        stack.append((rank,ref))
+        children.append((kind,ref,value,m.start(),[r for _rk,r in stack]))
     return caput,children
 
 ABBREVIATION_DOT_RE=re.compile(r"\b(?:art|inc|inciso|par|p|n|no|fls|proc|cf|etc|sr|sra|dr|dra|prof|p[aá]g|pag|vol|ed)\.",re.I)
@@ -117,7 +161,7 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
     length_fn=_token_length_factory(tokenizer)
     if length_fn(text)<=max_size:return [(text,0,len(text))]
     effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text)
-    splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,length_function=length_fn,separators=["\n\n","\n",". ","; ",": "," ",""],add_start_index=True)
+    splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,length_function=length_fn,separators=["\n\n","\n",". ","; ",": "," ",""],keep_separator="end",add_start_index=True)
     spans=[]
     for doc in splitter.create_documents([protected]):
         piece=_restore_abbreviation_dots(doc.page_content);start=int(doc.metadata.get("start_index",0));spans.append((piece,start,start+len(piece)))
@@ -155,13 +199,35 @@ def _fit_child_prefix_info(prefix,child_text,max_size,tokenizer=None):
 def _fit_child_prefix(prefix,child_text,max_size,tokenizer=None):
     fitted,_truncated=_fit_child_prefix_info(prefix,child_text,max_size,tokenizer);return fitted
 
+def _split_trailing_structure(value,base_start):
+    """Corta do artigo o que não é dele: títulos do próximo capítulo/seção (já vão em `headers` do próximo
+    artigo) e ANEXOs, que viram unidade própria em vez de ser engolidos pelo último artigo."""
+    newline=value.find("\n")
+    if newline<0:return value,[]
+    found=STRUCT_HEADING_RE.search(value,newline+1)
+    if not found:return value,[]
+    rest=value[found.start():];article=value[:found.start()].rstrip()
+    if re.match(r"\s*ANEXO\b",rest):
+        ref=re.sub(r"\s+"," ",rest.strip().splitlines()[0]).strip()
+        return article,[{"kind":"anexo","ref":ref,"start":base_start+found.start(),"text":rest.strip()}]
+    body=[l for l in rest.splitlines() if l.strip() and not STRUCT_HEADING_RE.match(l) and not (l.strip().isupper() and len(l.strip())<=_HEADER_TITLE_MAX)]
+    if not body:return article,[]
+    return article,[{"kind":"generic","ref":None,"start":base_start+found.start(),"text":rest.strip()}]
+
 def _article_units(text):
     matches=[m for m in _merged_marker_matches(_ocr_structure_view(text),ARTIGO_RE,ARTIGO_INLINE_RE) if _article_marker_is_real_header(text,m)]
     if not matches:return None
     units=[]
     for i,m in enumerate(matches):
-        start=m.start();end=matches[i+1].start() if i+1<len(matches) else len(text);value=text[start:end].strip()
+        start=m.start(1);end=matches[i+1].start() if i+1<len(matches) else len(text);raw=text[start:end].strip()
+        if i+1<len(matches):raw=raw.removesuffix("“").rstrip()  # abre-aspas do artigo emendado seguinte não pertence a este
+        value,extras=_split_trailing_structure(raw,start)
         if value:units.append({"kind":"artigo","ref":m.group(1).strip(),"start":start,"text":value,"headers":_headers_before(text,start)})
+        for extra in extras:
+            headers=_headers_before(text,extra["start"])
+            # Anexo fica sob a norma, não sob o capítulo/seção em que o último artigo estava.
+            extra["headers"]=headers[:1] if extra["kind"]=="anexo" and headers and _HEADER_LEVELS[0][2].match(headers[0]) else ([] if extra["kind"]=="anexo" else headers)
+            units.append(extra)
     return units
 
 JURIS_SECTION_RE=re.compile(r"(?im)^[ \t]*(EMENTA|TESE/ENTENDIMENTO|TESE|DECISÃO|DECISAO|INTEIRO TEOR|RELATÓRIO|RELATORIO|VOTO|DISPOSITIVO)\s*:?[ \t]*$")
@@ -271,7 +337,7 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
                 continue
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
-                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
+                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"end":u["start"]+section["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
         if output:return output
     if _should_use_ai_semantic(full_text,metadata) and not _is_normative_document(full_text,metadata):
         semantic=_build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider,tokenizer)
@@ -282,22 +348,22 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
         if ref:ref_counts[(unit["kind"],ref)]=ref_counts.get((unit["kind"],ref),0)+1
     for unit in units:
         if not unit["text"].strip():continue
-        ref=unit.get("ref");unit_id=f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}"+(f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
+        ref=unit.get("ref");unit_id=(f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}")+(f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
         headers=list(unit.get("headers") or [])
         if unit["kind"]!="artigo":
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False})
+                output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False})
             continue
         caput,children=_article_children(unit["text"])
         article_ref=ref or "Artigo"
         article_header=[*headers,article_ref]
         if not children:
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
+                output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
             continue
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
+            output.append({"text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
             caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
@@ -312,6 +378,6 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,semantic_
                     piece=_truncate_words_to_tokens(piece,max(1,max_size-_token_count(child_prefix+"\n",tokenizer)),tokenizer)
                     rendered=f"{child_prefix}\n{piece}".strip()
                     prefix_truncated=True
-                output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":prefix_truncated})
+                output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":prefix_truncated})
             next_index+=len(child_spans)
     return output
