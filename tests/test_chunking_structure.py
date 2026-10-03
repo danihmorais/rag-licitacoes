@@ -6,7 +6,7 @@ from chunking import build_structural_chunks
 
 
 def chunks_of(text, size=2000, overlap=100):
-    # tokenizer=None força contagem por caracteres, sem depender do modelo de embedding.
+    # O helper usa o pipeline real de chunking; o tamanho reduzido torna a regressão independente do tokenizer.
     return build_structural_chunks(text, size, overlap, tokenizer=None)
 
 
@@ -154,7 +154,7 @@ def test_end_aponta_para_o_trecho_na_fonte_e_nao_inclui_o_prefixo():
 
 def test_split_longo_nao_comeca_chunk_com_pontuacao():
     long_text = "Art. 9º " + " ".join(f"Sentença número {i} do texto jurídico com várias palavras." for i in range(40))
-    pieces = chunks_of(long_text, size=300, overlap=40)
+    pieces = chunks_of(long_text, size=100, overlap=40)
     assert len(pieces) > 3
     for c in pieces:
         assert not re.match(r"^[.;:]", c["text"])
