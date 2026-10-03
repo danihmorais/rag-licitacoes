@@ -107,10 +107,11 @@ def test_child_chunking_handles_long_caput_with_default_overlap():
     text = f'Art. 1º {caput.strip()}\n§ 1º O disposto neste artigo aplica-se às contratações públicas com as adaptações previstas em lei.'
     xs = build_structural_chunks(text, 1000, 150)
     assert xs
-    assert all(len(item['text']) <= 1000 for item in xs)
+    tokenizer = chunking._default_tokenizer()
+    assert all(chunking._token_count(item['text'], tokenizer) <= 1000 for item in xs)
     children = [item for item in xs if item['segment_kind'] == 'paragrafo']
     assert children
-    assert all(len(item['text']) <= 1000 for item in children)
+    assert all(chunking._token_count(item['text'], tokenizer) <= 1000 for item in children)
     assert all(' > § 1º' in item['text'] for item in children)
 
 
@@ -257,8 +258,7 @@ def test_concatenated_jurisprudencia_falls_back_only_for_failed_unit(monkeypatch
                         {
                             "ids": ids,
                             "topic": "primeira unidade",
-                            "section": "fundamentação",
-                        }
+                            "section": "fundamentação",                        }
                     ]
                 },
                 ensure_ascii=False,
