@@ -146,6 +146,17 @@ def validate_gpu_runtime() -> None:
             f'Provedores disponíveis: {", ".join(providers) or "nenhum"}. '
             'Para executar em CPU, defina RAG_FASTEMBED_REQUIRE_CUDA=0 e RAG_FASTEMBED_PROVIDERS=CPUExecutionProvider.'
         )
+    try:
+        ort.preload_dlls(directory="")
+    except AttributeError as exc:
+        raise RuntimeError(
+            'Execução GPU obrigatória: esta versão do ONNX Runtime não oferece preload_dlls(). '
+            'Use a versão fixada em requirements.txt.'
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            f'Execução GPU obrigatória: falha ao carregar as DLLs CUDA/cuDNN do ambiente Python: {exc}'
+        ) from exc
 
 
 def ensure_directories():
