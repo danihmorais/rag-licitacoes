@@ -1,9 +1,12 @@
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
 from jurisprudencia.queries import parse_queries
 
 BASE_DIR = Path(__file__).parent
+load_dotenv(BASE_DIR / '.env', override=False)
+
 PDFS_DIR = BASE_DIR / 'pdfs'
 DB_DIR = BASE_DIR / 'db'
 SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
