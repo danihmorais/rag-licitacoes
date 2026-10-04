@@ -1110,7 +1110,9 @@ class STJAdapter(JurisprudenciaAdapter):
             origem='STJ — Dados Abertos / espelhos de acórdãos',
         )
 
-    search_endpoint = 'https://processo.stj.jus.br/SCON/pesquisar.jsp'\n\n    @staticmethod
+    search_endpoint = 'https://processo.stj.jus.br/SCON/pesquisar.jsp'
+
+    @staticmethod
     def _scon_form_body(query: str, page: int) -> bytes:
         normalized = query.encode('utf-8', errors='replace').decode('utf-8')
         params = {
