@@ -80,6 +80,58 @@ def test_default_tokenizer_disables_fastembed_truncation(monkeypatch):
     finally:
         chunking._default_tokenizer.cache_clear()
 
+def test_cpu_tokenizer_does_not_request_cuda(monkeypatch):
+    import fastembed
+
+    tokenizer = TruncatingTokenizer()
+    providers_seen = []
+
+    class FakeTextEmbedding:
+        def __init__(self, **kwargs):
+            providers_seen.append(kwargs["providers"])
+            self.model = SimpleNamespace(tokenizer=tokenizer)
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", FakeTextEmbedding)
+    chunking._default_tokenizer.cache_clear()
+    try:
+        loaded = chunking.get_cpu_tokenizer()
+        assert loaded is tokenizer
+        assert providers_seen == [["CPUExecutionProvider"]]
+    finally:
+        chunking._default_tokenizer.cache_clear()
+
+
+def test_ai_semantic_chunking_uses_semantic_provider_purpose(monkeypatch):
+    text = (
+        "TRIBUNAL: TCU\nPROCESSO: TC 000.000/2026\n\n"
+        + ("Contexto jurídico sobre planejamento da contratação. " * 40)
+    )
+    provider = FakeSemanticProvider()
+    requested = []
+
+    def fake_factory(purpose="answer"):
+        requested.append(purpose)
+        return provider
+
+    monkeypatch.setattr("llm.factory.get_llm_provider", fake_factory)
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    monkeypatch.setattr("config.AI_CHUNKING_MIN_CHARS", 100)
+
+    chunks = build_structural_chunks(
+        text,
+        1000,
+        50,
+        metadata={
+            "source_role": "jurisprudencia",
+            "tipo_documento": "jurisprudencia",
+        },
+    )
+
+    assert chunks
+    assert requested == ["semantic_chunking"]
+    assert all(item["chunking_method"] == "ai_semantic" for item in chunks)
+
+
 
 def test_truncating_tokenizer_is_disabled_before_chunk_sizing():
     tokenizer = TruncatingTokenizer()
