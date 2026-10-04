@@ -131,17 +131,22 @@ ABBREVIATION_DOT_SENTINEL="\ue000"
 def _protect_abbreviation_dots(text):return ABBREVIATION_DOT_RE.sub(lambda m:m.group(0)[:-1]+ABBREVIATION_DOT_SENTINEL,text)
 def _restore_abbreviation_dots(text):return text.replace(ABBREVIATION_DOT_SENTINEL,".")
 
-@lru_cache(maxsize=1)
-def _default_tokenizer():
+@lru_cache(maxsize=2)
+def _default_tokenizer(providers=None):
     try:
         from fastembed import TextEmbedding
-        model=TextEmbedding(model_name=config.DENSE_MODEL,max_length=config.DENSE_MAX_TOKENS,providers=list(config.FASTEMBED_PROVIDERS))
+        selected_providers = tuple(providers) if providers is not None else tuple(config.FASTEMBED_PROVIDERS)
+        model=TextEmbedding(model_name=config.DENSE_MODEL,max_length=config.DENSE_MAX_TOKENS,providers=list(selected_providers))
         tokenizer=getattr(getattr(model,"model",None),"tokenizer",None)
         if tokenizer is not None and hasattr(tokenizer,"no_truncation"):
             tokenizer.no_truncation()
         return tokenizer
     except Exception as exc:
         print(f"Aviso: tokenizer do embedding indisponível no chunking; fallback por caracteres: {exc}");return None
+
+def get_cpu_tokenizer():
+    """Retorna o tokenizer do embedding sem ocupar a GPU."""
+    return _default_tokenizer(("CPUExecutionProvider",))
 
 def _token_length_factory(tokenizer:Any|None)->Callable[[str],int]:
     if tokenizer is None:return len
@@ -276,13 +281,16 @@ def _should_use_ai_semantic(full_text,metadata=None):
     if not config.AI_CHUNKING_ENABLED or len(full_text.strip())<config.AI_CHUNKING_MIN_CHARS:return False
     metadata=metadata or {};role=str(metadata.get("source_role") or "").strip().casefold();typ=str(metadata.get("tipo_documento") or "").strip().casefold()
     return not _is_normative_document(full_text,metadata) and (role in SEMANTIC_SOURCE_ROLES or typ in SEMANTIC_DOCUMENT_TYPES or bool(JURISPRUDENCIA_RE.search(full_text)) or bool(re.search(r"(?im)^\s*FONTE:\s*.+\n\s*T[IÍ]TULO:\s*.+\n\s*DATA[_ ]PUBLICACAO\s*:",full_text)))
+def should_use_ai_semantic(full_text, metadata=None):
+    return _should_use_ai_semantic(full_text, metadata)
+
 def _build_ai_semantic_chunks(full_text,max_size,metadata,semantic_provider=None,tokenizer=None):
     from llm.semantic_chunker import build_semantic_chunks
     unit_kind=str(metadata.get("tipo_documento") or "").strip() or ("jurisprudencia" if JURISPRUDENCIA_RE.search(full_text) else "materia");unit_ref=str(metadata.get("processo") or metadata.get("source_id") or "").strip() or None
     try:
         if semantic_provider is None:
             from llm.factory import get_llm_provider
-            semantic_provider=get_llm_provider()
+            semantic_provider=get_llm_provider("semantic_chunking")
         return build_semantic_chunks(full_text,max_size,unit_kind=unit_kind,unit_ref=unit_ref,provider=semantic_provider,window_chars=config.AI_CHUNKING_WINDOW_CHARS,min_chars=config.AI_CHUNKING_MIN_CHARS,attempts=config.AI_CHUNKING_ATTEMPTS,prompt_version=config.AI_CHUNKING_PROMPT_VERSION,tokenizer=tokenizer)
     except Exception as exc:
         if config.AI_CHUNKING_REQUIRED and not config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL:raise
