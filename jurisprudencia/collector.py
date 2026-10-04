@@ -1030,7 +1030,11 @@ class STJAdapter(JurisprudenciaAdapter):
 
         response = self.session.get(package_url, timeout=(20, 90))
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        raw_html = getattr(response, 'text', None) or response.content.decode(
+            getattr(response, 'encoding', None) or 'utf-8',
+            errors='replace',
+        )
+        soup = BeautifulSoup(raw_html, 'html.parser')
         candidates: dict[str, dict[str, Any]] = {}
         for anchor in soup.find_all('a', href=True):
             href = urljoin(response.url, str(anchor.get('href') or '').strip())
