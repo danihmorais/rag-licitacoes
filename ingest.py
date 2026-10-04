@@ -17,7 +17,12 @@ from qdrant_client import QdrantClient, models
 import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
-from chunking import build_structural_chunks, get_cpu_tokenizer, should_use_ai_semantic
+from chunking import (
+    build_structural_chunks,
+    get_cpu_tokenizer,
+    is_ai_semantic_metadata_candidate,
+    should_use_ai_semantic,
+)
 from embedding_utils import validate_embedding_inputs
 
 PAYLOAD_INDEX_TYPES = {
@@ -29,6 +34,7 @@ PAYLOAD_INDEX_TYPES = {
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
 CACHE_VERSION = 5
+LEGACY_CACHE_VERSIONS = {4}
 
 
 def sync_sources():
@@ -143,13 +149,39 @@ def metadata_fingerprint(document):
     return digest.hexdigest()
 
 
-def cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
+def _cache_entry_matches_index(entry, digest, indexed_count):
     return (
         isinstance(entry, dict)
         and entry.get('sha256') == digest
-        and entry.get('metadata_fingerprint') == metadata_digest
         and int(entry.get('chunks') or 0) == indexed_count
         and indexed_count > 0
+    )
+
+
+def cache_entry_is_valid(
+    entry,
+    digest,
+    metadata_digest,
+    indexed_count,
+    *,
+    semantic_candidate=False,
+):
+    if not _cache_entry_matches_index(entry, digest, indexed_count):
+        return False
+    entry_version = int(entry.get('_cache_version') or CACHE_VERSION)
+    if entry_version in LEGACY_CACHE_VERSIONS:
+        # Versões anteriores não tinham a semântica separada no fingerprint.
+        # Mantemos o índice estrutural para documentos que não são candidatos
+        # ao chunking semântico e marcamos o cache como migrado abaixo.
+        return not semantic_candidate
+    return entry.get('metadata_fingerprint') == metadata_digest
+
+
+def legacy_cache_entry_is_reusable(entry, digest, indexed_count):
+    return (
+        isinstance(entry, dict)
+        and int(entry.get('_cache_version') or 0) in LEGACY_CACHE_VERSIONS
+        and _cache_entry_matches_index(entry, digest, indexed_count)
     )
 
 
@@ -161,17 +193,38 @@ def read_cache():
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(f'Aviso: cache de ingestão inválido; reindexação será feita: {exc}')
         return {}
-    if payload.get('version') != CACHE_VERSION or not isinstance(payload.get('documents'), dict):
+    version = payload.get('version')
+    if version != CACHE_VERSION and version not in LEGACY_CACHE_VERSIONS:
         return {}
-    return payload['documents']
+    if not isinstance(payload.get('documents'), dict):
+        return {}
+
+    documents = {}
+    for name, entry in payload['documents'].items():
+        if isinstance(entry, dict) and version in LEGACY_CACHE_VERSIONS:
+            migrated = dict(entry)
+            migrated['_cache_version'] = int(version)
+            documents[name] = migrated
+        else:
+            documents[name] = entry
+    return documents
 
 
 def write_cache(cache):
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    clean_documents = {}
+    for name, entry in cache.items():
+        if isinstance(entry, dict):
+            clean = dict(entry)
+            clean.pop('_cache_version', None)
+            clean_documents[name] = clean
+        else:
+            clean_documents[name] = entry
+
     fd, temp_name = tempfile.mkstemp(prefix=f'.{CACHE_PATH.name}.', suffix='.tmp', dir=CACHE_PATH.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-            json.dump({'version': CACHE_VERSION, 'documents': cache}, handle, ensure_ascii=False, indent=2)
+            json.dump({'version': CACHE_VERSION, 'documents': clean_documents}, handle, ensure_ascii=False, indent=2)
             handle.write('\n')
             handle.flush()
             os.fsync(handle.fileno())
@@ -685,41 +738,52 @@ def main():
     # O chunking semântico precisa acontecer antes de qualquer modelo FastEmbed
     # ocupar a GPU. O tokenizer usado nessa fase roda somente em CPU.
     semantic_precomputed = {}
+    semantic_candidates = set()
     if config.AI_CHUNKING_ENABLED:
-        semantic_candidates = []
+        candidates = []
         for document in files:
             digest = file_hash(document)
             metadata_digest = metadata_fingerprint(document)
             document_meta = extract_metadata('', document)
             doc_id = document_id_for(document, document_meta)
-            count_filter = _filter_for_doc_id(doc_id)
-            entry = cache.get(document.name)
             indexed_count = client.count(
                 config.COLLECTION_NAME,
-                count_filter=count_filter,
+                count_filter=_filter_for_doc_id(doc_id),
                 exact=True,
             ).count
-            if cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
+            semantic_hint = is_ai_semantic_metadata_candidate(document_meta)
+            if cache_entry_is_valid(
+                cache.get(document.name),
+                digest,
+                metadata_digest,
+                indexed_count,
+                semantic_candidate=semantic_hint,
+            ):
                 continue
-            semantic_candidates.append((document, document_meta))
+            if legacy_cache_entry_is_reusable(cache.get(document.name), digest, indexed_count) and not semantic_hint:
+                # O documento já está corretamente indexado pela estrutura antiga.
+                # Não gastamos GPU/LLM nem refazemos embeddings desnecessariamente.
+                continue
+            candidates.append((document, document_meta))
 
-        if semantic_candidates:
+        if candidates:
             from llm.factory import get_llm_provider
 
             print(
-                f'Fase 1/2: chunking semântico ({len(semantic_candidates)} documento(s)) '
+                f'Fase 1/2: avaliando chunking semântico ({len(candidates)} documento(s)) '
                 'antes do carregamento dos modelos GPU.'
             )
             semantic_provider = get_llm_provider('semantic_chunking')
             cpu_tokenizer = get_cpu_tokenizer()
             try:
-                for document, document_meta in semantic_candidates:
+                for document, document_meta in candidates:
                     try:
                         page_records = extract_page_records(document)
                         pages = [record['text'] for record in page_records]
                         full = PAGE_BREAK.join(pages)
                         if not should_use_ai_semantic(full, document_meta):
                             continue
+                        semantic_candidates.add(document.name)
                         semantic_precomputed[document.name] = build_structural_chunks(
                             full,
                             config.CHUNK_SIZE,
@@ -767,8 +831,23 @@ def main():
             count_filter=count_filter,
             exact=True,
         ).count
-        if cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
+        semantic_hint = document.name in semantic_candidates or is_ai_semantic_metadata_candidate(document_meta)
+        if cache_entry_is_valid(
+            entry,
+            digest,
+            metadata_digest,
+            indexed_count,
+            semantic_candidate=semantic_hint,
+        ):
             skipped += 1
+            if legacy_cache_entry_is_reusable(entry, digest, indexed_count):
+                cache[document.name] = {
+                    'sha256': digest,
+                    'metadata_fingerprint': metadata_digest,
+                    'chunks': indexed_count,
+                    'doc_id': doc_id,
+                    'source_id': document_meta.get('source_id'),
+                }
             document_manifest[doc_id] = {
                 'sha256': digest,
                 'chunks': indexed_count,
