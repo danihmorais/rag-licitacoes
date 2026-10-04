@@ -206,28 +206,36 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
     assert path.exists() and '"source_role": "jurisprudencia_controle"' in data and '"version_sha256":' in data
 
 
-def test_stj_adapter_uses_official_open_data_snapshot():
+def test_stj_adapter_parses_official_scon_snapshot():
+    html = '''<html><body>
+      <div class="row itemlistadocumentos p-2">
+        <div class="col-sm-3">
+          <h4>Processo</h4>
+          <div><a href="/SCON/jurisprudencia/doc.jsp?ementa=LICITACAO&i=1">REsp&nbsp;2238193</a></div>
+          <div class="small">(ACORDAO)</div>
+          <div>Ministro X</div>
+          <div>DJe 05/05/2026</div>
+          <div>Decisao: 28/04/2026</div>
+        </div>
+        <div class="col-sm-8">
+          <div class="clsEmentaCompleta">DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS PÚBLICOS.<br>RECURSO CONHECIDO E PROVIDO.</div>
+        </div>
+      </div>
+    </body></html>'''.encode("iso-8859-1")
     session = FakeSession([
-        FakeResponse({"success": True, "result": {"resources": [{
-            "name": "20260915.json", "format": "JSON",
-            "url": "https://dadosabertos.web.stj.jus.br/dataset/espelhos/raw/20260915.json"
-        }]}}),
-        FakeResponse([{
-            "id": "956702", "numeroProcesso": "2238193", "numeroRegistro": "202503517440",
-            "siglaClasse": "REsp", "descricaoClasse": "RECURSO ESPECIAL",
-            "nomeOrgaoJulgador": "TERCEIRA SEÇÃO", "ministroRelator": "Ministro X",
-            "dataPublicacao": "DJEN DATA:05/05/2026",
-            "ementa": "DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS PÚBLICOS.",
-            "tipoDeDecisao": "ACÓRDÃO", "dataDecisao": "20260428",
-            "decisao": "Recurso conhecido e provido."
-        }])
+        FakeResponse(html, content_type="text/html", url=STJAdapter.search_endpoint),
     ])
+
     records = STJAdapter(session).search("licitação", 1)
+
     assert len(records) == 1
     assert records[0].tribunal == "STJ"
-    assert records[0].numero_processo == "2238193"
-    assert records[0].relator == "Ministro X"
-    assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
+    assert records[0].numero_processo == "REsp 2238193"
+    assert records[0].relator == "X"
+    assert records[0].data_publicacao == "05/05/2026"
+    assert STJAdapter.search_endpoint == "https://processo.stj.jus.br/SCON/pesquisar.jsp"
+    assert records[0].url_oficial.startswith("https://processo.stj.jus.br/SCON/jurisprudencia/doc.jsp")
+
 
 def test_stf_form_is_discovered_without_hardcoding_input_name():
     from bs4 import BeautifulSoup
