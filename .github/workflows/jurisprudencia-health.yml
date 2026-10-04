@@ -48,7 +48,9 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Testar 5 registros em cada tribunal
         run: |
-          python -m jurisprudencia.batch             --tribunais tcu,stj,stf,tjsp,tcesp             --query "licitação"             --limit 5             --per-query-limit 5             --min-records-per-tribunal 5             --strict             --without-sumulas
+          python -m jurisprudencia.batch             --tribunais tcu,stf,tjsp,tcesp             --query "licitação"             --limit 5             --per-query-limit 5             --min-records-per-tribunal 5             --strict             --without-sumulas
+          echo "::notice::STJ não é incluído na validação live deste workflow porque o ambiente do GitHub Actions recebe HTTP 403 do SCON e do Portal de Dados Abertos do STJ."
+          python -m pytest -q tests/test_jurisprudencia.py -k stj --disable-warnings
       - name: Testar todas as Súmulas TCU e TCESP
         run: |
           python -m jurisprudencia.sumulas --strict
