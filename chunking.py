@@ -277,6 +277,18 @@ def _is_normative_document(full_text,metadata=None):
     metadata=metadata or {};role=str(metadata.get("source_role") or "").strip().casefold();typ=str(metadata.get("tipo_documento") or "").strip().casefold()
     if role=="norma" or typ in NORMATIVE_DOCUMENT_TYPES:return True
     return bool(re.search(r"(?im)^\s*(?:LEI\s+(?:COMPLEMENTAR\s+)?n?[ºo°.]*|DECRETO(?:-LEI)?\s+n?[ºo°.]*|PORTARIA\s+n?[ºo°.]*|RESOLU(?:ÇÃO|CAO)\s+n?[ºo°.]*|INSTRU(?:ÇÃO|CAO)\s+NORMATIVA\b|EMENDA\s+CONSTITUCIONAL\b|CONSTITUI(?:ÇÃO|CAO)\b)",full_text[:2000]))
+def is_ai_semantic_metadata_candidate(metadata=None):
+    """Indica, sem ler o conteúdo, se os metadados identificam fonte apta ao chunking semântico."""
+    if not config.AI_CHUNKING_ENABLED:
+        return False
+    metadata=metadata or {}
+    role=str(metadata.get("source_role") or "").strip().casefold()
+    typ=str(metadata.get("tipo_documento") or "").strip().casefold()
+    return (
+        role in SEMANTIC_SOURCE_ROLES
+        or typ in SEMANTIC_DOCUMENT_TYPES
+    )
+
 def _should_use_ai_semantic(full_text,metadata=None):
     if not config.AI_CHUNKING_ENABLED or len(full_text.strip())<config.AI_CHUNKING_MIN_CHARS:return False
     metadata=metadata or {};role=str(metadata.get("source_role") or "").strip().casefold();typ=str(metadata.get("tipo_documento") or "").strip().casefold()
