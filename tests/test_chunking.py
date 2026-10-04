@@ -80,6 +80,22 @@ def test_default_tokenizer_disables_fastembed_truncation(monkeypatch):
     finally:
         chunking._default_tokenizer.cache_clear()
 
+def test_ai_semantic_metadata_candidate_uses_only_metadata(monkeypatch):
+    monkeypatch.setattr("config.AI_CHUNKING_ENABLED", True)
+    assert chunking.is_ai_semantic_metadata_candidate({
+        "source_role": "jurisprudencia",
+        "tipo_documento": "jurisprudencia",
+    })
+    assert chunking.is_ai_semantic_metadata_candidate({
+        "source_role": "orientacao_oficial",
+        "tipo_documento": "manual",
+    })
+    assert not chunking.is_ai_semantic_metadata_candidate({
+        "source_role": "norma",
+        "tipo_documento": "lei",
+    })
+
+
 def test_cpu_tokenizer_does_not_request_cuda(monkeypatch):
     import fastembed
 
