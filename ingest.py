@@ -1,4 +1,5 @@
 import datetime
+import gc
 import hashlib
 import json
 import math
@@ -16,7 +17,7 @@ from qdrant_client import QdrantClient, models
 import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
-from chunking import build_structural_chunks
+from chunking import build_structural_chunks, get_cpu_tokenizer, should_use_ai_semantic
 from embedding_utils import validate_embedding_inputs
 
 PAYLOAD_INDEX_TYPES = {
@@ -27,7 +28,7 @@ PAYLOAD_INDEX_TYPES = {
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 
 def sync_sources():
@@ -328,7 +329,7 @@ def document_id_for(document, metadata=None):
     return f'{source_id}::{document.stem}'
 
 
-def build_chunks(document, pages, page_records=None, *, tokenizer=None):
+def build_chunks(document, pages, page_records=None, *, tokenizer=None, precomputed_chunks=None):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     doc_id = document_id_for(document, meta)
@@ -376,13 +377,18 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
         )
     chunk_overlap = min(config.CHUNK_OVERLAP, chunk_size - 1)
     output = []
-    for chunk in build_structural_chunks(
-        full,
-        chunk_size,
-        chunk_overlap,
-        metadata=meta,
-        tokenizer=tokenizer,
-    ):
+    chunk_source = (
+        precomputed_chunks
+        if precomputed_chunks is not None
+        else build_structural_chunks(
+            full,
+            chunk_size,
+            chunk_overlap,
+            metadata=meta,
+            tokenizer=tokenizer,
+        )
+    )
+    for chunk in chunk_source:
         if not chunk['text'].strip():
             continue
         start = chunk['start']
@@ -668,15 +674,83 @@ def main():
     elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME, exact=True).count:
         raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
 
+    ensure_collection(client)
+    active_names = {document_id_for(document) for document in files}
+    stale_removed = prune_stale_documents(client, active_names, delete=False, return_ids=True)
+    deleted_manifest = []
+    cache, errors, skipped = read_cache(), [], 0
+    document_manifest = {}
+    revocations = []
+
+    # O chunking semântico precisa acontecer antes de qualquer modelo FastEmbed
+    # ocupar a GPU. O tokenizer usado nessa fase roda somente em CPU.
+    semantic_precomputed = {}
+    if config.AI_CHUNKING_ENABLED:
+        semantic_candidates = []
+        for document in files:
+            digest = file_hash(document)
+            metadata_digest = metadata_fingerprint(document)
+            document_meta = extract_metadata('', document)
+            doc_id = document_id_for(document, document_meta)
+            count_filter = _filter_for_doc_id(doc_id)
+            entry = cache.get(document.name)
+            indexed_count = client.count(
+                config.COLLECTION_NAME,
+                count_filter=count_filter,
+                exact=True,
+            ).count
+            if cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
+                continue
+            semantic_candidates.append((document, document_meta))
+
+        if semantic_candidates:
+            from llm.factory import get_llm_provider
+
+            print(
+                f'Fase 1/2: chunking semântico ({len(semantic_candidates)} documento(s)) '
+                'antes do carregamento dos modelos GPU.'
+            )
+            semantic_provider = get_llm_provider('semantic_chunking')
+            cpu_tokenizer = get_cpu_tokenizer()
+            try:
+                for document, document_meta in semantic_candidates:
+                    try:
+                        page_records = extract_page_records(document)
+                        pages = [record['text'] for record in page_records]
+                        full = PAGE_BREAK.join(pages)
+                        if not should_use_ai_semantic(full, document_meta):
+                            continue
+                        semantic_precomputed[document.name] = build_structural_chunks(
+                            full,
+                            config.CHUNK_SIZE,
+                            config.CHUNK_OVERLAP,
+                            metadata=document_meta,
+                            semantic_provider=semantic_provider,
+                            tokenizer=cpu_tokenizer,
+                        )
+                        print(f'Chunking semântico preparado: {document.name}')
+                    except Exception as exc:
+                        print(
+                            f'Aviso: não foi possível preparar o chunking semântico de '
+                            f'{document.name}; o documento será processado normalmente: {exc}'
+                        )
+            finally:
+                del semantic_provider
+                del cpu_tokenizer
+                gc.collect()
+                try:
+                    from chunking import _default_tokenizer
+                    _default_tokenizer.cache_clear()
+                except Exception:
+                    pass
+
+    print('Fase 2/2: carregando modelos de embeddings/reranker na GPU.')
     dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     ensure_collection(client)
-    active_names = {document_id_for(document) for document in files}
-    stale_removed = prune_stale_documents(client, active_names, delete=False, return_ids=True)
-    deleted_manifest = []
     cache, errors, skipped = read_cache(), [], 0
     document_manifest = {}
     revocations = []
@@ -710,7 +784,13 @@ def main():
         try:
             page_records = extract_page_records(document)
             pages = [record['text'] for record in page_records]
-            chunks = build_chunks(document, pages, page_records=page_records, tokenizer=dense_tokenizer)
+            chunks = build_chunks(
+                document,
+                pages,
+                page_records=page_records,
+                tokenizer=dense_tokenizer,
+                precomputed_chunks=semantic_precomputed.get(document.name),
+            )
             if not chunks:
                 print('Aviso: sem texto em', document.name)
                 errors.append(document.name)
