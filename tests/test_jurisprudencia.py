@@ -360,6 +360,39 @@ def test_tjsp_falls_back_from_long_query():
     assert len(records) == 1
     assert records[0].numero_processo == "1000000-10.2026.8.26.0053"
 
+def test_stj_resources_fall_back_to_public_catalog_when_ckan_api_is_forbidden():
+    class ForbiddenResponse(FakeResponse):
+        def raise_for_status(self):
+            from requests import HTTPError
+            raise HTTPError("403 Client Error: Forbidden")
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return super().get(*args, **kwargs)
+
+    html = '''<html><body>
+      <a href="/dataset/abc/resource/1/download/20260831.json">20260831.json</a>
+      <a href="/dataset/abc/resource/2/download/20260731.json">20260731.json</a>
+      <a href="/dataset/abc/resource/3/download/20260630.json">20260630.json</a>
+    </body></html>'''.encode("utf-8")
+
+    session = CaptureSession([
+        ForbiddenResponse({"error": "forbidden"}, content_type="application/json"),
+        FakeResponse(html, content_type="text/html", url="https://dadosabertos.web.stj.jus.br/dataset/espelhos-de-acordaos-corte-especial"),
+    ])
+    resources = STJAdapter(session)._resources("espelhos-de-acordaos-corte-especial")
+
+    assert [item["name"] for item in resources] == [
+        "20260831.json", "20260731.json", "20260630.json"
+    ]
+    assert session.calls[1][0][0].endswith("/dataset/espelhos-de-acordaos-corte-especial")
+
+
 def test_stj_adapter_uses_current_open_data_host():
     assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
 
