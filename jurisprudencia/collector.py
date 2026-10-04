@@ -702,7 +702,7 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
             ]
             response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
-        response.raise_for_status()
+            response.raise_for_status()
             raw_html = getattr(response, 'text', None) or response.content.decode(
                 getattr(response, 'encoding', None) or 'utf-8',
                 errors='replace',
