@@ -689,208 +689,224 @@ class TCESPAdapter(JurisprudenciaAdapter):
                 browser.close()
 
     def _search_once(self, variant: str, limit: int, *, detail: bool, with_content: bool, seen: set[str]) -> list[JurisprudenciaRecord]:
-        params = [
-            ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('tipoDocumento', '2'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
-            ('acao', 'Executa'), ('offset', '0'), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
-            ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
-            ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
-        ]
-        response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
-        response.raise_for_status()
-        raw_html = getattr(response, 'text', None) or response.content.decode(
-            getattr(response, 'encoding', None) or 'utf-8',
-            errors='replace',
-        )
-        soup = BeautifulSoup(raw_html, 'html.parser')
-        visible_text = clean_text(soup.get_text(' ', strip=True))
-        total_match = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', visible_text, re.I)
-        total = int(total_match.group(1).replace('.', '')) if total_match else None
+        page_size = 10
+        offset = 0
+        total = None
         records: list[JurisprudenciaRecord] = []
 
-        for row in soup.find_all('tr'):
-            cells = row.find_all(['th', 'td'], recursive=False)
-            if len(cells) < 7:
-                continue
-            values = [clean_text(cell.get_text(' ', strip=True)) for cell in cells]
-            process_index = next(
-                (
-                    position for position, value in enumerate(values)
-                    if re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', value)
-                ),
-                None,
+        while len(records) < limit:
+            params = [
+                ('_tipoBuscaTxt', 'on'), ('_tipoDocumento', '1'), ('tipoDocumento', '2'), ('_relator', '1'), ('_auditor', '1'), ('_materia', '1'),
+                ('acao', 'Executa'), ('offset', str(offset)), ('dataAutuacaoFim', ''), ('dataAutuacaoInicio', ''), ('exercicio', ''),
+                ('processo', ''), ('quantTrechos', '3'), ('tipoBuscaTxt', 'Documento'), ('txtExp', ''), ('txtNenhPalvs', ''),
+                ('txtNumFim', ''), ('txtNumIni', ''), ('txtQqUma', ''), ('txtTdPalvs', variant),
+            ]
+            response = self.session.get(self.endpoint, params=params, timeout=(20, 90))
+        response.raise_for_status()
+            raw_html = getattr(response, 'text', None) or response.content.decode(
+                getattr(response, 'encoding', None) or 'utf-8',
+                errors='replace',
             )
-            if process_index is None:
-                continue
-            process = values[process_index]
-            if process in seen:
-                continue
-            date_index = next(
-                (
-                    position for position, value in enumerate(values)
-                    if re.search(r'\d{2}/\d{2}/\d{4}', value)
-                ),
-                None,
-            )
-            if date_index is None:
-                continue
-            date_text = values[date_index]
+            soup = BeautifulSoup(raw_html, 'html.parser')
+            visible_text = clean_text(soup.get_text(' ', strip=True))
+            total_match = re.search(r'Foram encontrados\s+([\d.]+)\s+registros', visible_text, re.I)
+            total = int(total_match.group(1).replace('.', '')) if total_match else None
+            page_records_before = len(records)
 
-            next_row = row.find_next_sibling('tr')
-            trecho_items = []
-            if next_row is not None:
-                trecho_items = [
-                    clean_text(item.get_text(' ', strip=True))
-                    for item in next_row.find_all('li')
-                    if clean_text(item.get_text(' ', strip=True))
-                ]
-            trecho = ' '.join(trecho_items)
-            if not trecho:
-                excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
-                if excerpt_text and 'trechos localizados' not in excerpt_text.casefold():
-                    trecho = excerpt_text
-
-            detail_anchor = next(
-                (
-                    anchor for anchor in row.find_all('a', href=True)
-                    if '/jurisprudencia/exibir' in str(anchor.get('href'))
-                ),
-                None,
-            )
-            pdf_anchor = next(
-                (
-                    anchor for anchor in row.find_all('a', href=True)
-                    if urlparse(urljoin(response.url, str(anchor.get('href')))).path.casefold().endswith('.pdf')
-                ),
-                None,
-            )
-            process_url = (
-                urljoin(response.url, str(detail_anchor.get('href')))
-                if detail_anchor is not None
-                else response.url
-            )
-            pdf_url = (
-                urljoin(response.url, str(pdf_anchor.get('href')))
-                if pdf_anchor is not None
-                else ''
-            )
-
-            fallback_ementa = values[6] if len(values) > 6 else ''
-            record = JurisprudenciaRecord(
-                tribunal='TCESP',
-                numero_processo=process,
-                data_autuacao=date_text,
-                ementa=trecho or fallback_ementa,
-                assunto=_as_list(
-                    values[5] if len(values) > 5 else '',
-                    values[6] if len(values) > 6 else '',
-                ),
-                tipo_decisao=values[0] or 'Jurisprudência',
-                origem='TCESP — Pesquisa de Jurisprudência',
-                url_oficial=process_url,
-                partes=_as_list(
-                    values[3] if len(values) > 3 else '',
-                    values[4] if len(values) > 4 else '',
-                ),
-            )
-            if pdf_url and record.url_oficial == response.url:
-                record.url_oficial = pdf_url
-            if detail or with_content:
-                try:
-                    detail_text, final, content = _detail_enrichment(
-                        self.session,
-                        process_url,
-                        with_content=with_content,
-                    )
-                    record.url_oficial = final
-                    record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
-                    record.data_publicacao = _label_value(
-                        detail_text,
-                        ('Data de Publicação', 'Data da Publicação'),
-                    ) or record.data_publicacao
-                    record.ementa = _extract_ementa(content or detail_text) or record.ementa
-                    if with_content and content:
-                        record.inteiro_teor = content
-                except Exception as exc:
-                    print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
-            seen.add(process)
-            records.append(record)
-            if len(records) >= limit:
-                return records[:limit]
-
-        if not records:
-            process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
-            for anchor in soup.find_all('a', href=True):
-                process = clean_text(anchor.get_text(' ', strip=True))
-                if not process_pattern.fullmatch(process) or process in seen:
+            for row in soup.find_all('tr'):
+                cells = row.find_all(['th', 'td'], recursive=False)
+                if len(cells) < 7:
                     continue
-
-                container = anchor.find_parent('tr')
-                if container is None:
-                    container = anchor.find_parent(['li', 'article', 'td', 'div', 'section'])
-                if container is None:
-                    container = anchor.parent
-                container_text = clean_text(container.get_text(' ', strip=True)) if container is not None else process
-
-                date_match = re.search(r'\d{2}/\d{2}/\d{4}', container_text)
-                if date_match is None and container is not None:
-                    parent = container
-                    for _ in range(4):
-                        parent = parent.parent
-                        if parent is None:
-                            break
-                        candidate = clean_text(parent.get_text(' ', strip=True))
-                        date_match = re.search(r'\d{2}/\d{2}/\d{4}', candidate)
-                        if date_match:
-                            container = parent
-                            container_text = candidate
-                            break
-                if date_match is None:
-                    continue
-
-                detail_url = urljoin(response.url, str(anchor.get('href') or ''))
-                detail_anchor = next(
+                values = [clean_text(cell.get_text(' ', strip=True)) for cell in cells]
+                process_index = next(
                     (
-                        item for item in container.find_all('a', href=True)
-                        if '/jurisprudencia/exibir' in str(item.get('href'))
+                        position for position, value in enumerate(values)
+                        if re.search(r'\d+\s*/\s*\d+\s*/\s*\d+', value)
                     ),
                     None,
                 )
-                if detail_anchor is not None:
-                    detail_url = urljoin(response.url, str(detail_anchor.get('href')))
+                if process_index is None:
+                    continue
+                process = values[process_index]
+                if process in seen:
+                    continue
+                date_index = next(
+                    (
+                        position for position, value in enumerate(values)
+                        if re.search(r'\d{2}/\d{2}/\d{4}', value)
+                    ),
+                    None,
+                )
+                if date_index is None:
+                    continue
+                date_text = values[date_index]
 
-                date_text = date_match.group(0)
-                trecho = ''
-                excerpt = container.find_next_sibling()
-                if excerpt is not None:
+                next_row = row.find_next_sibling('tr')
+                trecho_items = []
+                if next_row is not None:
                     trecho_items = [
                         clean_text(item.get_text(' ', strip=True))
-                        for item in excerpt.find_all('li')
+                        for item in next_row.find_all('li')
                         if clean_text(item.get_text(' ', strip=True))
                     ]
-                    trecho = ' '.join(trecho_items)
+                trecho = ' '.join(trecho_items)
                 if not trecho:
-                    trecho_match = re.search(
-                        r'Trechos localizados no documento:\s*(.+?)(?=\s*(?:\d+\s*/\s*\d+\s*/\s*\d+|$))',
-                        container_text,
-                        re.I,
-                    )
-                    if trecho_match:
-                        trecho = clean_text(trecho_match.group(1))
+                    excerpt_text = clean_text(next_row.get_text(' ', strip=True)) if next_row is not None else ''
+                    if excerpt_text and 'trechos localizados' not in excerpt_text.casefold():
+                        trecho = excerpt_text
 
+                detail_anchor = next(
+                    (
+                        anchor for anchor in row.find_all('a', href=True)
+                        if '/jurisprudencia/exibir' in str(anchor.get('href'))
+                    ),
+                    None,
+                )
+                pdf_anchor = next(
+                    (
+                        anchor for anchor in row.find_all('a', href=True)
+                        if urlparse(urljoin(response.url, str(anchor.get('href')))).path.casefold().endswith('.pdf')
+                    ),
+                    None,
+                )
+                process_url = (
+                    urljoin(response.url, str(detail_anchor.get('href')))
+                    if detail_anchor is not None
+                    else response.url
+                )
+                pdf_url = (
+                    urljoin(response.url, str(pdf_anchor.get('href')))
+                    if pdf_anchor is not None
+                    else ''
+                )
+
+                fallback_ementa = values[6] if len(values) > 6 else ''
                 record = JurisprudenciaRecord(
                     tribunal='TCESP',
                     numero_processo=process,
                     data_autuacao=date_text,
-                    ementa=trecho or container_text,
-                    assunto=[],
-                    tipo_decisao='Jurisprudência',
+                    ementa=trecho or fallback_ementa,
+                    assunto=_as_list(
+                        values[5] if len(values) > 5 else '',
+                        values[6] if len(values) > 6 else '',
+                    ),
+                    tipo_decisao=values[0] or 'Jurisprudência',
                     origem='TCESP — Pesquisa de Jurisprudência',
-                    url_oficial=detail_url,
+                    url_oficial=process_url,
+                    partes=_as_list(
+                        values[3] if len(values) > 3 else '',
+                        values[4] if len(values) > 4 else '',
+                    ),
                 )
+                if pdf_url and record.url_oficial == response.url:
+                    record.url_oficial = pdf_url
+                if detail or with_content:
+                    try:
+                        detail_text, final, content = _detail_enrichment(
+                            self.session,
+                            process_url,
+                            with_content=with_content,
+                        )
+                        record.url_oficial = final
+                        record.relator = _label_value(detail_text, ('Relator', 'RELATOR')) or record.relator
+                        record.data_publicacao = _label_value(
+                            detail_text,
+                            ('Data de Publicação', 'Data da Publicação'),
+                        ) or record.data_publicacao
+                        record.ementa = _extract_ementa(content or detail_text) or record.ementa
+                        if with_content and content:
+                            record.inteiro_teor = content
+                    except Exception as exc:
+                        print(f'aviso: detalhe TCESP indisponível para {process}: {type(exc).__name__}: {exc}')
                 seen.add(process)
                 records.append(record)
                 if len(records) >= limit:
                     return records[:limit]
+
+            if not records:
+                process_pattern = re.compile(r'^[0-9]+ */ *[0-9]+ */ *[0-9]+$')
+                for anchor in soup.find_all('a', href=True):
+                    process = clean_text(anchor.get_text(' ', strip=True))
+                    if not process_pattern.fullmatch(process) or process in seen:
+                        continue
+
+                    container = anchor.find_parent('tr')
+                    if container is None:
+                        container = anchor.find_parent(['li', 'article', 'td', 'div', 'section'])
+                    if container is None:
+                        container = anchor.parent
+                    container_text = clean_text(container.get_text(' ', strip=True)) if container is not None else process
+
+                    date_match = re.search(r'\d{2}/\d{2}/\d{4}', container_text)
+                    if date_match is None and container is not None:
+                        parent = container
+                        for _ in range(4):
+                            parent = parent.parent
+                            if parent is None:
+                                break
+                            candidate = clean_text(parent.get_text(' ', strip=True))
+                            date_match = re.search(r'\d{2}/\d{2}/\d{4}', candidate)
+                            if date_match:
+                                container = parent
+                                container_text = candidate
+                                break
+                    if date_match is None:
+                        continue
+
+                    detail_url = urljoin(response.url, str(anchor.get('href') or ''))
+                    detail_anchor = next(
+                        (
+                            item for item in container.find_all('a', href=True)
+                            if '/jurisprudencia/exibir' in str(item.get('href'))
+                        ),
+                        None,
+                    )
+                    if detail_anchor is not None:
+                        detail_url = urljoin(response.url, str(detail_anchor.get('href')))
+
+                    date_text = date_match.group(0)
+                    trecho = ''
+                    excerpt = container.find_next_sibling()
+                    if excerpt is not None:
+                        trecho_items = [
+                            clean_text(item.get_text(' ', strip=True))
+                            for item in excerpt.find_all('li')
+                            if clean_text(item.get_text(' ', strip=True))
+                        ]
+                        trecho = ' '.join(trecho_items)
+                    if not trecho:
+                        trecho_match = re.search(
+                            r'Trechos localizados no documento:\s*(.+?)(?=\s*(?:\d+\s*/\s*\d+\s*/\s*\d+|$))',
+                            container_text,
+                            re.I,
+                        )
+                        if trecho_match:
+                            trecho = clean_text(trecho_match.group(1))
+
+                    record = JurisprudenciaRecord(
+                        tribunal='TCESP',
+                        numero_processo=process,
+                        data_autuacao=date_text,
+                        ementa=trecho or container_text,
+                        assunto=[],
+                        tipo_decisao='Jurisprudência',
+                        origem='TCESP — Pesquisa de Jurisprudência',
+                        url_oficial=detail_url,
+                    )
+                    seen.add(process)
+                    records.append(record)
+                    if len(records) >= limit:
+                        return records[:limit]
+
+            page_records_added = len(records) - page_records_before
+            if len(records) >= limit:
+                return records[:limit]
+            if page_records_added == 0:
+                break
+            next_offset = offset + page_size
+            if total is not None and next_offset >= total:
+                break
+            offset = next_offset
 
         browser_error = None
         if total is not None and total > 0:
