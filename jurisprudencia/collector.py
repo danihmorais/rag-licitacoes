@@ -1035,7 +1035,31 @@ class STJAdapter(JurisprudenciaAdapter):
         for anchor in soup.find_all('a', href=True):
             href = urljoin(response.url, str(anchor.get('href') or '').strip())
             path = urlparse(href).path
-            match = re.search(r'/(\d{8})\.json
+            match = re.search(r'/(\d{8})\.json$', path)
+            if not match:
+                continue
+            date = match.group(1)
+            candidates.setdefault(
+                date,
+                {
+                    'name': f'{date}.json',
+                    'format': 'JSON',
+                    'mimetype': 'application/json',
+                    'url': href,
+                },
+            )
+
+        resources = sorted(
+            candidates.values(),
+            key=lambda item: str(item.get('name') or ''),
+            reverse=True,
+        )
+        if not resources:
+            raise RuntimeError(
+                f'STJ não encontrou recursos JSON no catálogo público {package_url}.'
+            )
+        return resources[:self.max_months_scanned]
+
     @staticmethod
     def _match(query: str, row: dict[str, Any]) -> bool:
         digits = ''.join(ch for ch in query if ch.isdigit())
