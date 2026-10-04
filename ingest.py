@@ -201,7 +201,7 @@ def read_cache():
 
     documents = {}
     for name, entry in payload['documents'].items():
-        if isinstance(entry, dict):
+        if isinstance(entry, dict) and version in LEGACY_CACHE_VERSIONS:
             migrated = dict(entry)
             migrated['_cache_version'] = int(version)
             documents[name] = migrated
