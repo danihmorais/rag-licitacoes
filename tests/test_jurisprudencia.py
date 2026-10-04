@@ -102,6 +102,38 @@ def test_tcesp_adapter_parses_result_table():
     assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
 
 
+def test_tcesp_adapter_paginates_beyond_first_page():
+    def result(process):
+        return f'''<html><body>
+        <h3>Foram encontrados 25 registros</h3>
+        <table>
+          <tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr>
+          <tr><td>Acórdão</td><td>{process}</td><td>17/03/2025</td><td>EMPRESA</td><td>PREFEITURA</td><td>CONTRATO</td><td>Licitação</td><td>2025</td></tr>
+        </table>
+        </body></html>'''.encode("utf-8")
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return super().get(*args, **kwargs)
+
+    session = CaptureSession([
+        FakeResponse(result("1000/989/25"), content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+        FakeResponse(result("1001/989/25"), content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+        FakeResponse(result("1002/989/25"), content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+    ])
+    records = TCESPAdapter(session).search("licitação", 3)
+
+    assert [record.numero_processo for record in records] == [
+        "1000/989/25", "1001/989/25", "1002/989/25"
+    ]
+    assert [call[1]["params"][7][1] for call in session.calls] == ["0", "10", "20"]
+
+
 def test_tcesp_adapter_accepts_current_result_rows_without_css_class():
     html = '''<html><body>
     <h3>Foram encontrados 191 registros</h3>
