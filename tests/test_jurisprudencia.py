@@ -102,6 +102,38 @@ def test_tcesp_adapter_parses_result_table():
     assert records[0].ementa == "licitação e qualificação técnica devem ser pertinentes e proporcionais."
 
 
+def test_tcesp_adapter_paginates_beyond_first_page():
+    def result(process):
+        return f'''<html><body>
+        <h3>Foram encontrados 25 registros</h3>
+        <table>
+          <tr><th>Doc.</th><th>N° Proc.</th><th>Autuação</th><th>Parte 1</th><th>Parte 2</th><th>Matéria</th><th>Objeto</th><th>Exercício</th></tr>
+          <tr><td>Acórdão</td><td>{process}</td><td>17/03/2025</td><td>EMPRESA</td><td>PREFEITURA</td><td>CONTRATO</td><td>Licitação</td><td>2025</td></tr>
+        </table>
+        </body></html>'''.encode("utf-8")
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return super().get(*args, **kwargs)
+
+    session = CaptureSession([
+        FakeResponse(result("1000/989/25"), content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+        FakeResponse(result("1001/989/25"), content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+        FakeResponse(result("1002/989/25"), content_type="text/html", url="https://www.tce.sp.gov.br/jurisprudencia/pesquisar"),
+    ])
+    records = TCESPAdapter(session).search("licitação", 3)
+
+    assert [record.numero_processo for record in records] == [
+        "1000/989/25", "1001/989/25", "1002/989/25"
+    ]
+    assert [call[1]["params"][7][1] for call in session.calls] == ["0", "10", "20"]
+
+
 def test_tcesp_adapter_accepts_current_result_rows_without_css_class():
     html = '''<html><body>
     <h3>Foram encontrados 191 registros</h3>
@@ -174,28 +206,36 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
     assert path.exists() and '"source_role": "jurisprudencia_controle"' in data and '"version_sha256":' in data
 
 
-def test_stj_adapter_uses_official_open_data_snapshot():
+def test_stj_adapter_parses_official_scon_snapshot():
+    html = '''<html><body>
+      <div class="row itemlistadocumentos p-2">
+        <div class="col-sm-3">
+          <h4>Processo</h4>
+          <div><a href="/SCON/jurisprudencia/doc.jsp?ementa=LICITACAO&i=1">REsp&nbsp;2238193</a></div>
+          <div class="small">(ACORDAO)</div>
+          <div>Ministro X</div>
+          <div>DJe 05/05/2026</div>
+          <div>Decisao: 28/04/2026</div>
+        </div>
+        <div class="col-sm-8">
+          <div class="clsEmentaCompleta">DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS PÚBLICOS.<br>RECURSO CONHECIDO E PROVIDO.</div>
+        </div>
+      </div>
+    </body></html>'''.encode("iso-8859-1")
     session = FakeSession([
-        FakeResponse({"success": True, "result": {"resources": [{
-            "name": "20260915.json", "format": "JSON",
-            "url": "https://dadosabertos.web.stj.jus.br/dataset/espelhos/raw/20260915.json"
-        }]}}),
-        FakeResponse([{
-            "id": "956702", "numeroProcesso": "2238193", "numeroRegistro": "202503517440",
-            "siglaClasse": "REsp", "descricaoClasse": "RECURSO ESPECIAL",
-            "nomeOrgaoJulgador": "TERCEIRA SEÇÃO", "ministroRelator": "Ministro X",
-            "dataPublicacao": "DJEN DATA:05/05/2026",
-            "ementa": "DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS PÚBLICOS.",
-            "tipoDeDecisao": "ACÓRDÃO", "dataDecisao": "20260428",
-            "decisao": "Recurso conhecido e provido."
-        }])
+        FakeResponse(html, content_type="text/html", url=STJAdapter.search_endpoint),
     ])
+
     records = STJAdapter(session).search("licitação", 1)
+
     assert len(records) == 1
     assert records[0].tribunal == "STJ"
-    assert records[0].numero_processo == "2238193"
-    assert records[0].relator == "Ministro X"
-    assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
+    assert records[0].numero_processo == "REsp 2238193"
+    assert records[0].relator == "X"
+    assert records[0].data_publicacao == "05/05/2026"
+    assert STJAdapter.search_endpoint == "https://processo.stj.jus.br/SCON/pesquisar.jsp"
+    assert records[0].url_oficial.startswith("https://processo.stj.jus.br/SCON/jurisprudencia/doc.jsp")
+
 
 def test_stf_form_is_discovered_without_hardcoding_input_name():
     from bs4 import BeautifulSoup
@@ -327,6 +367,81 @@ def test_tjsp_falls_back_from_long_query():
     ])).search("Lei 14.133 licitação contrato administrativo", 1)
     assert len(records) == 1
     assert records[0].numero_processo == "1000000-10.2026.8.26.0053"
+
+def test_stj_resources_fall_back_to_public_catalog_when_ckan_api_is_forbidden():
+    class ForbiddenResponse(FakeResponse):
+        def raise_for_status(self):
+            from requests import HTTPError
+            raise HTTPError("403 Client Error: Forbidden")
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return super().get(*args, **kwargs)
+
+    html = '''<html><body>
+      <a href="/dataset/abc/resource/1/download/20260831.json">20260831.json</a>
+      <a href="/dataset/abc/resource/2/download/20260731.json">20260731.json</a>
+      <a href="/dataset/abc/resource/3/download/20260630.json">20260630.json</a>
+    </body></html>'''.encode("utf-8")
+
+    session = CaptureSession([
+        ForbiddenResponse({"error": "forbidden"}, content_type="application/json"),
+        FakeResponse(html, content_type="text/html", url="https://dadosabertos.web.stj.jus.br/dataset/espelhos-de-acordaos-corte-especial"),
+    ])
+    resources = STJAdapter(session)._resources("espelhos-de-acordaos-corte-especial")
+
+    assert [item["name"] for item in resources] == [
+        "20260831.json", "20260731.json", "20260630.json"
+    ]
+    assert session.calls[1][0][0].endswith("/dataset/espelhos-de-acordaos-corte-especial")
+
+
+def test_stj_adapter_uses_direct_scon_endpoint():
+    html = '''<html><body>
+      <div class="row itemlistadocumentos p-2">
+        <div class="col-sm-3">
+          <h4>Processo</h4>
+          <div><a href="/SCON/jurisprudencia/doc.jsp?ementa=LICITACAO&i=1">REsp&nbsp;1234567</a></div>
+          <div class="small">(ACORDAO)</div>
+          <div>Ministro EXEMPLO</div>
+          <div>DJe 30/09/2026</div>
+          <div>Decisao: 29/09/2026</div>
+        </div>
+        <div class="col-sm-8">
+          <div class="clsEmentaCompleta">LICITAÇÃO E CONTRATO ADMINISTRATIVO.<br>RECURSO PROVIDO.</div>
+        </div>
+      </div>
+    </body></html>'''.encode("iso-8859-1")
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def request(self, method, *args, **kwargs):
+            self.calls.append((method, args, kwargs))
+            return super().request(method, *args, **kwargs)
+
+    session = CaptureSession([
+        FakeResponse(html, content_type="text/html", url=STJAdapter.search_endpoint),
+    ])
+    records = STJAdapter(session).search("licitação", 1)
+
+    assert len(records) == 1
+    assert records[0].numero_processo == "REsp 1234567"
+    assert records[0].relator == "EXEMPLO"
+    assert records[0].data_publicacao == "30/09/2026"
+    assert records[0].data == "29/09/2026"
+    assert "LICITAÇÃO E CONTRATO ADMINISTRATIVO." in records[0].ementa
+    assert session.calls[0][0] == "POST"
+    assert session.calls[0][1][0] == STJAdapter.search_endpoint
+    assert b"licita%E7%E3o" in session.calls[0][2]["data"]
+
 
 def test_stj_adapter_uses_current_open_data_host():
     assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"

@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import gc
 import hashlib
@@ -715,9 +716,20 @@ def validate_dense_vectors(vectors, expected):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description='Sincroniza fontes e indexa o RAG jurídico.'
+    )
+    parser.add_argument(
+        '--no-sync',
+        action='store_true',
+        help='não executa a coleta; indexa somente o conteúdo já presente no cache/fontes locais.',
+    )
+    args = parser.parse_args()
+
     config.ensure_directories()
-    sync_sources()
-    sync_jurisprudencia()
+    if not args.no_sync:
+        sync_sources()
+        sync_jurisprudencia()
     files = load_documents()
     client = QdrantClient(path=str(config.QDRANT_PATH))
     manifest = read_manifest()
