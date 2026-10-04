@@ -393,6 +393,48 @@ def test_stj_resources_fall_back_to_public_catalog_when_ckan_api_is_forbidden():
     assert session.calls[1][0][0].endswith("/dataset/espelhos-de-acordaos-corte-especial")
 
 
+def test_stj_adapter_uses_direct_scon_endpoint():
+    html = '''<html><body>
+      <div class="row itemlistadocumentos p-2">
+        <div class="col-sm-3">
+          <h4>Processo</h4>
+          <div><a href="/SCON/jurisprudencia/doc.jsp?ementa=LICITACAO&i=1">REsp&nbsp;1234567</a></div>
+          <div class="small">(ACORDAO)</div>
+          <div>Ministro EXEMPLO</div>
+          <div>DJe 30/09/2026</div>
+          <div>Decisao: 29/09/2026</div>
+        </div>
+        <div class="col-sm-8">
+          <div class="clsEmentaCompleta">LICITAÇÃO E CONTRATO ADMINISTRATIVO.<br>RECURSO PROVIDO.</div>
+        </div>
+      </div>
+    </body></html>'''.encode("iso-8859-1")
+
+    class CaptureSession(FakeSession):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.calls = []
+
+        def request(self, method, *args, **kwargs):
+            self.calls.append((method, args, kwargs))
+            return super().request(method, *args, **kwargs)
+
+    session = CaptureSession([
+        FakeResponse(html, content_type="text/html", url=STJAdapter.search_endpoint),
+    ])
+    records = STJAdapter(session).search("licitação", 1)
+
+    assert len(records) == 1
+    assert records[0].numero_processo == "REsp 1234567"
+    assert records[0].relator == "EXEMPLO"
+    assert records[0].data_publicacao == "30/09/2026"
+    assert records[0].data == "29/09/2026"
+    assert "LICITAÇÃO E CONTRATO ADMINISTRATIVO." in records[0].ementa
+    assert session.calls[0][0] == "POST"
+    assert session.calls[0][1][0] == STJAdapter.search_endpoint
+    assert b"licita%E7%E3o" in session.calls[0][2]["data"]
+
+
 def test_stj_adapter_uses_current_open_data_host():
     assert STJAdapter.endpoint == "https://dadosabertos.web.stj.jus.br"
 
