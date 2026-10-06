@@ -42,7 +42,7 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'dense_max_tokens': config.DENSE_MAX_TOKENS,
         'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
         'schema': 'doc_id/unit_id/chunk_index/page_span/page_uncertain/source_role/status/authority_level/source_id/document_hash/regime_juridico/tipo_documento/numero_sumula/text_origin/extraction_confidence/page_extraction/page_content/embedding_text/chunking_method',
-        'manifest_schema_version': 8,
+        'manifest_schema_version': 1,
         'ocr_settings': {
             'enabled': config.OCR_ENABLED,
             'required': config.OCR_REQUIRED,
