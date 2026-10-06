@@ -43,5 +43,7 @@ jobs:
         run: python -m compileall -q .
       - name: Verificar OCR
         run: python -c "import fitz, pytesseract; print(pytesseract.get_tesseract_version())"
+      - name: Gate de evidência offline
+        run: python evaluation.py --gate-only --strict --min-gate-rejection 0.80
       - name: Testes offline
         run: python -m pytest -v

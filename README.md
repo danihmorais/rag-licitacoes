@@ -12,6 +12,26 @@ A recuperação combina busca semântica e lexical, reranking, filtros jurídico
 
 > Jurisprudência, doutrina, pareceres e orientações não são tratados como texto legal. A resposta deve permanecer vinculada às evidências recuperadas e aos metadados de jurisdição, autoridade e temporalidade.
 
+## Ambiente de execução
+
+O projeto é validado e executado com Python 3.12. O ambiente 3.14 não é compatível com os pins de dependência do projeto e deve ser evitado.
+
+### Opção recomendada com uv
+
+```powershell
+uv venv --python 3.12 .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+### Execução direta em Python 3.12 sem ativar o venv
+
+```powershell
+uv run --python 3.12 --with-requirements requirements.txt python -m pytest -q
+```
+
+> A instalação deve usar o venv do projeto ou o comando `uv run` com Python 3.12. Evite executar `python` do instalador global do Windows ou o Python 3.14 gerenciado pelo uv diretamente, porque as versões pinadas em `requirements.txt` não são compatíveis com esse ambiente.
+
 ## Arquitetura
 
 ~~~text

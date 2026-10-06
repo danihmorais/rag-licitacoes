@@ -5,8 +5,11 @@ import math
 
 from evaluation import (
     DEFAULT_DATASET,
+    article_recall_at_k,
+    device_recall_at_k,
     evaluate_evidence_gate,
     evaluate_rankings,
+    false_positive_article_rate,
     load_cases,
     load_evidence_gate_cases,
     ndcg_at_k,
@@ -141,3 +144,29 @@ def test_evidence_gate_report_measures_correct_rejection_rate():
     assert report['summary']['false_accept_rate'] == 0.0
     assert report['summary']['correct_acceptance_rate'] == 1.0
     assert report['summary']['accuracy'] == 1.0
+
+
+def test_article_and_device_recall_are_measured_at_device_level():
+    ranking = [
+        point('lei14133'),
+        point('lei14133'),
+    ]
+    ranking[0].payload['unit_id'] = 'artigo:1'
+    ranking[0].payload['unit_ref'] = 'Art. 1º'
+    ranking[1].payload['unit_id'] = 'artigo:2'
+    ranking[1].payload['unit_ref'] = 'Art. 2º'
+
+    assert article_recall_at_k(ranking, {'Art. 1º'}, 1) == 1.0
+    assert article_recall_at_k(ranking, {'Art. 1º', 'Art. 2º'}, 2) == 1.0
+    assert device_recall_at_k(ranking, {'artigo:2', 'artigo:3'}, 2) == 0.5
+
+
+def test_false_positive_article_rate_counts_unexpected_hits():
+    ranking = [
+        point('lei14133'),
+        point('lei14133'),
+    ]
+    ranking[0].payload['unit_ref'] = 'Art. 1º'
+    ranking[1].payload['unit_ref'] = 'Art. 999º'
+
+    assert false_positive_article_rate(ranking, {'Art. 1º'}, 2) == 0.5

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -209,6 +210,46 @@ def _native_extraction_confidence(text):
     return round(max(0.0, min(1.0, confidence)), 4)
 
 
+def _sanitize_extracted_page_text(text):
+    text = str(text or '')
+    if not text.strip():
+        return ''
+
+    def is_page_noise(line):
+        token = re.sub(r'\s+', ' ', line).strip()
+        if not token:
+            return True
+        if re.fullmatch(r'(?i)(?:P[AÁ]GINA|PAGINA|PAGE)\s*[:\-]?\s*\d+[A-Za-z-]*', token):
+            return True
+        if re.fullmatch(r'(?i)(?:LEI|DECRETO|DECRETO-LEI|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA|MEDIDA|REGULAMENTO|NORMA)\b.*', token):
+            return True
+        if re.fullmatch(r'\d{1,5}(?:\s*[-/]\s*\d+)?', token):
+            return True
+        return False
+
+    lines = [re.sub(r'\s+', ' ', line).strip() for line in text.splitlines()]
+    while lines and is_page_noise(lines[0]):
+        lines.pop(0)
+    while lines and is_page_noise(lines[-1]):
+        lines.pop()
+
+    if not lines:
+        return ''
+
+    deduped = []
+    for line in lines:
+        if line and deduped and line == deduped[-1] and is_page_noise(line):
+            continue
+        deduped.append(line)
+
+    cleaned = '\n'.join(deduped)
+    cleaned = re.sub(r'(?<=\w)-\s+(?=\w)', '', cleaned)
+    cleaned = re.sub(r'(?m)^(?:P[AÁ]GINA|PAGINA|PAGE)\s*[:\-]?\s*\d+[A-Za-z-]*\s*$', '', cleaned, flags=re.I)
+    cleaned = re.sub(r'(?m)^\d{1,5}(?:\s*[-/]\s*\d+)?\s*$', '', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned
+
+
 def _ocr_page(pdf_document, page_number):
     try:
         import pymupdf
@@ -248,9 +289,9 @@ def extract_page_records(path):
         return [
             {
                 'page': index,
-                'text': text,
+                'text': _sanitize_extracted_page_text(text),
                 'text_origin': 'native',
-                'extraction_confidence': _native_extraction_confidence(text),
+                'extraction_confidence': _native_extraction_confidence(_sanitize_extracted_page_text(text)),
             }
             for index, text in enumerate(path.read_text(encoding='utf-8').split(PAGE_BREAK), 1)
         ]
@@ -269,9 +310,9 @@ def extract_page_records(path):
                     or native_confidence < config.OCR_MIN_NATIVE_CONFIDENCE
                 )
             )
-            text = native_text
+            text = _sanitize_extracted_page_text(native_text)
             origin = 'native'
-            confidence = native_confidence
+            confidence = _native_extraction_confidence(text)
             if needs_ocr:
                 if ocr_document is None:
                     try:
@@ -288,9 +329,9 @@ def extract_page_records(path):
                         ) from exc
                     ocr_text, ocr_confidence = '', 0.0
                 if ocr_text.strip():
-                    text = ocr_text
+                    text = _sanitize_extracted_page_text(ocr_text)
                     origin = 'ocr'
-                    confidence = ocr_confidence
+                    confidence = _native_extraction_confidence(text) if not text.strip() else ocr_confidence
                 elif config.OCR_REQUIRED:
                     raise RuntimeError(
                         f'OCR não produziu texto na página {page_number} de {path.name}.'
@@ -443,11 +484,22 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
             hierarchy = hierarchy[1:]
             page_content = compose_page_content(hierarchy)
         embedding_text = 'passage: ' + page_content
+        if token_count(embedding_text) > config.DENSE_MAX_TOKENS:
+            raise RuntimeError(
+                'Chunk excede o limite de tokens do embedding; reduza o texto, a hierarquia ou '
+                'RAG_DENSE_MAX_TOKENS para manter a invariante de tamanho.'
+            )
+        source_text = chunk.get('source_text', chunk.get('text'))
+        retrieval_text = chunk.get('retrieval_text', page_content)
         output.append({
             **chunk,
             'text': chunk['text'],
+            'source_text': source_text,
+            'retrieval_text': retrieval_text,
             'page_content': page_content,
             'embedding_text': embedding_text,
+            'source_start': chunk.get('source_start', chunk.get('start')),
+            'source_end': chunk.get('source_end', chunk.get('end')),
             'doc_id': doc_id,
             'source': document.name,
             'source_id': meta.get('source_id') or document.stem,

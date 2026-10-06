@@ -44,7 +44,10 @@ def test_old_regimes_are_hard_excluded_for_normal_queries():
     assert compiled is not None
     assert compiled.must_not
     assert compiled.must_not[0].key == "regime_juridico"
-    assert set(compiled.must_not[0].match.any) == {"lei_8666"}
+    excluded = set()
+    for condition in compiled.must_not:
+        excluded.update(getattr(condition.match, "any", []))
+    assert excluded == {"lei_8666", "lei_10520", "lei_12462"}
 
 
 def test_transition_query_does_not_apply_hard_exclusion():

@@ -52,6 +52,9 @@ ARTICLE_CITATION_PREFIX_RE = re.compile(
     r"(?:\b(?:o|a|os|as|no|na|nos|nas|do|da|dos|das|em|ao|à|conforme|segundo|previsto|disposto|artigo|arts?)\s*)$",
     re.I,
 )
+AMENDMENT_CONTEXT_RE = re.compile(
+    r"(?i)(?:passa\s+a\s+vigorar|fica\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida)|acrescenta(?:-se)?|inclui(?:-se)?|reda[cç][aã]o|passa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o)"
+)
 SUMULA_RE = re.compile(
     r"^[ \t]*(S[uú]mula(?:\s+Vinculante)?\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b",
     re.I | re.M,
@@ -81,14 +84,15 @@ def _roman_to_text(number):
 
 _ROMAN_FORMS = tuple(_roman_to_text(number) for number in range(1, 101))
 ROMAN_RE = r"(?:%s)" % "|".join(sorted(_ROMAN_FORMS, key=lambda item: (-len(item), item)))
+_ROMAN_SUFFIX_RE = rf"(?:{ROMAN_RE})(?:-[A-Za-z]{{1,3}})?"
 
-_ROMAN_MARKER = rf"(?-i:{ROMAN_RE})\s*(?:\)|[.–—-](?=\s|$))"
+_ROMAN_MARKER = rf"(?-i:{_ROMAN_SUFFIX_RE})\s*(?:\)|[.–—-](?=\s|$))"
 _ALINEA_MARKER = (
     r"(?:\([A-Za-z]{1,3}\)|[A-Za-z]{1,3}\s*\))"
     r"|(?:[A-Za-z]{1,3}\s*[–—-](?=\s|$))"
 )
 _ITEM_MARKER = r"(?:\(\d{1,3}\)|\d{1,3}\s*(?:\)|[.–—-](?=\s|$)))"
-_NAMED_INCISO_MARKER = rf"(?:Inciso)\s+(?-i:{ROMAN_RE})\s*(?:\)|[.–—-])?(?=\s|$)"
+_NAMED_INCISO_MARKER = rf"(?:Inciso)\s+(?-i:{_ROMAN_SUFFIX_RE})\s*(?:\)|[.–—-])?(?=\s|$)"
 _NAMED_ALINEA_MARKER = rf"(?:Al[ií]nea)\s+[A-Za-z]{{1,3}}\s*(?:\)|[.–—-])?(?=\s|$)"
 
 _CHILD_MARKER = (
@@ -354,6 +358,22 @@ def _article_marker_is_real_header_at(text, start, end, ref):
     if not ref.endswith(".") and CITATION_WORD_RE.match(tail):
         return False
 
+    context_start = max(0, start - 500)
+    context = text[context_start:start]
+    amendment_match = AMENDMENT_CONTEXT_RE.search(context)
+    if amendment_match:
+        trailing_after_amendment = context[amendment_match.end():]
+        before_marker = text[max(0, start - 120):start]
+        after_marker = text[end:end + 120]
+        quoted_article_prefix = bool(re.search(r'["“‘\'\"]\s*Art(?:igo)?\.?\s*', before_marker, re.I))
+        quoted_article_suffix = bool(re.search(r'["”’]\s*(?:\([A-ZÀ-Ý]+\)|\s*(?:\([A-ZÀ-Ý]+\)|\(NR\)|\(NR\)?)?)?$', after_marker))
+        has_opening_quote = bool(re.search(r'["“‘\'\"]', trailing_after_amendment))
+        has_intervening_article = bool(ARTIGO_INLINE_RE.search(trailing_after_amendment))
+        if quoted_article_prefix and quoted_article_suffix:
+            return False
+        if has_opening_quote and not has_intervening_article:
+            return False
+
     line_start = text.rfind("\n", 0, start) + 1
     before = text[line_start:start]
     stripped_before = before.strip()
@@ -403,7 +423,7 @@ def _classify_child(ref):
         return "inciso"
     if re.match(r"^Al[ií]nea\b", normalized, re.I):
         return "alinea"
-    if re.fullmatch(rf"{ROMAN_RE}\s*[.)–—-]", normalized, re.I):
+    if re.fullmatch(rf"{_ROMAN_SUFFIX_RE}\s*(?:[.)–—-]|$)", normalized, re.I):
         return "inciso"
     if (
         re.fullmatch(r"\([A-Za-z]{1,3}\)", normalized)
@@ -430,13 +450,100 @@ def _is_thousands_fragment(article_text, match):
     )
 
 
-def _article_children(article_text):
-    matches = [
-        match
-        for match in _merged_marker_matches(_ocr_structure_view(article_text), CHILD_RE, CHILD_INLINE_RE)
-        if not _is_article_number_inline_child(article_text, match)
-        and not _is_thousands_fragment(article_text, match)
+AMENDMENT_RE = re.compile(
+    r"(?:"
+    r"(?P<target_before>(?:O\s+|Os\s+)?(?:Art(?:igo)?s?\.?\s+\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?|Inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?))"
+    r"\s+(?:passa(?:m)?\s+a\s+vigorar(?:\s+com\s+a\s+seguinte\s+reda[cç][aã]o)?|fica(?:m)?\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida|acrescentados|acrescentadas|inseridos|inseridas|incluidos|incluidas)|acrescenta(?:m|-se)?|inclui(?:m|-se)?)"
+    r"|"
+    r"(?:passa(?:m)?\s+a\s+vigorar(?:\s+com\s+a\s+seguinte\s+reda[cç][aã]o)?|fica(?:m)?\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida|acrescentados|acrescentadas|inseridos|inseridas|incluidos|incluidas)|acrescenta(?:m|-se)?|inclui(?:m|-se)?)"
+    r"\s*(?:o(?:s)?\s+)?(?P<target_after>(?:Art(?:igo)?s?\.?\s+\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?|Inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?))"
+    r")",
+    re.I,
+)
+
+
+def _normalize_article_ref(ref):
+    if ref is None:
+        return None
+    normalized = re.sub(r"\s+", " ", str(ref).strip())
+    normalized = normalized.lower().replace("º", "o").replace("°", "o")
+    normalized = re.sub(r"[^a-z0-9-]", "", normalized)
+    return normalized
+
+
+def _detect_amendment(text, current_ref=None):
+    if not text:
+        return None
+    match = AMENDMENT_RE.search(text)
+    if not match:
+        return None
+
+    explicit_candidates = [
+        candidate.strip() for candidate in (
+            match.group("target_before"),
+            match.group("target_after"),
+        ) if candidate and candidate.strip()
     ]
+    explicit_candidates = list(dict.fromkeys(explicit_candidates))
+
+    candidate_refs = []
+    for article_match in ARTIGO_INLINE_RE.finditer(text):
+        ref = article_match.group(1).strip()
+        if current_ref and _normalize_article_ref(ref) == _normalize_article_ref(current_ref):
+            continue
+        if article_match.start() > match.start():
+            candidate_refs.append(ref)
+
+    target_candidates = []
+    for candidate in explicit_candidates + candidate_refs:
+        refs = [ref.group(1).strip() for ref in ARTIGO_INLINE_RE.finditer(candidate)]
+        if refs:
+            target_candidates.extend(refs)
+            continue
+        clean = re.sub(r"\s+", " ", candidate).strip()
+        clean = re.sub(r"^(?:O|Os|A|As|No|Na|Nos|Nas)\s+", "", clean, flags=re.I)
+        target_candidates.append(clean)
+
+    target = None
+    for candidate in target_candidates:
+        clean = re.sub(r"\s+", " ", candidate).strip()
+        clean = re.sub(r"\.$", "", clean)
+        clean = re.sub(r"^(?P<prefix>art(?:igo)?)\s*\.?\s*(?=\d)", "Art. ", clean, flags=re.I)
+        if current_ref and _normalize_article_ref(clean) == _normalize_article_ref(current_ref):
+            continue
+        target = clean
+        break
+
+    if not target:
+        return None
+
+    amendment_type = "redacao"
+    lower = match.group(0).lower()
+    if any(token in lower for token in ("acrescido", "acrescida", "acrescentado", "acrescentada", "inserido", "inserida", "incluido", "incluida")):
+        amendment_type = "acrescimo"
+    elif "inciso" in target.lower():
+        amendment_type = "inciso"
+    return {
+        "amendment": True,
+        "target_article": target,
+        "amendment_type": amendment_type,
+    }
+
+
+def _article_children(article_text):
+    filtered_matches = []
+    for match in _merged_marker_matches(_ocr_structure_view(article_text), CHILD_RE, CHILD_INLINE_RE):
+        if _is_article_number_inline_child(article_text, match):
+            continue
+        if _is_thousands_fragment(article_text, match):
+            continue
+        ref = match.group(1).strip()
+        if re.fullmatch(r"\(?N\.?R\.?\)?", ref, re.I):
+            before = article_text[max(0, match.start(1) - 200):match.start(1)]
+            if re.search(r'["“‘\'\"]\s*Art(?:igo)?\.?\s*.*?["”’]\s*$', before, re.I | re.S):
+                continue
+        filtered_matches.append(match)
+    matches = filtered_matches
     if not matches:
         return article_text.strip(), []
 
@@ -587,22 +694,30 @@ def _article_units(text):
 
 
 JURIS_SECTION_RE=re.compile(r"(?im)^[ \t]*(EMENTA|TESE/ENTENDIMENTO|TESE|DECISÃO|DECISAO|INTEIRO TEOR|RELATÓRIO|RELATORIO|VOTO|DISPOSITIVO)\s*:?[ \t]*$")
+
+def _trimmed_span(value,base_start=0):
+    leading=len(value)-len(value.lstrip())
+    return base_start+leading,value.strip()
+
 def _jurisprudencia_units(text):
     matches=list(JURISPRUDENCIA_RE.finditer(text))
     if not matches:return None
     units=[]
     for i,m in enumerate(matches):
-        start=m.start();end=matches[i+1].start() if i+1<len(matches) else len(text);value=text[start:end].strip();process=re.search(r"^PROCESSO:\s*(.+)$",value,re.I|re.M);sumula=re.search(r"^S[ÚU]MULA:\s*(.+)$",value,re.I|re.M);ref=process.group(1).strip() if process else sumula.group(1).strip() if sumula else None
+        start=m.start();end=matches[i+1].start() if i+1<len(matches) else len(text);start,value=_trimmed_span(text[start:end],start);process=re.search(r"^PROCESSO:\s*(.+)$",value,re.I|re.M);sumula=re.search(r"^S[ÚU]MULA:\s*(.+)$",value,re.I|re.M);ref=process.group(1).strip() if process else sumula.group(1).strip() if sumula else None
         units.append({"kind":"jurisprudencia","ref":ref,"start":start,"text":value,"headers":[]})
     return units or None
 
 def _jurisprudencia_sections(text):
     matches=list(JURIS_SECTION_RE.finditer(text))
-    if not matches:return [{"kind":"jurisprudencia","ref":None,"start":0,"text":text.strip(),"section":"inteiro_teor"}] if text.strip() else []
+    if not matches:
+        start,value=_trimmed_span(text)
+        return [{"kind":"jurisprudencia","ref":None,"start":start,"text":value,"section":"inteiro_teor"}] if value else []
     sections=[];first=matches[0].start()
-    if text[:first].strip():sections.append({"kind":"jurisprudencia","ref":None,"start":0,"text":text[:first].strip(),"section":"metadados"})
+    start,value=_trimmed_span(text[:first])
+    if value:sections.append({"kind":"jurisprudencia","ref":None,"start":start,"text":value,"section":"metadados"})
     for i,m in enumerate(matches):
-        start=m.start();end=matches[i+1].start() if i+1<len(matches) else len(text);label=re.sub(r"\s+"," ",m.group(1)).strip().casefold().replace(" ","_");value=text[start:end].strip()
+        start=m.start();end=matches[i+1].start() if i+1<len(matches) else len(text);label=re.sub(r"\s+"," ",m.group(1)).strip().casefold().replace(" ","_");start,value=_trimmed_span(text[start:end],start)
         if value:sections.append({"kind":"jurisprudencia","ref":None,"start":start,"text":value,"section":label})
     return sections
 
@@ -641,7 +756,8 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
             unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
-                    output.append({"text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":u["start"]+section["start"]+rel,"end":u["start"]+section["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
+                    source_start=u["start"]+section["start"]+rel;source_end=u["start"]+section["start"]+_end
+                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
         if output:return output
     output=[];ref_counts={}
     for unit in units:
@@ -651,20 +767,21 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         if not unit["text"].strip():continue
         ref=unit.get("ref");unit_id=(f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}")+(f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
         headers=list(unit.get("headers") or [])
+        amendment = _detect_amendment(unit["text"], ref) if unit["kind"] == "artigo" else None
         if unit["kind"]!="artigo":
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False})
             continue
         caput,children=_article_children(unit["text"])
         article_ref=ref or "Artigo"
         article_header=[*headers,article_ref]
         if not children:
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"amendment_type":(amendment or {}).get("amendment_type")})
             continue
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False})
+            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"amendment_type":(amendment or {}).get("amendment_type")})
             caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
@@ -678,6 +795,6 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
                 child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
             for local_index,(piece,relative,_end) in enumerate(child_spans):
                 rendered=f"{child_prefix}\n{piece}".strip()
-                output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_oversize":context_oversize})
+                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"amendment_type":(amendment or {}).get("amendment_type")})
             next_index+=len(child_spans)
     return output

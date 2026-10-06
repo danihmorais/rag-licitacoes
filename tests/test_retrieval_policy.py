@@ -55,8 +55,23 @@ def test_ambiguous_query_keeps_jurisdiction_neutral():
     assert _query_jurisdiction("qual o prazo para impugnar edital?") is None
 
 
+def test_query_jurisdiction_handles_tuple_and_uppercase_inputs():
+    from query import _query_jurisdiction
+    assert _query_jurisdiction("pergunta", {"jurisdicao": ("FEDERAL",)}) == "federal"
+    assert _query_jurisdiction("pergunta", {"jurisdicao": {"estadual_sp"}}) == "estadual_sp"
+
+
 def test_structured_jurisdiction_overrides_keyword_ambiguity():
     assert _query_jurisdiction("qual o prazo para impugnar edital?", {"jurisdicao": ["estadual_sp"]}) == "estadual_sp"
+
+
+def test_qfilter_accepts_tuple_or_set_jurisdiction_filters():
+    from query import qfilter
+    filter_tuple = qfilter(filters={"jurisdicao": ("federal", "estadual_sp")}, query="licitação")
+    filter_set = qfilter(filters={"jurisdicao": {"federal", "estadual_sp"}}, query="licitação")
+    assert filter_tuple is not None and filter_set is not None
+    assert filter_tuple.must[0].match.any == ["federal", "estadual_sp"]
+    assert filter_set.must[0].match.any == ["federal", "estadual_sp"]
 
 
 class FakeDenseVector:

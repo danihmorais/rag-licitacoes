@@ -39,6 +39,7 @@ QDRANT_PAYLOAD_INDEXES = {
     'jurisdicao': 'keyword', 'esfera': 'keyword', 'orgao': 'keyword', 'tribunal': 'keyword',
     'tipo_documento': 'keyword', 'source_role': 'keyword', 'status': 'keyword', 'municipio': 'keyword',
     'modalidade': 'keyword', 'tipo': 'keyword', 'numero_sumula': 'keyword', 'regime_juridico': 'keyword',
+    'document_regime': 'keyword', 'source_identity': 'keyword', 'cited_regimes': 'keyword',
     'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
     'revogado': 'bool', 'chunking_method': 'keyword',
 }

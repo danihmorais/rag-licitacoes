@@ -1,5 +1,6 @@
 """Regressões de estrutura jurídica no chunking (hierarquia, perda de texto, falsos limites)."""
 import re
+from pathlib import Path
 
 import chunking
 from chunking import build_structural_chunks
@@ -139,6 +140,17 @@ def test_unit_id_distingue_artigos_com_a_mesma_referencia():
     assert len(ids) == 2 and len(set(ids)) == 2
 
 
+def test_fixture_real_da_lei_14133_preserva_ordem_e_ref_do_artigo():
+    fixture = Path(__file__).resolve().parent / "fixtures" / "legal_act.txt"
+    text = fixture.read_text(encoding="utf-8")
+    chunks = chunks_of(text)
+    articles = [item["unit_ref"] for item in chunks if item["unit_kind"] == "artigo"]
+    assert articles[:4] == ["Art. 1º", "Art. 2º", "Art. 3º", "Art. 4º"]
+    assert articles[-1] == "Art. 8º"
+    assert len(articles) == 8
+    assert all(article.startswith("Art.") for article in articles)
+
+
 def test_end_aponta_para_o_trecho_na_fonte_e_nao_inclui_o_prefixo():
     text = (
         "CAPÍTULO I\nArt. 1º Regra do caput que precisa de contexto:\n"
@@ -165,3 +177,49 @@ def test_aspas_de_abertura_do_artigo_emendado_nao_ficam_no_artigo_anterior():
     text = "Art. 5º O Decreto-Lei passa a vigorar com o artigo:\n“Art. 337-E. Admitir à licitação.” (NR)\nArt. 6º Vigência."
     by_ref = {c["unit_ref"]: c for c in chunks_of(text)}
     assert not by_ref["Art. 5º"]["text"].rstrip().endswith("“")
+
+
+def test_artigo_entre_aspas_em_formula_de_alteracao_nao_gera_artigo_irmao():
+    text = (
+        "Art. 5º O Decreto-Lei passa a vigorar com o artigo:\n"
+        "“Art. 337-E. Admitir à licitação.” (NR)\n"
+        "Art. 6º Vigência."
+    )
+    refs = [item["unit_ref"] for item in chunks_of(text) if item["unit_kind"] == "artigo"]
+    assert refs == ["Art. 5º", "Art. 6º"]
+
+
+def test_alteracao_com_fica_acrescentado_eh_identificada_sem_gerar_artigo_falso():
+    text = (
+        "Art. 2º Fica acrescentado o art. 75-A:\n"
+        "“Art. 75-A. Nova regra de licitação.”\n"
+        "Art. 3º Vigência."
+    )
+    by_ref = {item["unit_ref"]: item for item in chunks_of(text) if item["unit_kind"] == "artigo"}
+    assert by_ref["Art. 2º"]["amendment"] is True
+    assert by_ref["Art. 2º"]["target_article"] == "Art. 75-A"
+    assert list(by_ref) == ["Art. 2º", "Art. 3º"]
+
+
+def test_alteracao_plural_com_ficam_acrescentados_eh_identificada_sem_gerar_artigo_falso():
+    text = (
+        "Art. 2º Ficam acrescentados os arts. 75-A e 76-A:\n"
+        "“Art. 75-A. Nova regra de licitação.”\n"
+        "“Art. 76-A. Segunda regra de licitação.”\n"
+        "Art. 3º Vigência."
+    )
+    by_ref = {item["unit_ref"]: item for item in chunks_of(text) if item["unit_kind"] == "artigo"}
+    assert by_ref["Art. 2º"]["amendment"] is True
+    assert by_ref["Art. 2º"]["target_article"] == "Art. 75-A"
+
+
+def test_alteracao_com_passa_a_vigorar_com_redacao_eh_identificada_sem_gerar_artigo_falso():
+    text = (
+        "Art. 5º O art. 75 passa a vigorar com a seguinte redação:\n"
+        "“Art. 75. Nova regra de licitação.”\n"
+        "Art. 6º Vigência."
+    )
+    by_ref = {item["unit_ref"]: item for item in chunks_of(text) if item["unit_kind"] == "artigo"}
+    assert by_ref["Art. 5º"]["amendment"] is True
+    assert by_ref["Art. 5º"]["target_article"] == "Art. 75"
+    assert list(by_ref) == ["Art. 5º", "Art. 6º"]

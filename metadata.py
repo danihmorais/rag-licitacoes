@@ -115,6 +115,32 @@ REGIME_CANONICAL = {
 }
 
 
+def _normalize_regime_key(value):
+    text = str(value or '').strip().lower()
+    if not text:
+        return None
+    for key, label in REGIME_CANONICAL.items():
+        if text in {key, label.casefold()}:
+            return key
+    return text
+
+
+def _extract_cited_regimes(text, document_regime):
+    haystack = str(text or '')
+    results = []
+    for key, pattern in (
+        ('lei_14133', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?14[.\- ]133\b', re.I)),
+        ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\b', re.I)),
+        ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\b', re.I)),
+        ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\b', re.I)),
+    ):
+        if key == document_regime:
+            continue
+        if pattern.search(haystack):
+            results.append(key)
+    return list(dict.fromkeys(results))
+
+
 def _detect_regime(text, source_values):
     source_id = str(source_values.get('source_id') or '').casefold()
     title = str(source_values.get('title') or '').casefold()
@@ -144,12 +170,13 @@ def _detect_regime(text, source_values):
 
 
 def embedding_metadata_prefix(metadata):
-    regime = metadata.get('norma_canonica') or metadata.get('regime_juridico') or REGIME_CANONICAL['nao_especificado']
+    regime = metadata.get('norma_canonica') or metadata.get('document_regime') or metadata.get('regime_juridico') or REGIME_CANONICAL['nao_especificado']
     status = metadata.get('status') or 'desconhecido'
     esfera = metadata.get('esfera') or 'desconhecida'
     jurisdicao = metadata.get('jurisdicao') or 'desconhecida'
+    source_identity = metadata.get('source_identity') or metadata.get('source_id') or metadata.get('title') or 'desconhecida'
     return (
-        f'[REGIME: {regime} | STATUS: {status} | ESFERA: {esfera} | '
+        f'[REGIME: {regime} | SOURCE: {source_identity} | STATUS: {status} | ESFERA: {esfera} | '
         f'JURISDIÇÃO: {jurisdicao}]'
     )
 
@@ -215,6 +242,12 @@ def extract_metadata(text, pdf_path):
         metadata['metadata_ambiguous'] = True
     regime_key, regime_label = _detect_regime(sample, {**source_values, **metadata})
     metadata['regime_juridico'] = regime_key
+    metadata['document_regime'] = regime_key
+    metadata['source_identity'] = (
+        str(metadata.get('source_id') or metadata.get('document_id') or metadata.get('title') or path.stem or '').strip()
+        or path.stem
+    )
+    metadata['cited_regimes'] = _extract_cited_regimes(sample, regime_key)
     metadata['norma_canonica'] = regime_label
     if metadata.get('normative_rank') is None:
         metadata['normative_rank'] = _normative_rank(metadata.get('source_role'), metadata.get('tipo_documento'))

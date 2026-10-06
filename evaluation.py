@@ -142,6 +142,49 @@ def recall_at_k(points, expected_source_ids: set[str], k: int) -> float | None:
     return len(found & expected) / len(expected)
 
 
+def article_recall_at_k(points, expected_article_refs: set[str], k: int) -> float | None:
+    if not expected_article_refs:
+        return None
+    expected = {str(item).strip() for item in expected_article_refs if str(item).strip()}
+    if not expected:
+        return None
+    found = {
+        str(point.payload.get('unit_ref') or '').strip()
+        for point in points[:k]
+        if str(point.payload.get('unit_ref') or '').strip()
+    }
+    return len(found & expected) / len(expected)
+
+
+def device_recall_at_k(points, expected_device_ids: set[str], k: int) -> float | None:
+    if not expected_device_ids:
+        return None
+    expected = {str(item).strip() for item in expected_device_ids if str(item).strip()}
+    if not expected:
+        return None
+    found = {
+        str(point.payload.get('unit_id') or '').strip()
+        for point in points[:k]
+        if str(point.payload.get('unit_id') or '').strip()
+    }
+    return len(found & expected) / len(expected)
+
+
+def false_positive_article_rate(points, expected_article_refs: set[str], k: int) -> float | None:
+    if not expected_article_refs:
+        return None
+    expected = {str(item).strip() for item in expected_article_refs if str(item).strip()}
+    if not expected:
+        return None
+    top_k = list(points[:k])
+    false_hits = 0
+    for point in top_k:
+        ref = str(point.payload.get('unit_ref') or '').strip()
+        if ref and ref not in expected:
+            false_hits += 1
+    return false_hits / len(top_k) if top_k else 0.0
+
+
 def ndcg_at_k(points, expected_source_ids: set[str], k: int) -> float | None:
     if not expected_source_ids:
         return None
@@ -171,6 +214,17 @@ def evaluate_case(points, case: dict, k_values: tuple[int, ...]) -> dict:
     for k in k_values:
         metrics[f'recall@{k}'] = recall_at_k(points, expected_source_ids, k)
         metrics[f'ndcg@{k}'] = ndcg_at_k(points, expected_source_ids, k)
+        expected_articles = {
+            str(item).strip() for item in case.get('expected_article_refs', []) if str(item).strip()
+        }
+        if expected_articles:
+            metrics[f'article_recall@{k}'] = article_recall_at_k(points, expected_articles, k)
+            metrics[f'false_positive_article_rate@{k}'] = false_positive_article_rate(points, expected_articles, k)
+        expected_devices = {
+            str(item).strip() for item in case.get('expected_unit_ids', []) if str(item).strip()
+        }
+        if expected_devices:
+            metrics[f'device_recall@{k}'] = device_recall_at_k(points, expected_devices, k)
     top = points[0] if points else None
     metrics['reciprocal_rank'] = reciprocal_rank(points, expected_source_ids)
     expected_jurisdictions = _expected_jurisdictions(case)
@@ -200,6 +254,18 @@ def aggregate(case_results: list[dict], cases: list[dict], k_values: tuple[int, 
     for k in k_values:
         summary[f'recall@{k}'] = _mean(item[f'recall@{k}'] for item in case_results)
         summary[f'ndcg@{k}'] = _mean(item[f'ndcg@{k}'] for item in case_results)
+        if any(f'article_recall@{k}' in item for item in case_results):
+            summary[f'article_recall@{k}'] = _mean(
+                item[f'article_recall@{k}'] for item in case_results if f'article_recall@{k}' in item
+            )
+        if any(f'device_recall@{k}' in item for item in case_results):
+            summary[f'device_recall@{k}'] = _mean(
+                item[f'device_recall@{k}'] for item in case_results if f'device_recall@{k}' in item
+            )
+        if any(f'false_positive_article_rate@{k}' in item for item in case_results):
+            summary[f'false_positive_article_rate@{k}'] = _mean(
+                item[f'false_positive_article_rate@{k}'] for item in case_results if f'false_positive_article_rate@{k}' in item
+            )
     summary['mrr'] = _mean(item['reciprocal_rank'] for item in case_results)
     jurisdiction_values = [
         item['jurisdiction_correct']

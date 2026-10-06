@@ -103,6 +103,17 @@ Acordam.
     assert names.index("ementa") < names.index("voto") < names.index("dispositivo")
 
 
+def test_jurisprudencia_chunks_preserve_source_text_and_offsets():
+    text = "  TRIBUNAL: TCU\nPROCESSO: 123\n\nEMENTA:\nTese central.\n\nVOTO:\nFundamentação.\n"
+    chunks = chunking.build_structural_chunks(text, 200, 0, tokenizer=FakeTokenizer())
+
+    assert chunks
+    for chunk in chunks:
+        start = chunk["source_start"]
+        end = chunk["source_end"]
+        assert chunk["source_text"] == text[start:end]
+
+
 def test_structural_chunk_marks_context_oversize_without_truncating_prefix():
     tokenizer = FakeTokenizer()
     text = "CAPÍTULO I\nArt. 1º " + " ".join(["condição"] * 80) + "\nIV - " + " ".join(["consequência"] * 30)

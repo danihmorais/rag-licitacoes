@@ -64,6 +64,20 @@ def test_named_inciso_and_alinea_markers_are_supported():
     assert chunks[2]["hierarchy_path"][-1] == "Alínea aa)"
 
 
+def test_inciso_with_letter_suffixes_are_supported():
+    text = (
+        "Art. 6º Regra.\n"
+        "I-A - hipótese A.\n"
+        "I-B - hipótese B.\n"
+        "§ 1º-A Exceção específica.\n"
+    )
+    chunks = chunking.build_structural_chunks(text, 1000, 0, tokenizer=None)
+    incisos = [item for item in chunks if item["segment_kind"] == "inciso"]
+    assert [item["segment_ref"] for item in incisos] == ["I-A -", "I-B -"]
+    paragrafos = [item for item in chunks if item["segment_kind"] == "paragrafo"]
+    assert [item["segment_ref"] for item in paragrafos] == ["§ 1º-A"]
+
+
 def test_article_citation_with_leading_words_is_not_a_new_unit():
     text = (
         "Art. 10. Regra válida.\n"

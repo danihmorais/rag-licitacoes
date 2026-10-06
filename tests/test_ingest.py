@@ -136,6 +136,18 @@ def test_native_extraction_confidence_penalizes_empty_and_malformed_text():
     assert ingest._native_extraction_confidence('') == 0.0
 
 
+def test_pdf_page_sanitizer_removes_repeated_header_footer_noise():
+    noisy = (
+        'LEI Nº 14.133/2021\n\n'
+        'PÁGINA 1\n'
+        'Art. 1º Regra de licitação.\n'
+        'PÁGINA 1\n'
+    )
+    cleaned = ingest._sanitize_extracted_page_text(noisy)
+    assert 'PÁGINA 1' not in cleaned
+    assert 'Art. 1º Regra de licitação.' in cleaned
+
+
 def test_build_chunks_uses_e5_passage_prefix_and_real_newline(tmp_path: Path):
     document = tmp_path / 'documento.txt'
     document.write_text('Art. 1º Regra de licitação.', encoding='utf-8')
@@ -143,3 +155,11 @@ def test_build_chunks_uses_e5_passage_prefix_and_real_newline(tmp_path: Path):
     assert chunks
     assert '\\n' not in chunks[0]['page_content']
     assert chunks[0]['embedding_text'].startswith('passage: ')
+
+
+def test_build_chunks_rejects_embedding_text_over_limit(tmp_path: Path, monkeypatch):
+    document = tmp_path / 'documento.txt'
+    document.write_text('Art. 1º ' + ('palavra ' * 80), encoding='utf-8')
+    monkeypatch.setattr(ingest.config, 'DENSE_MAX_TOKENS', 16)
+    with pytest.raises(RuntimeError, match='limite de tokens do embedding'):
+        ingest.build_chunks(document, [document.read_text(encoding='utf-8')])

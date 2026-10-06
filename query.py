@@ -54,6 +54,7 @@ ALLOWED_FILTERS = {
     'modalidade', 'tipo', 'source_id', 'regime_juridico',
 }
 NUMERIC_FILTERS = {'ano', 'norm_ano', 'authority_level', 'normative_rank'}
+HISTORICAL_REGIME_KEYS = ('lei_8666', 'lei_10520', 'lei_12462')
 
 
 def _coerce_filter_value(key, value):
@@ -269,10 +270,25 @@ def qfilter(filters=None, query=None):
                 gt=value.get('gt'), gte=value.get('gte'), lt=value.get('lt'), lte=value.get('lte')
             )))
             continue
-        if isinstance(value, list):
-            conditions.append(models.FieldCondition(key=key, match=models.MatchAny(any=value)))
-        else:
-            conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
+        if isinstance(value, (list, tuple, set)):
+            normalized = []
+            for item in value:
+                normalized.append(_coerce_filter_value(key, item))
+            if len(normalized) == 1:
+                conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=normalized[0])))
+            else:
+                ordered = []
+                if key == 'jurisdicao':
+                    for candidate in ('federal', 'estadual_sp'):
+                        if candidate in normalized:
+                            ordered.append(candidate)
+                    for candidate in normalized:
+                        if candidate not in ordered:
+                            ordered.append(candidate)
+                    normalized = ordered
+                conditions.append(models.FieldCondition(key=key, match=models.MatchAny(any=normalized)))
+            continue
+        conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=_coerce_filter_value(key, value))))
     if explicit_regime is None and query and not _is_transition_query(query):
         target_regime = _query_regime(query)
         if target_regime:
@@ -286,12 +302,34 @@ def qfilter(filters=None, query=None):
             must_not.append(
                 models.FieldCondition(
                     key='regime_juridico',
-                    match=models.MatchAny(any=['lei_8666']),
+                    match=models.MatchAny(any=list(HISTORICAL_REGIME_KEYS)),
                 )
             )
     if not conditions and not must_not:
         return None
     return models.Filter(must=conditions, must_not=must_not or None)
+
+
+def build_retrieval_plan(query, filters=None):
+    query = str(query or '').strip()
+    cleaned_query, parsed_filters = parse_filters(query)
+    normalized_query = cleaned_query or query
+    filter_values = dict(filters or {})
+    if parsed_filters:
+        filter_values = {**parsed_filters, **filter_values}
+    qdrant_filter = qfilter(filter_values, normalized_query) if (filter_values or normalized_query) else None
+    is_transition = _is_transition_query(normalized_query)
+    regime_hint = _query_regime(normalized_query)
+    return {
+        'query': normalized_query,
+        'retrieval_query': _retrieval_query(normalized_query),
+        'filters': filter_values,
+        'qdrant_filter': qdrant_filter,
+        'is_transition': is_transition,
+        'regime_hint': regime_hint,
+        'mandatory_sources': list(MANDATORY_CONTEXT_SOURCE_IDS),
+        'filtered_for_current_only': (not is_transition and regime_hint is not None) or (not is_transition and not regime_hint),
+    }
 
 
 def embedding_kwargs():
@@ -506,6 +544,18 @@ def validate_generated_answer(answer, sources):
             str(sources[index - 1].payload.get('page_content') or sources[index - 1].payload.get('text') or '')
             for index in sorted(sentence_citations)
         )
+        normalized_factual = _normalize_query_text(factual)
+        normalized_cited = _normalize_query_text(cited_text)
+        comparative_markers = (
+            'mesma norma', 'mesma regra', 'equivalente', 'igual', 'indistinta',
+            'prevalece', 'sempre', 'igualdade', 'abrange', 'precede', 'aplica-se',
+            'aplica se', 'sempre prevalece'
+        )
+        if any(marker in normalized_factual for marker in comparative_markers):
+            if not any(marker in normalized_cited for marker in comparative_markers):
+                raise EvidenceGateError(
+                    'Afirmação comparativa ou de precedência não sustentada pelas fontes citadas.'
+                )
         for pattern in LEGAL_IDENTIFIER_RES:
             for identifier in pattern.findall(factual):
                 if _normalized_identifier(identifier) not in _normalized_identifier(cited_text):
@@ -544,12 +594,27 @@ def _normalize_query_text(value):
 def _query_jurisdiction(query, filters=None):
     filters = filters or {}
     explicit = filters.get('jurisdicao')
-    if isinstance(explicit, str) and explicit in {'federal', 'estadual_sp'}:
-        return explicit
-    if isinstance(explicit, list):
-        values = [item for item in explicit if item in {'federal', 'estadual_sp'}]
-        if len(values) == 1:
-            return values[0]
+    if explicit is not None:
+        if isinstance(explicit, (list, tuple, set)):
+            values = []
+            for item in explicit:
+                normalized = str(item).strip().casefold()
+                if normalized in {'federal', 'estadual_sp'}:
+                    values.append(normalized)
+            if len(set(values)) == 1:
+                return next(iter(set(values)))
+            if values:
+                ordered = ['federal', 'estadual_sp']
+                candidates = []
+                for key in ordered:
+                    if key in values:
+                        candidates.append(key)
+                if len(candidates) == 1:
+                    return candidates[0]
+        elif isinstance(explicit, str):
+            explicit = explicit.strip().casefold()
+            if explicit in {'federal', 'estadual_sp'}:
+                return explicit
     text = _normalize_query_text(query)
     state = ('estadual' in text or 'estado de sao paulo' in text or 'tcesp' in text or
              'tce-sp' in text or 'pge-sp' in text)
