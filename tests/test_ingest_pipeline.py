@@ -9,7 +9,7 @@ def test_ingest_uses_structural_chunking_without_llm_preprocessing():
     assert "precomputed_chunks" not in source
     assert "AI_CHUNKING" not in source
     assert "Carregando modelos de embeddings/reranker na GPU." in source
-    assert "CACHE_VERSION = 6" in source
+    assert "CACHE_VERSION = 1" in source
 
     gpu_dense = source.index("TextEmbedding(model_name=config.DENSE_MODEL")
     structural = source.index("build_structural_chunks(")
