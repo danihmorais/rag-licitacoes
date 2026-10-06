@@ -1,7 +1,6 @@
 import re
 from types import SimpleNamespace
 
-import pytest
 
 import chunking
 from chunking import build_structural_chunks
