@@ -72,7 +72,7 @@ Expansão de vizinhança estrutural
            LLM
 ~~~
 
-O índice é local e usa **Qdrant**. Embeddings, recuperação sparse e reranking usam o stack **FastEmbed**. Por padrão, o projeto exige `CUDAExecutionProvider`; execução em CPU é suportada de forma explícita por configuração, sem alterar o código.
+O índice vetorial usa **Qdrant Server**. Embeddings, recuperação sparse e reranking usam o stack **FastEmbed**. Por padrão, o projeto exige `CUDAExecutionProvider`; execução em CPU é suportada de forma explícita por configuração, sem alterar o código.
 
 O LLM é desacoplado do índice. Trocar somente o gerador não exige reindexação.
 
@@ -106,7 +106,19 @@ RAG_RERANK_JURISDICTION_WEIGHT=0.12
 
 O tamanho configurado e um teto desejado. A ingestao reduz o chunk efetivo para reservar tokens aos metadados, ao prefixo E5 e a hierarquia juridica. A validacao final rejeita qualquer entrada que ainda exceda `RAG_DENSE_MAX_TOKENS`.
 
-### Integridade da evidência
+### Chunking jurídico e integridade estrutural
+
+A legislação é segmentada a partir de uma **AST jurídica intermediária** em `chunking.py`. A árvore preserva norma, hierarquia de capítulos/seções, artigos, parágrafos, incisos, alíneas, itens e anexos antes da projeção para chunks de recuperação.
+
+Cada dispositivo reconhecido mantém identidade estrutural (`node_id`, `parent_id`, `kind`, `ref`) e localização verificável (`source_start`, `source_end`, `source_text`). O pipeline valida a invariável `source_text == fonte[source_start:source_end]` antes de indexar.
+
+Alterações legislativas mantêm o alvo completo em `target_devices`/`target_articles`, inclusive múltiplos dispositivos na mesma fórmula de alteração. Artigos reproduzidos entre aspas em leis alteradoras não são tratados como artigos irmãos da norma alteradora.
+
+Anexos possuem identidade própria, e artigos com a mesma referência em anexos diferentes recebem IDs estruturais distintos. Marcadores OCR e variações como `Art.1º` são normalizados somente para reconhecimento estrutural, sem deslocar offsets da fonte.
+
+A identificação de regime jurídico também é separada entre **regime documental** e **regimes citados**. Uma lei que menciona outra lei continua pertencendo ao seu regime primário; transição legislativa é reservada a documentos e consultas explicitamente comparativos.
+
+## Integridade da evidência
 
 Cada fragmento pode carregar, entre outros:
 
