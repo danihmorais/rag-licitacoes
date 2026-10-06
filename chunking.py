@@ -1,3 +1,4 @@
+import bisect
 import re
 from functools import lru_cache
 from typing import Any, Callable
@@ -5,132 +6,476 @@ from typing import Any, Callable
 import config
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+
 # Número de artigo: 5, 5º, 5-A, 337-AB, 1.045 (milhar). O ponto final faz parte da referência.
-_ART_NUMBER = r"(?:\d{1,3}(?:\.\d{3})+|\d+)[ºo°]?(?:-[A-Z]{1,2})?\.?"
-ARTIGO_RE = re.compile(rf"^[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)", re.IGNORECASE | re.MULTILINE)
-ARTIGO_INLINE_RE = re.compile(rf"(?<![\w])[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)", re.IGNORECASE)
-# Só títulos estruturais em MAIÚSCULAS (sem re.I) separam um artigo do que vem depois dele.
-STRUCT_HEADING_RE = re.compile(r"^[ \t]*(?:LIVRO|PARTE|T[IÍ]TULO|CAP[IÍ]TULO|SE[CÇ][AÃ]O|SUBSE[CÇ][AÃ]O|ANEXO)\b[^\n]*$", re.MULTILINE)
-OCR_STRUCTURE_REPLACEMENTS = ((re.compile(r"\bArtig0\b", re.I), "Artigo"),(re.compile(r"\bArt1go\b", re.I), "Artigo"),(re.compile(r"\bArt1g0\b", re.I), "Artigo"),(re.compile(r"\bParagraf0\b", re.I), "Paragrafo"),(re.compile(r"\bunic0\b", re.I), "unico"),(re.compile(r"\bCAP[IÍ]TUL0\b", re.I), "CAPITULO"),(re.compile(r"\bT[IÍ]TUL0\b", re.I), "TITULO"))
+_ART_NUMBER = r"(?:\d{1,3}(?:\.\d{3})+|\d+)[ºo°]?(?:-[A-Za-z]{1,3})?\.?"
+ARTIGO_RE = re.compile(
+    rf"^[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+ARTIGO_INLINE_RE = re.compile(
+    rf"(?<![\w])(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)",
+    re.IGNORECASE,
+)
+
+STRUCT_HEADING_RE = re.compile(
+    r"^[ \t]*(?:LIVRO|PARTE|T[IÍ]TULO|CAP[IÍ]TULO|SE[CÇ][AÃ]O|SUBSE[CÇ][AÃ]O|ANEXO)\b[^\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# A visão usada apenas para detectar estrutura jamais altera o comprimento do documento.
+# Assim os offsets calculados no texto normalizado continuam válidos em full_text.
+OCR_STRUCTURE_REPLACEMENTS = (
+    (re.compile(r"\bArtig0\b", re.I), "Artigo"),
+    (re.compile(r"\bArt1go\b", re.I), "Artigo"),
+    (re.compile(r"\bArt1g0\b", re.I), "Artigo"),
+    (re.compile(r"\bParagraf0\b", re.I), "Paragrafo"),
+    (re.compile(r"\bunic0\b", re.I), "unico"),
+    (re.compile(r"\bCAP[IÍ]TUL0\b", re.I), "CAPITULO"),
+    (re.compile(r"\bT[IÍ]TUL0\b", re.I), "TITULO"),
+)
 
 def _ocr_structure_view(text):
-    for pattern, replacement in OCR_STRUCTURE_REPLACEMENTS: text = pattern.sub(replacement, text)
+    def replace_if_same_length(match, replacement):
+        return replacement if len(replacement) == len(match.group(0)) else match.group(0)
+
+    for pattern, replacement in OCR_STRUCTURE_REPLACEMENTS:
+        text = pattern.sub(lambda match: replace_if_same_length(match, replacement), text)
     return text
 
-ARTICLE_CITATION_TAIL_RE = re.compile(r"^[ \t]+(?:da|do|das|dos|de)[ \t]+(?:CF|C\.F\.?|Constitui(?:ção|cao)|Lei|C[oó]digo|CPC|CC|CLT|STF|STJ|TCU|TCESP|TJSP)\b", re.I)
-SUMULA_RE = re.compile(r"^[ \t]*(S[uú]mula(?:\s+Vinculante)?\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b", re.I | re.M)
+
+ARTICLE_CITATION_TAIL_RE = re.compile(
+    r"^[ \t]+(?:da|do|das|dos|de)[ \t]+(?:CF|C\.F\.?|Constitui(?:ção|cao)|Lei|C[oó]digo|CPC|CC|CLT|STF|STJ|TCU|TCESP|TJSP)\b",
+    re.I,
+)
+ARTICLE_CITATION_PREFIX_RE = re.compile(
+    r"(?:\b(?:o|a|os|as|no|na|nos|nas|do|da|dos|das|em|ao|à|conforme|segundo|previsto|disposto|artigo|arts?)\s*)$",
+    re.I,
+)
+SUMULA_RE = re.compile(
+    r"^[ \t]*(S[uú]mula(?:\s+Vinculante)?\s+n?[ºo°.]*\s*\d+|Enunciado\s+n?[ºo°.]*\s*\d+)\b",
+    re.I | re.M,
+)
 JURISPRUDENCIA_RE = re.compile(r"^[ \t]*TRIBUNAL:\s*.+$", re.I | re.M)
 TEMA_RE = re.compile(r"^[ \t]*(Tema\s+n?[ºo°.]*\s*\d+)\b", re.I | re.M)
-HEADER_RE = re.compile(r"^\s*((?:LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|LIVRO|PARTE|TÍTULO|TITULO|CAPÍTULO|CAPITULO|SEÇÃO|SECAO|SUBSEÇÃO|SUBSECAO|ANEXO)\b.*)$", re.I)
-PARAGRAFO_RE = r"§\s*\d+[ºo°]?(?:-[A-Z])?|§\s*[uú]nico"
-ROMAN_RE = r"(?:XXXIX|XXXVIII|XXXVII|XXXVI|XXXV|XXXIV|XXXIII|XXXII|XXXI|XXX|XXIX|XXVIII|XXVII|XXVI|XXV|XXIV|XXIII|XXII|XXI|XX|XIX|XVIII|XVII|XVI|XV|XIV|XIII|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)"
-# Algarismo romano e alínea são CASE-SENSITIVE (?-i:): "civil-", "mil." ou "p. 12" no início de linha
-# quebrada não são incisos/alíneas. Itens numéricos exigem espaço depois do separador, para que
-# "14.133" (Lei nº\n14.133/2021) não vire o item "14.".
-_CHILD_MARKER = (rf"{PARAGRAFO_RE}|par[aá]graf[o0]\s+[uú]nic[o0](?:\s*[.:])?"
-                 rf"|(?-i:{ROMAN_RE})\s*(?:\)|[.–—-](?=\s|$))"
-                 rf"|(?-i:[a-z])\s*(?:\)|[–—-](?=\s))"
-                 rf"|\d{{1,2}}\s*(?:\)|[.–—-](?=\s|$))")
-CHILD_RE = re.compile(rf"(?m)^[ \t]*({_CHILD_MARKER})[ \t]*", re.I)
-CHILD_INLINE_RE = re.compile(rf"(?<=[\f.;:])[ \t]+({_CHILD_MARKER})[ \t]*", re.I)
+HEADER_RE = re.compile(
+    r"^\s*((?:LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|LIVRO|PARTE|TÍTULO|TITULO|CAPÍTULO|CAPITULO|SEÇÃO|SECAO|SUBSEÇÃO|SUBSECAO|ANEXO)\b.*)$",
+    re.I,
+)
+
+PARAGRAFO_RE = (
+    r"(?:§\s*\d+[ºo°]?(?:-[A-Za-z])?|§\s*[uú]nico"
+    r"|par[aá]graf[o0]\s+(?:[uú]nic[o0]|\d+[ºo°]?(?:-[A-Za-z])?)(?:\s*[.:–—-])?)"
+)
+
+def _roman_to_text(number):
+    values = (
+        (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+        (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    )
+    out = []
+    for value, symbol in values:
+        count, number = divmod(number, value)
+        out.append(symbol * count)
+    return "".join(out)
+
+_ROMAN_FORMS = tuple(_roman_to_text(number) for number in range(1, 101))
+ROMAN_RE = r"(?:%s)" % "|".join(sorted(_ROMAN_FORMS, key=lambda item: (-len(item), item)))
+
+_ROMAN_MARKER = rf"(?-i:{ROMAN_RE})\s*(?:\)|[.–—-](?=\s|$))"
+_ALINEA_MARKER = (
+    r"(?:\([A-Za-z]{1,3}\)|[A-Za-z]{1,3}\s*\))"
+    r"|(?:[A-Za-z]{1,3}\s*[–—-](?=\s|$))"
+)
+_ITEM_MARKER = r"(?:\(\d{1,3}\)|\d{1,3}\s*(?:\)|[.–—-](?=\s|$)))"
+_NAMED_INCISO_MARKER = rf"(?:Inciso)\s+(?-i:{ROMAN_RE})\s*(?:\)|[.–—-])?(?=\s|$)"
+_NAMED_ALINEA_MARKER = rf"(?:Al[ií]nea)\s+[A-Za-z]{{1,3}}\s*(?:\)|[.–—-])?(?=\s|$)"
+
+_CHILD_MARKER = (
+    rf"{PARAGRAFO_RE}"
+    rf"|{_NAMED_INCISO_MARKER}"
+    rf"|{_NAMED_ALINEA_MARKER}"
+    rf"|{_ROMAN_MARKER}"
+    rf"|{_ALINEA_MARKER}"
+    rf"|{_ITEM_MARKER}"
+)
+
+# Início de linha ou pontuação anterior cobre tanto PDF convencional quanto PDF achatado.
+CHILD_RE = re.compile(
+    rf"(?m)(?:(?<=^)|(?<=[\f;:!?»”])|(?<!\d)(?<=\.))[ \t]*({_CHILD_MARKER})[ \t]*",
+    re.IGNORECASE,
+)
+CHILD_INLINE_RE = CHILD_RE
+
 
 def _find(text, rx, kind):
-    matches=list(rx.finditer(text))
-    if not matches:return None
-    out=[]
-    if matches[0].start()>0 and text[:matches[0].start()].strip():out.append({"kind":"generic","ref":None,"start":0,"text":text[:matches[0].start()].strip()})
-    for i,m in enumerate(matches):
-        start=m.start(); end=matches[i+1].start() if i+1<len(matches) else len(text); value=text[start:end].strip()
-        if value:out.append({"kind":kind,"ref":m.group(1).strip(),"start":start,"text":value})
+    matches = list(rx.finditer(text))
+    if not matches:
+        return None
+    out = []
+    if matches[0].start() > 0 and text[:matches[0].start()].strip():
+        out.append({"kind": "generic", "ref": None, "start": 0, "text": text[:matches[0].start()].strip()})
+    for i, match in enumerate(matches):
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        value = text[start:end].strip()
+        if value:
+            out.append({"kind": kind, "ref": match.group(1).strip(), "start": start, "text": value})
     return out
 
-_HEADER_LEVELS=(("norma",0,re.compile(r"^\s*(?:LEI|DECRETO(?:-LEI)?|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO)\b.*$",re.I)),("parte",1,re.compile(r"^\s*PARTE\b.*$",re.I)),("livro",2,re.compile(r"^\s*LIVRO\b.*$",re.I)),("titulo",3,re.compile(r"^\s*T[IÍ]TULO\b.*$",re.I)),("capitulo",4,re.compile(r"^\s*CAP[IÍ]TULO\b.*$",re.I)),("secao",5,re.compile(r"^\s*SE[CÇ][AÃ]O\b.*$",re.I)),("subsecao",6,re.compile(r"^\s*SUBSE[CÇ][AÃ]O\b.*$",re.I)),("anexo",1,re.compile(r"^\s*ANEXO\b.*$",re.I)))
-_HEADER_TITLE_MAX=90
 
-def _heading_title(lines,index):
-    """Título em maiúsculas na linha seguinte ao cabeçalho (ex.: CAPÍTULO II / DA CONTRATAÇÃO DIRETA)."""
-    for line in lines[index+1:index+3]:
-        candidate=re.sub(r"\s+"," ",line).strip()
-        if not candidate:continue
-        if candidate.isupper() and len(candidate)<=_HEADER_TITLE_MAX and not any(p.match(candidate) for _k,_r,p in _HEADER_LEVELS) and not ARTIGO_RE.match(candidate):return candidate
+_HEADER_LEVELS = (
+    (
+        "norma",
+        0,
+        re.compile(
+            r"^\s*(?:LEI|DECRETO(?:-LEI)?|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO|LEI COMPLEMENTAR)\b.*$",
+            re.I,
+        ),
+    ),
+    ("parte", 1, re.compile(r"^\s*PARTE\b.*$", re.I)),
+    ("livro", 2, re.compile(r"^\s*LIVRO\b.*$", re.I)),
+    ("titulo", 3, re.compile(r"^\s*T[IÍ]TULO\b.*$", re.I)),
+    ("capitulo", 4, re.compile(r"^\s*CAP[IÍ]TULO\b.*$", re.I)),
+    ("secao", 5, re.compile(r"^\s*SE[CÇ][AÃ]O\b.*$", re.I)),
+    ("subsecao", 6, re.compile(r"^\s*SUBSE[CÇ][AÃ]O\b.*$", re.I)),
+    ("anexo", 1, re.compile(r"^\s*ANEXO\b.*$", re.I)),
+)
+_HEADER_TITLE_MAX = 90
+
+
+def _normalized_header_line(line):
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def _heading_title_at(text, end):
+    position = end
+    seen = 0
+    while position < len(text) and seen < 2:
+        if text[position:position + 1] == "\n":
+            position += 1
+        next_newline = text.find("\n", position)
+        if next_newline < 0:
+            next_newline = len(text)
+        candidate = _normalized_header_line(text[position:next_newline])
+        position = next_newline
+        seen += 1
+        if not candidate:
+            continue
+        if (
+            candidate.isupper()
+            and len(candidate) <= _HEADER_TITLE_MAX
+            and not any(pattern.match(candidate) for _key, _rank, pattern in _HEADER_LEVELS)
+            and not ARTIGO_RE.match(candidate)
+        ):
+            return candidate
         return None
     return None
 
-def _headers_before(text,start):
-    levels={}
-    lines=_ocr_structure_view(text[:start]).splitlines()
-    for index,line in enumerate(lines):
-        normalized=re.sub(r"\s+"," ",line).strip()
-        # Linha quebrada de PDF ("... conforme a\nLei nº 8.666...") não é cabeçalho: exige maiúscula inicial.
-        if not normalized or not normalized[0].isupper() or len(normalized)>220:continue
-        for key,rank,pattern in _HEADER_LEVELS:
-            if not pattern.match(normalized):continue
-            # Depois do título da norma, só outra linha TODA em maiúsculas substitui a norma corrente.
-            if key=="norma" and "norma" in levels and not normalized.isupper():break
-            title=_heading_title(lines,index) if key!="norma" else None
-            # Um nível novo encerra os níveis iguais/inferiores (SEÇÃO II não herda a SUBSEÇÃO I da SEÇÃO I).
-            for other in [k for k,(r,_t) in levels.items() if r>=rank]:del levels[other]
-            levels[key]=(rank,f"{normalized} — {title}" if title and title not in normalized else normalized);break
-    return [levels[key][1] for key,_r,_p in _HEADER_LEVELS if key in levels]
 
-def _merged_marker_matches(text,*regexes):
-    matches=[];occupied=[]
+def _heading_title(lines, index):
+    for line in lines[index + 1:index + 3]:
+        candidate = _normalized_header_line(line)
+        if not candidate:
+            continue
+        if (
+            candidate.isupper()
+            and len(candidate) <= _HEADER_TITLE_MAX
+            and not any(pattern.match(candidate) for _key, _rank, pattern in _HEADER_LEVELS)
+            and not ARTIGO_RE.match(candidate)
+        ):
+            return candidate
+        return None
+    return None
+
+
+def _ordered_headers(levels):
+    return [
+        levels[key][1]
+        for key, _rank, _pattern in _HEADER_LEVELS
+        if key != "anexo" and key in levels
+    ]
+
+
+def _norma_only_headers(levels):
+    return [levels["norma"][1]] if "norma" in levels else []
+
+
+def _header_key_for_line(normalized):
+    for key, _rank, pattern in _HEADER_LEVELS:
+        if pattern.match(normalized):
+            return key
+    return None
+
+
+_HEADER_SCAN_PATTERN = (
+    r"(?P<header>^[ \t]*(?:LEI COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO|PARTE|LIVRO|TÍTULO|TITULO|CAPÍTULO|CAPITULO|SEÇÃO|SECAO|SUBSEÇÃO|SUBSECAO|ANEXO)\b[^\n]*$)"
+)
+_STRUCTURE_SCAN_RE = re.compile(
+    rf"{_HEADER_SCAN_PATTERN}|(?P<article_ref>(?<![\w])Art(?:igo)?\.?[ \t]+{_ART_NUMBER}(?=\s|$))",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _merged_marker_matches(text, *regexes):
+    matches = []
+    occupied = []
     for regex in regexes:
         for candidate in regex.finditer(text):
-            if any(candidate.start()<end and candidate.end()>start for start,end in occupied):continue
-            matches.append(candidate);occupied.append((candidate.start(),candidate.end()))
-    dedup=[]
-    for candidate in sorted(matches,key=lambda m:m.start()):
-        ref=candidate.group(1).strip().casefold()
-        if any(ref==p.group(1).strip().casefold() and abs(candidate.start()-p.start())<=2 for p in dedup[-2:]):continue
+            if any(candidate.start() < end and candidate.end() > start for start, end in occupied):
+                continue
+            matches.append(candidate)
+            occupied.append((candidate.start(), candidate.end()))
+    dedup = []
+    for candidate in sorted(matches, key=lambda match: match.start()):
+        ref = candidate.group(1).strip().casefold()
+        if any(
+            ref == previous.group(1).strip().casefold()
+            and abs(candidate.start() - previous.start()) <= 2
+            for previous in dedup[-2:]
+        ):
+            continue
         dedup.append(candidate)
     return dedup
 
-CITATION_WORD_RE=re.compile(r"[ \t]+(?:desta|deste|dessa|desse|daquela|daquele|da|do|das|dos|de|e|ou|a|à|ao|aos|no|na|nos|nas|pelo|pela|pelos|pelas|c/c|combinado|caput|incisos?|par[aá]grafos?|al[ií]neas?|bem|todos|seguintes?|anterior(?:es)?|supra|infra|acima|abaixo|cit|mencionado|referido|supracitado)\b")  # case-sensitive: "A regra..." (maiúscula) abre o texto do artigo; "a" minúsculo é preposição
-def _article_marker_is_real_header(text,match):
-    """Distingue o cabeçalho "Art. 75." de uma citação ("art. 76 desta Lei", "o art. 77 do Decreto")."""
-    ref=match.group(1).strip();tail=text[match.end():match.end()+180]
-    if not ref[:1].isupper():return False
-    if ARTICLE_CITATION_TAIL_RE.match(tail):return False
-    # "Art. 76 desta Lei": número sem ponto final seguido de palavra de citação é referência, não cabeçalho.
-    if not ref.endswith(".") and CITATION_WORD_RE.match(tail):return False
-    line_start=text.rfind("\n",0,match.start(1))+1;before=text[line_start:match.start(1)]
-    if before.strip() and not re.search(r"[.;:!?”\"“»)\f]\s*$",before):
-        # PDF achatado (sem quebra de linha): só aceita "Art. N." seguido de maiúscula, § ou abre-parêntese.
-        if not (ref.endswith(".") and re.match(r"\s*[A-ZÀ-Ý§(“\"]",tail)):return False
+def _headers_before(text, start):
+    scanned = _scan_structure(text)
+    positions = scanned["header_positions"]
+    if not positions:
+        return []
+    index = bisect.bisect_right(positions, start) - 1
+    return list(scanned["header_events"][index][1]) if index >= 0 else []
+
+
+@lru_cache(maxsize=2)
+def _scan_structure(text):
+    """
+    Estado hierárquico da norma em uma única varredura:
+    Norma -> Parte -> Livro -> Título -> Capítulo -> Seção -> Subseção -> Artigo.
+    O snapshot do cabeçalho acompanha cada artigo e novos cabeçalhos encerram a unidade anterior.
+    """
+    normalized = _ocr_structure_view(text)
+    levels = {}
+    header_events = []
+    units = []
+    current = None
+    inside_anexo = False
+
+    def finalize(end):
+        nonlocal current
+        if current is None:
+            return
+        raw = text[current["start"]:end].strip()
+        if current.get("kind") == "artigo":
+            raw = raw.removesuffix("“").rstrip()
+        if not raw:
+            current = None
+            return
+        unit = dict(current)
+        unit["text"] = raw
+        units.append(unit)
+        current = None
+
+    for match in _STRUCTURE_SCAN_RE.finditer(normalized):
+        if match.group("header"):
+            header_start = match.start("header")
+            normalized_line = _normalized_header_line(normalized[header_start:match.end("header")])
+            key = _header_key_for_line(normalized_line)
+            if key is None:
+                continue
+
+            # Dentro de artigo, "Lei nº 8.666..." pode ser continuação de uma citação quebrada.
+            if key == "norma" and current is not None and not normalized_line.isupper():
+                continue
+
+            finalize(header_start)
+
+            if key == "anexo":
+                current = {
+                    "kind": "anexo",
+                    "ref": normalized_line,
+                    "start": header_start,
+                    "headers": _norma_only_headers(levels),
+                }
+                inside_anexo = True
+                continue
+
+            inside_anexo = False
+            rank = next(rank for name, rank, _pattern in _HEADER_LEVELS if name == key)
+            title = _heading_title_at(normalized, match.end("header")) if key != "norma" else None
+            for other, (other_rank, _value) in list(levels.items()):
+                if other_rank >= rank:
+                    del levels[other]
+            levels[key] = (
+                rank,
+                f"{normalized_line} — {title}" if title and title not in normalized_line else normalized_line,
+            )
+            header_events.append((header_start, tuple(_ordered_headers(levels))))
+            continue
+
+        article_ref = match.group("article_ref")
+        if article_ref is None:
+            continue
+
+        article_start = match.start("article_ref")
+        article_end = match.end("article_ref")
+        ref = article_ref.strip()
+        if not _article_marker_is_real_header_at(text, article_start, article_end, ref):
+            continue
+
+        finalize(article_start)
+        headers = _norma_only_headers(levels) if inside_anexo else _ordered_headers(levels)
+        current = {
+            "kind": "artigo",
+            "ref": ref,
+            "start": article_start,
+            "text": "",
+            "headers": headers,
+        }
+
+    finalize(len(text))
+    return {
+        "units": tuple(units),
+        "header_events": tuple(header_events),
+        "header_positions": tuple(position for position, _headers in header_events),
+    }
+
+
+CITATION_WORD_RE = re.compile(
+    r"[ \t]+(?:desta|deste|dessa|desse|daquela|daquele|da|do|das|dos|de|e|ou|a|à|ao|aos|no|na|nos|nas|pelo|pela|pelos|pelas|c/c|combinado|caput|incisos?|par[aá]grafos?|al[ií]neas?|bem|todos|seguintes?|anterior(?:es)?|supra|infra|acima|abaixo|cit|mencionado|referido|supracitado)\b"
+)
+
+def _article_marker_is_real_header_at(text, start, end, ref):
+    tail = text[end:end + 220]
+    if not ref or not ref[:1].isupper():
+        return False
+    if ARTICLE_CITATION_TAIL_RE.match(tail):
+        return False
+    if not ref.endswith(".") and CITATION_WORD_RE.match(tail):
+        return False
+
+    line_start = text.rfind("\n", 0, start) + 1
+    before = text[line_start:start]
+    stripped_before = before.strip()
+
+    if stripped_before and ARTICLE_CITATION_PREFIX_RE.search(before[-100:]):
+        return False
+
+    if stripped_before and not re.match(
+        r"\s*(?:[A-ZÀ-Ý§(“\"']|[IVXLCDM]+(?:\s*(?:\)|[.–—-]))?)",
+        tail,
+    ):
+        return False
     return True
-def _is_article_number_inline_child(text,match):
-    ref=match.group(1).strip()
-    if not re.fullmatch(r"\d+\s*[.)–—-]",ref,re.I):return False
-    return bool(re.search(r"Art(?:igo)?\.?\s*$",_ocr_structure_view(text[max(0,match.start()-16):match.start()]),re.I))
+
+
+def _article_marker_is_real_header(text, match):
+    if "article_ref" in match.groupdict():
+        ref = match.group("article_ref")
+        start = match.start("article_ref")
+        end = match.end("article_ref")
+    else:
+        ref = match.group(1)
+        start = match.start(1)
+        end = match.end(1)
+    return _article_marker_is_real_header_at(text, start, end, ref.strip())
+
+
+def _is_article_number_inline_child(text, match):
+    ref = match.group(1).strip()
+    if not re.fullmatch(r"\d{1,3}\s*[.)–—-]", ref, re.I):
+        return False
+    marker_start = match.start(1)
+    return bool(
+        re.search(
+            r"Art(?:igo)?\.?\s*$",
+            _ocr_structure_view(text[max(0, marker_start - 16):marker_start]),
+            re.I,
+        )
+    )
+
+
 def _classify_child(ref):
-    if ref.startswith("§") or re.match(r"^par[aá]graf[o0]\s+[uú]nic[o0]",ref,re.I):return "paragrafo"
-    if re.fullmatch(rf"{ROMAN_RE}\s*[.)–—-]",ref):return "inciso"
-    if re.fullmatch(r"[a-z]\s*[)–—-]",ref):return "alinea"
+    normalized = ref.strip()
+    if normalized.startswith("§") or re.match(r"^par[aá]graf[o0]\s+", normalized, re.I):
+        return "paragrafo"
+    if re.match(r"^Inciso\b", normalized, re.I):
+        return "inciso"
+    if re.match(r"^Al[ií]nea\b", normalized, re.I):
+        return "alinea"
+    if re.fullmatch(rf"{ROMAN_RE}\s*[.)–—-]", normalized, re.I):
+        return "inciso"
+    if (
+        re.fullmatch(r"\([A-Za-z]{1,3}\)", normalized)
+        or re.fullmatch(r"[A-Za-z]{1,3}\s*(?:\)|[–—-])", normalized)
+    ):
+        return "alinea"
     return "item"
 
-_CHILD_RANK={"paragrafo":1,"inciso":2,"alinea":3,"item":4}
+
+_CHILD_RANK = {"paragrafo": 1, "inciso": 2, "alinea": 3, "item": 4}
+
+
+def _is_thousands_fragment(article_text, match):
+    ref = match.group(1).strip()
+    if not re.fullmatch(r"\d{1,3}\s*[.)–—-]", ref):
+        return False
+    marker_start = match.start(1)
+    # Em "Art. 1.045.", o regex de item pode enxergar "045." após o ponto.
+    # Um item real após uma frase ("2024. 1. ...") possui espaço antes do marcador.
+    return (
+        marker_start >= 2
+        and article_text[marker_start - 2].isdigit()
+        and article_text[marker_start - 1] == "."
+    )
+
 
 def _article_children(article_text):
-    matches=[m for m in _merged_marker_matches(_ocr_structure_view(article_text),CHILD_RE,CHILD_INLINE_RE) if not _is_article_number_inline_child(article_text,m)]
-    if not matches:return article_text.strip(),[]
-    caput=article_text[:matches[0].start()].strip();children=[];stack=[]
-    for i,m in enumerate(matches):
-        end=matches[i+1].start() if i+1<len(matches) else len(article_text);value=article_text[m.start():end].strip();ref=m.group(1).strip()
-        if not value:continue
-        kind=_classify_child(ref);rank=_CHILD_RANK[kind]
-        # Pilha: § > inciso > alínea > item. Inciso de § carrega o §; alínea/item sem pai ficam sob o caput
-        # (antes eram descartados e o texto sumia do índice).
-        while stack and stack[-1][0]>=rank:stack.pop()
-        stack.append((rank,ref))
-        children.append((kind,ref,value,m.start(),[r for _rk,r in stack]))
-    return caput,children
+    matches = [
+        match
+        for match in _merged_marker_matches(_ocr_structure_view(article_text), CHILD_RE, CHILD_INLINE_RE)
+        if not _is_article_number_inline_child(article_text, match)
+        and not _is_thousands_fragment(article_text, match)
+    ]
+    if not matches:
+        return article_text.strip(), []
 
-ABBREVIATION_DOT_RE=re.compile(r"\b(?:art|inc|inciso|par|p|n|no|fls|proc|cf|etc|sr|sra|dr|dra|prof|p[aá]g|pag|vol|ed)\.",re.I)
-ABBREVIATION_DOT_SENTINEL="\ue000"
-def _protect_abbreviation_dots(text):return ABBREVIATION_DOT_RE.sub(lambda m:m.group(0)[:-1]+ABBREVIATION_DOT_SENTINEL,text)
-def _restore_abbreviation_dots(text):return text.replace(ABBREVIATION_DOT_SENTINEL,".")
+    first_start = matches[0].start(1)
+    caput = article_text[:first_start].strip()
+    children = []
+    stack = []
 
+    for index, match in enumerate(matches):
+        marker_start = match.start(1)
+        end = matches[index + 1].start(1) if index + 1 < len(matches) else len(article_text)
+        value = article_text[marker_start:end].strip()
+        ref = match.group(1).strip()
+        if not value:
+            continue
+
+        kind = _classify_child(ref)
+        rank = _CHILD_RANK[kind]
+        while stack and stack[-1][0] >= rank:
+            stack.pop()
+        stack.append((rank, ref))
+        children.append((kind, ref, value, marker_start, [ref for _rank, ref in stack]))
+
+    return caput, children
+
+
+ABBREVIATION_DOT_RE = re.compile(
+    r"\b(?:art|inc|inciso|par|p|n|no|fls|proc|cf|etc|sr|sra|dr|dra|prof|p[aá]g|pag|vol|ed)\.",
+    re.I,
+)
+ABBREVIATION_DOT_SENTINEL = "\ue000"
+
+
+def _protect_abbreviation_dots(text):
+    return ABBREVIATION_DOT_RE.sub(lambda match: match.group(0)[:-1] + ABBREVIATION_DOT_SENTINEL, text)
+
+
+def _restore_abbreviation_dots(text):
+    return text.replace(ABBREVIATION_DOT_SENTINEL, ".")
 @lru_cache(maxsize=2)
 def _default_tokenizer(providers=None):
     try:
@@ -195,14 +540,25 @@ def _excerpt_caput(caput,budget,tokenizer=None):
         else:hi=mid-1
     return _truncate_words_to_tokens((label+left+ellipsis+best).strip(),budget,tokenizer)
 
-def _fit_child_prefix_info(prefix,child_text,max_size,tokenizer=None):
-    if _token_count(prefix,tokenizer)+_token_count(child_text,tokenizer)+1<=max_size:return prefix,False
-    header,_,caput=prefix.partition("\n");child_tokens=_token_count(child_text,tokenizer);prefix_budget=max(1,max_size-child_tokens-1)
-    if _token_count(header,tokenizer)>prefix_budget:return _truncate_words_to_tokens(header,prefix_budget,tokenizer),True
-    remaining=max(1,prefix_budget-_token_count(header,tokenizer)-1);return f"{header}\n{_excerpt_caput(caput.rstrip(),remaining,tokenizer)}".strip(),True
+def _fit_child_prefix_info(prefix, child_text, max_size, tokenizer=None):
+    """
+    Prefixo estrutural imutável. O caput e o caminho hierárquico nunca são truncados.
+    O retorno booleano indica somente que o conjunto ultrapassaria max_size; o chamador
+    pode então reduzir o texto do filho, mas jamais o contexto do pai.
+    """
+    context_oversize = (
+        _token_count(prefix, tokenizer)
+        + _token_count(child_text, tokenizer)
+        + 1
+        > max_size
+    )
+    return prefix, context_oversize
 
-def _fit_child_prefix(prefix,child_text,max_size,tokenizer=None):
-    fitted,_truncated=_fit_child_prefix_info(prefix,child_text,max_size,tokenizer);return fitted
+
+def _fit_child_prefix(prefix, child_text, max_size, tokenizer=None):
+    fitted, _oversize = _fit_child_prefix_info(prefix, child_text, max_size, tokenizer)
+    return fitted
+
 
 def _split_trailing_structure(value,base_start):
     """Corta do artigo o que não é dele: títulos do próximo capítulo/seção (já vão em `headers` do próximo
@@ -220,20 +576,15 @@ def _split_trailing_structure(value,base_start):
     return article,[{"kind":"generic","ref":None,"start":base_start+found.start(),"text":rest.strip()}]
 
 def _article_units(text):
-    matches=[m for m in _merged_marker_matches(_ocr_structure_view(text),ARTIGO_RE,ARTIGO_INLINE_RE) if _article_marker_is_real_header(text,m)]
-    if not matches:return None
-    units=[]
-    for i,m in enumerate(matches):
-        start=m.start(1);end=matches[i+1].start() if i+1<len(matches) else len(text);raw=text[start:end].strip()
-        if i+1<len(matches):raw=raw.removesuffix("“").rstrip()  # abre-aspas do artigo emendado seguinte não pertence a este
-        value,extras=_split_trailing_structure(raw,start)
-        if value:units.append({"kind":"artigo","ref":m.group(1).strip(),"start":start,"text":value,"headers":_headers_before(text,start)})
-        for extra in extras:
-            headers=_headers_before(text,extra["start"])
-            # Anexo fica sob a norma, não sob o capítulo/seção em que o último artigo estava.
-            extra["headers"]=headers[:1] if extra["kind"]=="anexo" and headers and _HEADER_LEVELS[0][2].match(headers[0]) else ([] if extra["kind"]=="anexo" else headers)
-            units.append(extra)
-    return units
+    scanned = _scan_structure(text)
+    return [
+        {
+            **unit,
+            "headers": list(unit.get("headers") or []),
+        }
+        for unit in scanned["units"]
+    ] or None
+
 
 JURIS_SECTION_RE=re.compile(r"(?im)^[ \t]*(EMENTA|TESE/ENTENDIMENTO|TESE|DECISÃO|DECISAO|INTEIRO TEOR|RELATÓRIO|RELATORIO|VOTO|DISPOSITIVO)\s*:?[ \t]*$")
 def _jurisprudencia_units(text):
@@ -319,15 +670,14 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
             child_path=article_header+path_tail
             raw_prefix=" > ".join(child_path)+"\n"+caput
-            child_prefix,prefix_truncated=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer)
-            child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1)
-            child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
+            child_prefix,context_oversize=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer)
+            if context_oversize and _token_count(child_prefix,tokenizer) >= max_size:
+                child_spans=[(child_text,0,len(child_text))]
+            else:
+                child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1)
+                child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
             for local_index,(piece,relative,_end) in enumerate(child_spans):
                 rendered=f"{child_prefix}\n{piece}".strip()
-                if _token_count(rendered,tokenizer)>max_size:
-                    piece=_truncate_words_to_tokens(piece,max(1,max_size-_token_count(child_prefix+"\n",tokenizer)),tokenizer)
-                    rendered=f"{child_prefix}\n{piece}".strip()
-                    prefix_truncated=True
-                output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":prefix_truncated})
+                output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_oversize":context_oversize})
             next_index+=len(child_spans)
     return output
