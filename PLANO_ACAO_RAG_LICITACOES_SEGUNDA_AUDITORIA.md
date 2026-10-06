@@ -9,13 +9,11 @@
 
 # Visão geral
 
-As correções anteriores resolveram grande parte dos problemas estruturais, mas a nova auditoria encontrou cinco blocos ainda críticos:
+As correções anteriores resolveram grande parte dos problemas estruturais, mas a nova auditoria encontrou alguns blocos ainda críticos:
 
-1. `evaluation.py` ainda usa a API antiga de Qdrant local por caminho.
-2. `document_regime` ainda pode virar `transicao` apenas porque o texto cita mais de uma lei.
-3. O parser de alterações legislativas ainda é heurístico e não representa completamente múltiplos dispositivos e tipos de alteração.
-4. O limite de tokens está protegido por falha posterior, mas o gerador de chunks ainda pode produzir estruturas que excedem o orçamento.
-5. Os testes chamados de “reais” ainda usam fixture sintética e não existe E2E completo até Qdrant/retrieval.
+1. O parser de alterações legislativas ainda é heurístico e não representa completamente múltiplos dispositivos e tipos de alteração.
+2. O limite de tokens está protegido por falha posterior, mas o gerador de chunks ainda pode produzir estruturas que excedem o orçamento.
+3. Os testes chamados de “reais” ainda usam fixture sintética e não existe E2E completo até Qdrant/retrieval.
 
 Além disso, permanecem melhorias importantes em artigos mal espaçados, anexos, OCR/PDF, consultas históricas e cobertura do CI.
 
