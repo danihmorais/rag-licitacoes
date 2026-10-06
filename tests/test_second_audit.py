@@ -5,6 +5,7 @@ import pytest
 
 import chunking
 import config
+import ingest
 import metadata
 import query
 
@@ -189,6 +190,36 @@ def test_mandatory_context_is_secondary_when_context_budget_is_tight(monkeypatch
     )
     assert sources
     assert sources[0].id == "primary"
+
+
+def test_repeated_page_edge_noise_is_removed_without_erasing_normative_heading():
+    records = [
+        {
+            "page": 1,
+            "text": "CABEÇALHO DO PORTAL\nLEI Nº 14.133, DE 2021\nArt. 1º Regra.\nRODAPE 1",
+            "text_origin": "native",
+            "extraction_confidence": 0.9,
+        },
+        {
+            "page": 2,
+            "text": "CABEÇALHO DO PORTAL\nArt. 2º Outra regra.\nRODAPE 1",
+            "text_origin": "native",
+            "extraction_confidence": 0.9,
+        },
+    ]
+    cleaned = ingest._remove_repeated_page_noise(records)
+    assert cleaned[0]["text"].startswith("LEI Nº 14.133")
+    assert "CABEÇALHO DO PORTAL" not in cleaned[0]["text"]
+    assert "RODAPE 1" not in cleaned[0]["text"]
+    assert cleaned[1]["text"] == "Art. 2º Outra regra."
+
+
+def test_multi_regime_specific_query_filters_both_regimes_without_becoming_transition():
+    query_filter = query.qfilter(
+        query="Quais regras constam na Lei 14.133/2021 e na Lei 8.666/1993?"
+    )
+    condition = next(item for item in query_filter.must if item.key == "regime_juridico")
+    assert condition.match.any == ["lei_14133", "lei_8666"]
 
 
 def test_manifest_declares_the_legal_ast_schema():
