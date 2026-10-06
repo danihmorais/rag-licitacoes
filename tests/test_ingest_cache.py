@@ -16,7 +16,7 @@ def test_current_cache_requires_metadata_fingerprint():
         "sha256": "abc",
         "metadata_fingerprint": "new",
         "chunks": 7,
-        "_cache_version": 6,
+        "_cache_version": 1,
     }
     assert ingest.cache_entry_is_valid(entry, "abc", "new", 7)
     assert not ingest.cache_entry_is_valid(entry, "abc", "old", 7)
