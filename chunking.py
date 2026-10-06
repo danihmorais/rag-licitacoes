@@ -721,8 +721,20 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
     effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text)
     splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,length_function=length_fn,separators=["\n\n","\n",". ","; ",": "," ",""],keep_separator="end",add_start_index=True)
     spans=[]
+    previous_start = -1
     for doc in splitter.create_documents([protected]):
-        piece=_restore_abbreviation_dots(doc.page_content);start=int(doc.metadata.get("start_index",0));spans.append((piece,start,start+len(piece)))
+        raw_piece = doc.page_content
+        piece = _restore_abbreviation_dots(raw_piece)
+        start = int(doc.metadata.get("start_index", -1))
+        if start < 0 or protected[start:start + len(raw_piece)] != raw_piece:
+            # Fallback somente quando o metadata do próprio splitter é inválido.
+            search_from = max(0, previous_start + 1)
+            start = protected.find(raw_piece, search_from)
+            if start < 0:
+                raise RuntimeError("Não foi possível reconstruir o span exato de um chunk.")
+        end = start + len(raw_piece)
+        spans.append((piece, start, end))
+        previous_start = start
     return spans
 
 def _token_count(text,tokenizer=None):return _token_length_factory(tokenizer)(text)
@@ -915,8 +927,9 @@ def build_legal_ast(text: str) -> LegalNode:
                 node.anexo_ref = str(ref) if ref else None
                 node.anexo_path = list(unit.get("anexo_path") or ([str(ref)] if ref else []))
             annex_nodes[node.node_id] = node
-            if node.anexo_ref:
-                annex_nodes[str(node.anexo_ref)] = node
+            for alias in (unit.get("anexo_id"), node.anexo_ref):
+                if alias:
+                    annex_nodes[str(alias)] = node
             continue
 
         if kind != "artigo":
@@ -1102,7 +1115,7 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
                     source_start=u["start"]+section["start"]+rel;source_end=u["start"]+section["start"]+_end
-                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
+                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"node_id":f"{unit_id}/{section['section']}","parent_id":None,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
         if output:
             output = _attach_device_ids(output)
             _assert_source_spans(full_text, output)
