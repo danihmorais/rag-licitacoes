@@ -22,7 +22,7 @@ def test_inciso_xl_e_xlviii_nao_somem():
         "LXXVIII - hipótese setenta e oito.\n"
         "C - hipótese cem.\n"
     )
-    chunks = chunking.build_structural_chunks(text, 1000, 0, tokenizer=chunking._token_length_factory(None).__closure__ and None)
+    chunks = chunking.build_structural_chunks(text, 1000, 0, tokenizer=None)
     incisos = [item for item in chunks if item["segment_kind"] == "inciso"]
     assert [item["segment_ref"] for item in incisos] == [
         "XL -",
@@ -95,7 +95,9 @@ def test_ocr_structure_view_never_changes_offsets():
     text = "Artig0 10. Regra.\nCAPÍTUL0 I\nArt1g0 20. Outra regra.\n"
     normalized = chunking._ocr_structure_view(text)
     assert len(normalized) == len(text)
-    assert normalized.replace("Artigo", "Artig0").replace("CAPITULO", "CAPÍTUL0") == text.replace("Artig0", "Artig0")
+    assert "Artigo 10." in normalized
+    assert "CAPITULO I" in normalized
+    assert "Artigo 20." in normalized
 
 
 def test_offsets_still_point_into_original_ocr_text():
