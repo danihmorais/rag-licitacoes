@@ -1120,10 +1120,13 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
     for unit in units:
         if not unit["text"].strip():continue
         ref=unit.get("ref")
-        unit_id = str(unit.get("node_id") or (
+        legacy_unit_id = (
             (f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}")
             + (f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
-        ))
+        )
+        # unit_id continua compatível com o corpus histórico; node_id identifica
+        # a posição estrutural exata na AST. Em anexos, o node_id evita colisões.
+        unit_id = str(unit.get("node_id") or legacy_unit_id) if unit.get("anexo_ref") else legacy_unit_id
         headers=list(unit.get("headers") or [])
         amendment = _detect_amendment(unit["text"], ref) if unit["kind"] == "artigo" else None
         if unit["kind"]!="artigo":
