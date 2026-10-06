@@ -217,6 +217,27 @@ _STRUCTURE_SCAN_RE = re.compile(
 )
 
 
+def _merged_marker_matches(text, *regexes):
+    matches = []
+    occupied = []
+    for regex in regexes:
+        for candidate in regex.finditer(text):
+            if any(candidate.start() < end and candidate.end() > start for start, end in occupied):
+                continue
+            matches.append(candidate)
+            occupied.append((candidate.start(), candidate.end()))
+    dedup = []
+    for candidate in sorted(matches, key=lambda match: match.start()):
+        ref = candidate.group(1).strip().casefold()
+        if any(
+            ref == previous.group(1).strip().casefold()
+            and abs(candidate.start() - previous.start()) <= 2
+            for previous in dedup[-2:]
+        ):
+            continue
+        dedup.append(candidate)
+    return dedup
+
 def _headers_before(text, start):
     scanned = _scan_structure(text)
     positions = scanned["header_positions"]
