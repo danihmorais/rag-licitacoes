@@ -877,8 +877,17 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     )
     mandatory = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
     context_points = expand_context(client, points) if points else []
-    mandatory_ids = {point.id for point in mandatory}
-    ordered = mandatory + [point for point in context_points if point.id not in mandatory_ids]
+    primary_ids = {point.id for point in context_points}
+    for point in mandatory:
+        if point.id not in primary_ids:
+            point.payload['_context_only'] = True
+            point.payload['_mandatory_context'] = True
+
+    # A evidência recuperada tem precedência. Fontes obrigatórias entram
+    # somente depois e podem ser descartadas pelo limite de contexto sem
+    # expulsar a prova principal.
+    ordered = list(context_points)
+    ordered.extend(point for point in mandatory if point.id not in primary_ids)
     context_text, context_sources = context_with_sources(ordered)
     if not context_sources:
         return query, [], []
