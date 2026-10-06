@@ -374,13 +374,20 @@ O pipeline de ingestão:
 8. atualiza o manifesto e o cache de ingestão;
 9. remove fontes obsoletas quando **RAG_PRUNE_STALE=1**.
 
-O índice local fica em:
+O RAG usa um **Qdrant Server** separado. Por padrão, conecta em `http://127.0.0.1:6333` e usa gRPC para as operações quando `RAG_QDRANT_PREFER_GRPC=1`.
+
+Configuração:
 
 ~~~text
-db/qdrant/
+RAG_QDRANT_URL=http://127.0.0.1:6333
+RAG_QDRANT_API_KEY=
+RAG_QDRANT_PREFER_GRPC=1
+RAG_QDRANT_TIMEOUT=30
 ~~~
 
-Não é necessário executar um servidor Qdrant separado no uso local padrão.
+O diretório de dados do Qdrant é administrado pelo próprio servidor e não faz parte de `db/` do projeto.
+
+Antes de executar a ingestão ou as consultas, o Qdrant Server deve estar disponível no endereço configurado.
 
 ## Consulta
 
@@ -698,7 +705,7 @@ Configuração padrão:
 ~~~text
 RAG_DENSE_MAX_TOKENS=512
 RAG_QDRANT_UPSERT_BATCH_SIZE=100
-RAG_INDEX_VERSION=14
+RAG_INDEX_VERSION=1
 ~~~
 
 ### Sincronização
