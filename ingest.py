@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastembed import SparseTextEmbedding, TextEmbedding
 from pypdf import PdfReader
-from qdrant_client import QdrantClient, models
+from qdrant_client import models
 
 import config
 from index_manifest import read_manifest, write_manifest
@@ -681,7 +681,7 @@ def main():
         sync_sources()
         sync_jurisprudencia()
     files = load_documents()
-    client = QdrantClient(path=str(config.QDRANT_PATH))
+    client = config.create_qdrant_client()
     manifest = read_manifest()
     if manifest is not None:
         from index_manifest import validate_manifest
