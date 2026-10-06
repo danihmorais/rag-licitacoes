@@ -17,7 +17,7 @@ from qdrant_client import QdrantClient, models
 import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
-from chunking import build_structural_chunks,
+from chunking import build_structural_chunks
 from embedding_utils import validate_embedding_inputs
 
 PAYLOAD_INDEX_TYPES = {
