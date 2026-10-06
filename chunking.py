@@ -870,11 +870,10 @@ def build_legal_ast(text: str) -> LegalNode:
         parent_path = path[:-1]
         if parent_path:
             parent = header_nodes.get(parent_path, root)
-        key_suffix = _normalize_article_ref(heading) or str(position)
         node = LegalNode(
             node_id=f"header:{'/'.join(_normalize_article_ref(item) or item for item in path)}@{position}",
             kind=(
-                "anexo" if re.match(r"^ANEXO\\b", heading, re.I) else
+                "anexo" if re.match(r"^ANEXO\b", heading, re.I) else
                 next((kind for kind, rank, pattern in _HEADER_LEVELS if kind != "anexo" and pattern.match(heading)), "estrutura")
             ),
             ref=heading,
@@ -883,8 +882,8 @@ def build_legal_ast(text: str) -> LegalNode:
             source_end=line_end,
             source_text=text[line_start:line_end],
             path=list(path),
-            anexo_ref=path[-1] if re.match(r"^ANEXO\\b", heading, re.I) else None,
-            anexo_path=[path[-1]] if re.match(r"^ANEXO\\b", heading, re.I) else [],
+            anexo_ref=path[-1] if re.match(r"^ANEXO\b", heading, re.I) else None,
+            anexo_path=[path[-1]] if re.match(r"^ANEXO\b", heading, re.I) else [],
         )
         parent.add_child(node)
         header_nodes[path] = node
@@ -897,19 +896,28 @@ def build_legal_ast(text: str) -> LegalNode:
         source_end = start + len(source_text)
 
         if kind == "anexo":
-            node = LegalNode(
-                node_id=str(unit.get("node_id") or f"anexo:{_normalize_article_ref(ref) or start}@{start}"),
-                kind="anexo",
-                ref=ref,
-                parent_id=root.node_id,
-                source_start=start,
-                source_end=source_end,
-                source_text=source_text,
-                path=[str(ref)] if ref else [],
-                anexo_ref=str(ref) if ref else None,
-                anexo_path=list(unit.get("anexo_path") or ([str(ref)] if ref else [])),
-            )
-            root.add_child(node)
+            path = tuple(list(unit.get("headers") or []) + ([str(ref)] if ref else []))
+            node = header_nodes.get(path)
+            if node is None:
+                node = LegalNode(
+                    node_id=str(unit.get("node_id") or f"anexo:{_normalize_article_ref(ref) or start}@{start}"),
+                    kind="anexo",
+                    ref=ref,
+                    parent_id=root.node_id,
+                    source_start=start,
+                    source_end=source_end,
+                    source_text=source_text,
+                    path=list(path),
+                    anexo_ref=str(ref) if ref else None,
+                    anexo_path=list(unit.get("anexo_path") or ([str(ref)] if ref else [])),
+                )
+                root.add_child(node)
+            else:
+                node.source_start = start
+                node.source_end = source_end
+                node.source_text = source_text
+                node.anexo_ref = str(ref) if ref else None
+                node.anexo_path = list(unit.get("anexo_path") or ([str(ref)] if ref else []))
             annex_nodes[node.node_id] = node
             if node.anexo_ref:
                 annex_nodes[str(node.anexo_ref)] = node
