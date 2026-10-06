@@ -219,12 +219,11 @@ _STRUCTURE_SCAN_RE = re.compile(
 
 def _headers_before(text, start):
     scanned = _scan_structure(text)
-    events = scanned["header_events"]
-    if not events:
+    positions = scanned["header_positions"]
+    if not positions:
         return []
-    positions = [position for position, _headers in events]
     index = bisect.bisect_right(positions, start) - 1
-    return list(events[index][1]) if index >= 0 else []
+    return list(scanned["header_events"][index][1]) if index >= 0 else []
 
 
 @lru_cache(maxsize=2)
@@ -315,6 +314,7 @@ def _scan_structure(text):
     return {
         "units": tuple(units),
         "header_events": tuple(header_events),
+        "header_positions": tuple(position for position, _headers in header_events),
     }
 
 
@@ -382,7 +382,10 @@ def _classify_child(ref):
         return "alinea"
     if re.fullmatch(rf"{ROMAN_RE}\s*[.)–—-]", normalized, re.I):
         return "inciso"
-    if re.fullmatch(r"\(?[A-Za-z]{1,3}\)?\s*(?:\)|[–—-])", normalized):
+    if (
+        re.fullmatch(r"\([A-Za-z]{1,3}\)", normalized)
+        or re.fullmatch(r"[A-Za-z]{1,3}\s*(?:\)|[–—-])", normalized)
+    ):
         return "alinea"
     return "item"
 
@@ -630,8 +633,11 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
             child_path=article_header+path_tail
             raw_prefix=" > ".join(child_path)+"\n"+caput
             child_prefix,context_oversize=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer)
-            child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1)
-            child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
+            if context_oversize and _token_count(child_prefix,tokenizer) >= max_size:
+                child_spans=[(child_text,0,len(child_text))]
+            else:
+                child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1)
+                child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
             for local_index,(piece,relative,_end) in enumerate(child_spans):
                 rendered=f"{child_prefix}\n{piece}".strip()
                 output.append({"text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_oversize":context_oversize})
