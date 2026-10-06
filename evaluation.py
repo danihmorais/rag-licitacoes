@@ -18,7 +18,6 @@ from query import (
     rerank,
     validate_generated_answer,
 )
-from qdrant_client import QdrantClient
 from fastembed import SparseTextEmbedding, TextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 from index_manifest import IndexCompatibilityError, validate_manifest
@@ -61,6 +60,12 @@ def load_cases(path: Path = DEFAULT_DATASET) -> list[dict]:
             isinstance(item, str) for item in jurisdiction
         ):
             raise ValueError(f'expected_jurisdicao inválido no caso {case_id}.')
+        for field in ('expected_article_refs', 'expected_device_ids', 'expected_unit_ids'):
+            value = case.get(field)
+            if value is not None and (
+                not isinstance(value, list) or not all(isinstance(item, str) for item in value)
+            ):
+                raise ValueError(f'{field} must be a list of strings in case {case_id}.')
     return cases
 
 
@@ -163,9 +168,9 @@ def device_recall_at_k(points, expected_device_ids: set[str], k: int) -> float |
     if not expected:
         return None
     found = {
-        str(point.payload.get('unit_id') or '').strip()
+        str(point.payload.get('device_id') or point.payload.get('unit_id') or '').strip()
         for point in points[:k]
-        if str(point.payload.get('unit_id') or '').strip()
+        if str(point.payload.get('device_id') or point.payload.get('unit_id') or '').strip()
     }
     return len(found & expected) / len(expected)
 
@@ -220,8 +225,12 @@ def evaluate_case(points, case: dict, k_values: tuple[int, ...]) -> dict:
         if expected_articles:
             metrics[f'article_recall@{k}'] = article_recall_at_k(points, expected_articles, k)
             metrics[f'false_positive_article_rate@{k}'] = false_positive_article_rate(points, expected_articles, k)
+        # expected_unit_ids is retained only for datasets produced before device_id
+        # became part of the indexed payload contract.
         expected_devices = {
-            str(item).strip() for item in case.get('expected_unit_ids', []) if str(item).strip()
+            str(item).strip()
+            for item in case.get('expected_device_ids', case.get('expected_unit_ids', []))
+            if str(item).strip()
         }
         if expected_devices:
             metrics[f'device_recall@{k}'] = device_recall_at_k(points, expected_devices, k)
@@ -372,13 +381,11 @@ def evaluate_evidence_gate(cases: list[dict]) -> dict:
 def build_retriever():
     config.ensure_directories()
     config.validate_config()
-    if not config.QDRANT_PATH.exists():
-        raise RuntimeError('Índice não encontrado. Rode python ingest.py antes da avaliação.')
     try:
         validate_manifest()
     except (IndexCompatibilityError, FileNotFoundError, ValueError) as error:
         raise RuntimeError(f'ERRO DE COMPATIBILIDADE: {error}') from error
-    client = QdrantClient(path=str(config.QDRANT_PATH))
+    client = config.create_qdrant_client()
     if not client.collection_exists(config.COLLECTION_NAME):
         raise RuntimeError(f'Coleção Qdrant não encontrada: {config.COLLECTION_NAME}.')
     dense = TextEmbedding(

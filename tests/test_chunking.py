@@ -223,7 +223,7 @@ def test_child_prefix_keeps_both_ends_of_long_caput():
         180,
     )
     assert "CAPUT (trechos inicial e final):" not in prefix
-    assert caput in prefix
+    assert caput not in prefix
     assert "INICIO DA REGRA" in prefix
     assert "CONDICAO FINAL OBRIGATORIA" in prefix
 

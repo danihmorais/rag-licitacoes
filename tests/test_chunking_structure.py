@@ -211,6 +211,37 @@ def test_alteracao_plural_com_ficam_acrescentados_eh_identificada_sem_gerar_arti
     by_ref = {item["unit_ref"]: item for item in chunks_of(text) if item["unit_kind"] == "artigo"}
     assert by_ref["Art. 2º"]["amendment"] is True
     assert by_ref["Art. 2º"]["target_article"] == "Art. 75-A"
+    assert by_ref["Art. 2º"]["target_articles"] == ["Art. 75-A", "Art. 76-A"]
+    assert by_ref["Art. 2º"]["target_devices"] == [
+        {"kind": "artigo", "ref": "Art. 75-A"},
+        {"kind": "artigo", "ref": "Art. 76-A"},
+    ]
+
+
+def test_alteracao_preserva_todos_os_artigos_de_uma_lista():
+    amendment = chunking._detect_amendment(
+        "Ficam acrescentados os arts. 75-A, 76-A e 77.", "Art. 2º"
+    )
+
+    assert amendment["target_articles"] == ["Art. 75-A", "Art. 76-A", "Art. 77"]
+    assert amendment["amendment_type"] == "acrescimo"
+
+
+def test_alteracao_preserva_dispositivos_hierarquicos_e_tipos_de_acao():
+    cases = [
+        ("O § 2º do art. 75 passa a vigorar com nova redação.", "redacao", "paragrafo"),
+        ("Fica alterado o inciso IV do art. 75.", "alteracao", "inciso"),
+        ('Fica incluída a alínea "a" do inciso IV do art. 75.', "inclusao", "alinea"),
+        ("Fica revogado o item 2.", "revogacao", "item"),
+        ("Fica suprimido o § 3º do art. 75.", "supressao", "paragrafo"),
+        ("O art. 75 é substituído pelo art. 76.", "substituicao", "artigo"),
+    ]
+
+    for text, expected_type, expected_kind in cases:
+        amendment = chunking._detect_amendment(text, "Art. 2º")
+        assert amendment is not None, text
+        assert amendment["amendment_type"] == expected_type, text
+        assert expected_kind in {item["kind"] for item in amendment["target_devices"]}, text
 
 
 def test_alteracao_com_passa_a_vigorar_com_redacao_eh_identificada_sem_gerar_artigo_falso():

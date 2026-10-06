@@ -460,6 +460,44 @@ AMENDMENT_RE = re.compile(
     r")",
     re.I,
 )
+AMENDMENT_ACTION_RE = re.compile(
+    r"(?i)\b(?:passa(?:m)?\s+a\s+vigorar|fica(?:m)?\s+(?:acrescid[oa]s?|acrescentad[oa]s?|"
+    r"inserid[oa]s?|inclu[ií]d[oa]s?|revogad[oa]s?|suprimid[oa]s?|alterad[oa]s?|"
+    r"substitu[ií]d[oa]s?)|acrescenta(?:m|-se)?|inclui(?:m|-se)?|altera(?:m|-se)?|"
+    r"revoga(?:m|-se)?|suprime(?:m|-se)?|substitui(?:m|-se)?|"
+    r"substitu[ií]d[oa]s?|d[aáo] nova reda[cç][aã]o)\b"
+)
+_DEVICE_REFERENCE_PATTERNS = (
+    ("alinea", re.compile(
+        r"\bal[ií]nea\s+(?:[\"“‘]([^\"”’]+)[\"”’]|([A-Za-z]{1,3}))"
+        r"(?:\s+do\s+inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?)?"
+        r"(?:\s+do\s+art(?:igo)?\.?\s*\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?)?",
+        re.I,
+    )),
+    ("paragrafo", re.compile(
+        r"(?:§\s*\d+[ºo°]?(?:-[A-Za-z])?|§\s*[uú]nico|par[aá]grafo\s+(?:[uú]nico|\d+[ºo°]?))"
+        r"(?:\s+do\s+art(?:igo)?\.?\s*\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?)?",
+        re.I,
+    )),
+    ("inciso", re.compile(
+        r"\binciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?"
+        r"(?:\s+do\s+art(?:igo)?\.?\s*\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?)?",
+        re.I,
+    )),
+    ("item", re.compile(r"\bitem\s+\d+(?:\.\d+)*", re.I)),
+    ("artigo", re.compile(
+        r"\barts?\.?\s*\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?\.?",
+        re.I,
+    )),
+)
+_ARTICLE_LIST_RE = re.compile(
+    r"\barts?\.?\s*(?P<refs>\d+(?:[ºo°]|-[A-Za-z]{1,3})?"
+    r"(?:\s*(?:,|e|ou)\s*\d+(?:[ºo°]|-[A-Za-z]{1,3})?)+)",
+    re.I,
+)
+QUOTED_ARTICLE_RE = re.compile(
+    rf"(?im)^[ \t]*[\"“‘]?[ \t]*(Art(?:igo)?\.?[ \t]*{_ART_NUMBER})(?=\s|$)"
+)
 
 
 def _normalize_article_ref(ref):
@@ -474,58 +512,85 @@ def _normalize_article_ref(ref):
 def _detect_amendment(text, current_ref=None):
     if not text:
         return None
-    match = AMENDMENT_RE.search(text)
-    if not match:
+    action = AMENDMENT_ACTION_RE.search(text)
+    if not action:
         return None
 
-    explicit_candidates = [
-        candidate.strip() for candidate in (
-            match.group("target_before"),
-            match.group("target_after"),
-        ) if candidate and candidate.strip()
+    target_text = text
+    reproduced_article = re.search(r"[\"“‘]\s*Art(?:igo)?\.?\s*\d", text, re.I)
+    if reproduced_article:
+        target_text = text[:reproduced_article.start()]
+
+    matches = []
+    for kind, pattern in _DEVICE_REFERENCE_PATTERNS:
+        for target_match in pattern.finditer(target_text):
+            start, end = target_match.span()
+            if kind == "alinea" and target_match.group(1):
+                ref = target_match.group(1)
+                ref = f'alínea "{ref}"' + target_match.group(0)[target_match.group(0).find("\"") + len(ref) + 2:]
+            elif kind == "alinea" and target_match.group(2):
+                ref = f"alínea {target_match.group(2)}" + target_match.group(0)[len("alínea") + 1 + len(target_match.group(2)):]
+            elif kind == "artigo":
+                ref = re.sub(r"^arts?\.?\s*", "Art. ", target_match.group(0), flags=re.I)
+            else:
+                ref = target_match.group(0)
+            ref = re.sub(r"\s+", " ", ref).strip(" \t\r\n,;:")
+            if current_ref and kind == "artigo" and _normalize_article_ref(ref) == _normalize_article_ref(current_ref):
+                continue
+            matches.append((start, end, kind, ref))
+
+    for list_match in _ARTICLE_LIST_RE.finditer(target_text):
+        for ref_match in re.finditer(r"\d+(?:[ºo°]|-[A-Za-z]{1,3})?", list_match.group("refs")):
+            ref = f"Art. {ref_match.group(0)}"
+            if current_ref and _normalize_article_ref(ref) == _normalize_article_ref(current_ref):
+                continue
+            matches.append((list_match.start("refs") + ref_match.start(), list_match.start("refs") + ref_match.end(), "artigo", ref))
+
+    if not matches and reproduced_article:
+        quoted_text = text[reproduced_article.start():]
+        for target_match in QUOTED_ARTICLE_RE.finditer(quoted_text):
+            ref = re.sub(r"^art(?:igo)?\.?\s*", "Art. ", target_match.group(1), flags=re.I)
+            matches.append((
+                reproduced_article.start() + target_match.start(1),
+                reproduced_article.start() + target_match.end(1),
+                "artigo",
+                re.sub(r"\s+", " ", ref).strip(),
+            ))
+
+    selected = []
+    for candidate in sorted(matches, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if any(candidate[0] < end and candidate[1] > start for start, end, _kind, _ref in selected):
+            continue
+        if not any(kind == candidate[2] and ref.casefold() == candidate[3].casefold() for _start, _end, kind, ref in selected):
+            selected.append(candidate)
+
+    if not selected:
+        return None
+
+    action_text = text.casefold()
+    if re.search(r"revog", action_text):
+        amendment_type = "revogacao"
+    elif re.search(r"suprim", action_text):
+        amendment_type = "supressao"
+    elif re.search(r"acrescid|acrescent|inserid|inclu[ií]d|inclu[ií]|inclui", action_text):
+        amendment_type = "inclusao" if re.search(r"inclu[ií]d|inclu[ií]|inclui", action_text) else "acrescimo"
+    elif "substitu" in action_text:
+        amendment_type = "substituicao"
+    elif re.search(r"alter", action_text):
+        amendment_type = "alteracao"
+    else:
+        amendment_type = "redacao"
+
+    target_devices = [
+        {"kind": kind, "ref": ref}
+        for _start, _end, kind, ref in selected
     ]
-    explicit_candidates = list(dict.fromkeys(explicit_candidates))
-
-    candidate_refs = []
-    for article_match in ARTIGO_INLINE_RE.finditer(text):
-        ref = article_match.group(1).strip()
-        if current_ref and _normalize_article_ref(ref) == _normalize_article_ref(current_ref):
-            continue
-        if article_match.start() > match.start():
-            candidate_refs.append(ref)
-
-    target_candidates = []
-    for candidate in explicit_candidates + candidate_refs:
-        refs = [ref.group(1).strip() for ref in ARTIGO_INLINE_RE.finditer(candidate)]
-        if refs:
-            target_candidates.extend(refs)
-            continue
-        clean = re.sub(r"\s+", " ", candidate).strip()
-        clean = re.sub(r"^(?:O|Os|A|As|No|Na|Nos|Nas)\s+", "", clean, flags=re.I)
-        target_candidates.append(clean)
-
-    target = None
-    for candidate in target_candidates:
-        clean = re.sub(r"\s+", " ", candidate).strip()
-        clean = re.sub(r"\.$", "", clean)
-        clean = re.sub(r"^(?P<prefix>art(?:igo)?)\s*\.?\s*(?=\d)", "Art. ", clean, flags=re.I)
-        if current_ref and _normalize_article_ref(clean) == _normalize_article_ref(current_ref):
-            continue
-        target = clean
-        break
-
-    if not target:
-        return None
-
-    amendment_type = "redacao"
-    lower = match.group(0).lower()
-    if any(token in lower for token in ("acrescido", "acrescida", "acrescentado", "acrescentada", "inserido", "inserida", "incluido", "incluida")):
-        amendment_type = "acrescimo"
-    elif "inciso" in target.lower():
-        amendment_type = "inciso"
+    target_articles = [item["ref"] for item in target_devices if item["kind"] == "artigo"]
     return {
         "amendment": True,
-        "target_article": target,
+        "target_devices": target_devices,
+        "target_articles": target_articles,
+        "target_article": target_articles[0] if target_articles else None,
         "amendment_type": amendment_type,
     }
 
@@ -648,18 +713,37 @@ def _excerpt_caput(caput,budget,tokenizer=None):
     return _truncate_words_to_tokens((label+left+ellipsis+best).strip(),budget,tokenizer)
 
 def _fit_child_prefix_info(prefix, child_text, max_size, tokenizer=None):
-    """
-    Prefixo estrutural imutável. O caput e o caminho hierárquico nunca são truncados.
-    O retorno booleano indica somente que o conjunto ultrapassaria max_size; o chamador
-    pode então reduzir o texto do filho, mas jamais o contexto do pai.
-    """
+    """Reduz contexto auxiliar para reservar orçamento ao texto-fonte do filho."""
     context_oversize = (
         _token_count(prefix, tokenizer)
         + _token_count(child_text, tokenizer)
         + 1
         > max_size
     )
-    return prefix, context_oversize
+    path, separator, caput = prefix.partition("\n")
+    path_parts = [part.strip() for part in path.split(" > ") if part.strip()]
+    prefix_budget = max(0, max_size - 2)
+    fitted_path = ""
+    for start in range(len(path_parts)):
+        candidate = " > ".join(path_parts[start:])
+        if _token_count(candidate, tokenizer) <= prefix_budget:
+            fitted_path = candidate
+            break
+
+    if not fitted_path and path_parts:
+        fitted_path = _truncate_words_to_tokens(path_parts[-1], prefix_budget, tokenizer)
+
+    fitted_prefix = fitted_path
+    if separator and caput and fitted_path:
+        caput_budget = prefix_budget - _token_count(fitted_path, tokenizer) - 1
+        if caput_budget > 0:
+            excerpt = _excerpt_caput(caput, caput_budget, tokenizer)
+            if excerpt:
+                excerpt = re.sub(r"^CAPUT \(trechos inicial e final\):\s*", "", excerpt)
+                fitted_prefix = f"{fitted_path}\n{excerpt}"
+    if _token_count(fitted_prefix, tokenizer) > prefix_budget:
+        fitted_prefix = _truncate_words_to_tokens(fitted_path, prefix_budget, tokenizer)
+    return fitted_prefix, context_oversize
 
 
 def _fit_child_prefix(prefix, child_text, max_size, tokenizer=None):
@@ -737,6 +821,24 @@ def _units(text):
     return [{"kind":"generic","ref":None,"start":0,"text":text.strip(),"headers":[]}]
 
 
+def _attach_device_ids(chunks):
+    for chunk in chunks:
+        unit_id = str(chunk.get("unit_id") or "")
+        unit_ref = chunk.get("unit_ref")
+        path = list(chunk.get("hierarchy_path") or [])
+        if chunk.get("unit_kind") == "artigo" and unit_ref:
+            article_index = next(
+                (index for index in range(len(path) - 1, -1, -1) if path[index] == unit_ref),
+                None,
+            )
+            device_path = path[article_index + 1:] if article_index is not None else []
+            suffix = "/".join(str(part).strip() for part in device_path if str(part).strip()) or "caput"
+            chunk["device_id"] = f"{unit_id}/{suffix}"
+        else:
+            chunk["device_id"] = unit_id
+    return chunks
+
+
 def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer=None):
     if max_size<=0:raise ValueError("max_size deve ser maior que zero")
     if overlap<0 or overlap>=max_size:raise ValueError("overlap deve ser maior ou igual a zero e menor que max_size")
@@ -758,7 +860,7 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
                     source_start=u["start"]+section["start"]+rel;source_end=u["start"]+section["start"]+_end
                     output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
-        if output:return output
+        if output:return _attach_device_ids(output)
     output=[];ref_counts={}
     for unit in units:
         ref=unit.get("ref")
@@ -777,24 +879,27 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         article_header=[*headers,article_ref]
         if not children:
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"amendment_type":(amendment or {}).get("amendment_type")})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
             continue
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"amendment_type":(amendment or {}).get("amendment_type")})
+            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
             caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
             child_path=article_header+path_tail
             raw_prefix=" > ".join(child_path)+"\n"+caput
             child_prefix,context_oversize=_fit_child_prefix_info(raw_prefix,child_text,max_size,tokenizer)
-            if context_oversize and _token_count(child_prefix,tokenizer) >= max_size:
-                child_spans=[(child_text,0,len(child_text))]
-            else:
-                child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-1)
-                child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
+            child_budget=max(1,max_size-_token_count(child_prefix,tokenizer)-2)
+            child_spans=_split_text_spans(child_text,child_budget,overlap,tokenizer)
             for local_index,(piece,relative,_end) in enumerate(child_spans):
                 rendered=f"{child_prefix}\n{piece}".strip()
-                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"amendment_type":(amendment or {}).get("amendment_type")})
+                while _token_count(rendered,tokenizer)>max_size and child_prefix:
+                    allowed_prefix=max(0,max_size-_token_count(piece,tokenizer)-2)
+                    child_prefix=_truncate_words_to_tokens(child_prefix,allowed_prefix,tokenizer)
+                    rendered=f"{child_prefix}\n{piece}".strip()
+                if _token_count(rendered,tokenizer)>max_size:
+                    raise RuntimeError("Segmento jurídico excede o orçamento de tokens após a divisão.")
+                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
             next_index+=len(child_spans)
-    return output
+    return _attach_device_ids(output)

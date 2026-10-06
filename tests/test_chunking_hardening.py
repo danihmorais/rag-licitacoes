@@ -48,7 +48,7 @@ def test_roman_false_positive_is_not_classified_as_inciso():
     assert any(item[0] == "inciso" and item[1].startswith("I") for item in children)
 
 
-def test_prefix_context_is_never_truncated():
+def test_prefix_context_is_reduced_to_reserve_budget_for_child():
     tokenizer = FakeTokenizer()
     prefix = "Art. 1º\n" + " ".join(["condição"] * 80)
     fitted, context_oversize = chunking._fit_child_prefix_info(
@@ -58,8 +58,9 @@ def test_prefix_context_is_never_truncated():
         tokenizer,
     )
     assert context_oversize is True
-    assert fitted == prefix
-    assert fitted == prefix  # o contexto inteiro permanece intacto
+    assert fitted != prefix
+    assert chunking._token_count(fitted, tokenizer) <= 30
+    assert "Art. 1º" in fitted
 
 
 def test_offsets_come_from_splitter_not_find():
@@ -114,12 +115,31 @@ def test_jurisprudencia_chunks_preserve_source_text_and_offsets():
         assert chunk["source_text"] == text[start:end]
 
 
-def test_structural_chunk_marks_context_oversize_without_truncating_prefix():
+def test_structural_chunk_reduces_context_to_keep_child_within_token_budget():
     tokenizer = FakeTokenizer()
     text = "CAPÍTULO I\nArt. 1º " + " ".join(["condição"] * 80) + "\nIV - " + " ".join(["consequência"] * 30)
     chunks = chunking.build_structural_chunks(text, 32, 0, tokenizer=tokenizer)
     child_chunks = [item for item in chunks if item.get("segment_kind") == "inciso"]
     assert child_chunks
-    assert all(not item["prefix_truncated"] for item in child_chunks)
     assert any(item["context_oversize"] for item in child_chunks)
+    assert all(item["context_reduced"] for item in child_chunks)
     assert all("condição" in item["text"] for item in child_chunks)
+    assert all(chunking._token_count(item["text"], tokenizer) <= 32 for item in child_chunks)
+    assert all(item["source_text"] == text[item["source_start"]:item["source_end"]] for item in child_chunks)
+
+
+def test_device_ids_distinguish_repeated_child_refs_under_different_parents():
+    text = (
+        "Art. 1º Regra geral.\n"
+        "I - primeira hipótese.\n"
+        "a) primeiro detalhe.\n"
+        "II - segunda hipótese.\n"
+        "a) segundo detalhe.\n"
+    )
+
+    chunks = chunking.build_structural_chunks(text, 256, 0, tokenizer=FakeTokenizer())
+    alinea_chunks = [item for item in chunks if item["segment_kind"] == "alinea"]
+
+    assert len(alinea_chunks) == 2
+    assert alinea_chunks[0]["segment_ref"] == alinea_chunks[1]["segment_ref"] == "a)"
+    assert alinea_chunks[0]["device_id"] != alinea_chunks[1]["device_id"]

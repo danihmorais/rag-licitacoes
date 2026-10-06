@@ -152,13 +152,61 @@ def test_article_and_device_recall_are_measured_at_device_level():
         point('lei14133'),
     ]
     ranking[0].payload['unit_id'] = 'artigo:1'
+    ranking[0].payload['device_id'] = 'artigo:1/inciso:I'
     ranking[0].payload['unit_ref'] = 'Art. 1º'
-    ranking[1].payload['unit_id'] = 'artigo:2'
+    ranking[1].payload['unit_id'] = 'artigo:1'
+    ranking[1].payload['device_id'] = 'artigo:1/inciso:II'
     ranking[1].payload['unit_ref'] = 'Art. 2º'
 
     assert article_recall_at_k(ranking, {'Art. 1º'}, 1) == 1.0
-    assert article_recall_at_k(ranking, {'Art. 1º', 'Art. 2º'}, 2) == 1.0
-    assert device_recall_at_k(ranking, {'artigo:2', 'artigo:3'}, 2) == 0.5
+    assert device_recall_at_k(ranking, {'artigo:1/inciso:II'}, 1) == 0.0
+    assert device_recall_at_k(ranking, {'artigo:1/inciso:I', 'artigo:1/inciso:II'}, 2) == 1.0
+
+
+def test_evaluation_prefers_expected_device_ids_and_accepts_legacy_unit_ids():
+    ranking = [point('lei14133')]
+    ranking[0].payload.update({
+        'unit_id': 'artigo:28',
+        'device_id': 'artigo:28/inciso:I',
+        'unit_ref': 'Art. 28.',
+    })
+
+    report = evaluate_rankings(
+        {'device': ranking, 'legacy': ranking},
+        [
+            {
+                'id': 'device',
+                'query': 'Qual modalidade está no inciso I do art. 28 da Lei 14.133?',
+                'expected_source_ids': ['lei14133'],
+                'expected_article_refs': ['Art. 28.'],
+                'expected_device_ids': ['artigo:28/inciso:I'],
+            },
+            {
+                'id': 'legacy',
+                'query': 'Consulta legada.',
+                'expected_source_ids': ['lei14133'],
+                'expected_unit_ids': ['artigo:28/inciso:I'],
+            },
+        ],
+        (1,),
+    )
+
+    assert report['cases'][0]['device_recall@1'] == 1.0
+    assert report['cases'][1]['device_recall@1'] == 1.0
+
+
+def test_load_cases_rejects_invalid_device_expectations(tmp_path):
+    dataset = tmp_path / 'dataset.json'
+    dataset.write_text(
+        '{"cases": [{"id": "bad", "query": "x", "expected_source_ids": ["lei14133"], '
+        '"expected_device_ids": "artigo:28/inciso:I"}]}',
+        encoding='utf-8',
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match='expected_device_ids'):
+        load_cases(dataset)
 
 
 def test_false_positive_article_rate_counts_unexpected_hits():
@@ -170,3 +218,38 @@ def test_false_positive_article_rate_counts_unexpected_hits():
     ranking[1].payload['unit_ref'] = 'Art. 999º'
 
     assert false_positive_article_rate(ranking, {'Art. 1º'}, 2) == 0.5
+
+
+def test_build_retriever_uses_configured_qdrant_server(monkeypatch):
+    import config
+    import evaluation
+
+    calls = []
+
+    class FakeClient:
+        def collection_exists(self, name):
+            calls.append(('collection_exists', name))
+            return True
+
+    class FakeEmbedding:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.delattr(config, 'QDRANT_PATH', raising=False)
+    monkeypatch.setattr(config, 'ensure_directories', lambda: None)
+    monkeypatch.setattr(config, 'validate_config', lambda: None)
+    monkeypatch.setattr(config, 'create_qdrant_client', lambda: calls.append(('client',)) or FakeClient())
+    monkeypatch.setattr(evaluation, 'validate_manifest', lambda: calls.append(('manifest',)))
+    monkeypatch.setattr(evaluation, 'TextEmbedding', FakeEmbedding)
+    monkeypatch.setattr(evaluation, 'SparseTextEmbedding', FakeEmbedding)
+    monkeypatch.setattr(evaluation, 'TextCrossEncoder', FakeEmbedding)
+    monkeypatch.setattr(evaluation, 'embedding_kwargs', lambda: {})
+
+    client, _, _, _ = evaluation.build_retriever()
+
+    assert isinstance(client, FakeClient)
+    assert calls == [
+        ('manifest',),
+        ('client',),
+        ('collection_exists', config.COLLECTION_NAME),
+    ]

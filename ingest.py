@@ -219,6 +219,11 @@ def _sanitize_extracted_page_text(text):
         token = re.sub(r'\s+', ' ', line).strip()
         if not token:
             return True
+        # A normative heading is legal content. It may resemble a repeated PDF
+        # header, but deciding that needs cross-page evidence, not this local
+        # sanitizer alone.
+        if re.match(r'(?i)^(?:LEI|DECRETO|DECRETO-LEI|PORTARIA|EMENDA|MEDIDA)\b', token):
+            return False
         if re.fullmatch(r'(?i)(?:P[AÁ]GINA|PAGINA|PAGE)\s*[:\-]?\s*\d+[A-Za-z-]*', token):
             return True
         if re.fullmatch(r'(?i)(?:LEI|DECRETO|DECRETO-LEI|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA|MEDIDA|REGULAMENTO|NORMA)\b.*', token):
@@ -473,7 +478,8 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
             label = ' > '.join(parts)
             content = prefix
             # Chunks filhos já carregam o caminho hierárquico no próprio texto; repeti-lo gasta tokens à toa.
-            if label and not body.startswith(label):
+            child_segment = chunk.get('segment_kind') in {'paragrafo', 'inciso', 'alinea', 'item'}
+            if label and not body.startswith(label) and not child_segment:
                 content += f' [HIERARQUIA: {label}]'
             return content + '\n' + body
 

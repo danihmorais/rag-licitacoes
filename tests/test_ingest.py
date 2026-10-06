@@ -148,6 +148,15 @@ def test_pdf_page_sanitizer_removes_repeated_header_footer_noise():
     assert 'Art. 1º Regra de licitação.' in cleaned
 
 
+def test_pdf_page_sanitizer_preserves_normative_heading():
+    heading = 'LEI No 14.133, DE 1o DE ABRIL DE 2021.'
+    cleaned = ingest._sanitize_extracted_page_text(
+        heading + '\nArt. 1o Esta Lei estabelece normas gerais.'
+    )
+
+    assert heading in cleaned
+
+
 def test_build_chunks_uses_e5_passage_prefix_and_real_newline(tmp_path: Path):
     document = tmp_path / 'documento.txt'
     document.write_text('Art. 1º Regra de licitação.', encoding='utf-8')

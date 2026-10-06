@@ -109,6 +109,7 @@ REGIME_CANONICAL = {
     'lei_8666': 'Lei 8.666/1993',
     'lei_10520': 'Lei 10.520/2002',
     'lei_12462': 'Lei 12.462/2011',
+    'lei_123': 'Lei Complementar 123/2006',
     'jurisprudencia': 'Jurisprudência',
     'transicao': 'Transição legislativa',
     'nao_especificado': 'Não especificado',
@@ -133,6 +134,7 @@ def _extract_cited_regimes(text, document_regime):
         ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\b', re.I)),
         ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\b', re.I)),
         ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\b', re.I)),
+        ('lei_123', re.compile(r'\b(?:lei\s+complementar|lc)\s*(?:n[ºo°.]*\s*)?123\b', re.I)),
     ):
         if key == document_regime:
             continue
@@ -141,16 +143,35 @@ def _extract_cited_regimes(text, document_regime):
     return list(dict.fromkeys(results))
 
 
-def _detect_regime(text, source_values):
-    source_id = str(source_values.get('source_id') or '').casefold()
-    title = str(source_values.get('title') or '').casefold()
-    haystack = f'{source_id} {title} {text[:40000]}'
-    rules = (
+REGIME_RULES = (
         ('lei_14133', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?14[.\- ]133\b', re.I)),
         ('lei_8666', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?8[.\- ]666\b', re.I)),
         ('lei_10520', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?10[.\- ]520\b', re.I)),
         ('lei_12462', re.compile(r'\blei\s*(?:n[ºo°.]*\s*)?12[.\- ]462\b', re.I)),
+        ('lei_123', re.compile(r'\b(?:lei\s+complementar|lc)\s*(?:n[ºo°.]*\s*)?123\b', re.I)),
     )
+
+
+def _regime_in_text(text):
+    matches = [
+        (match.start(), key)
+        for key, pattern in REGIME_RULES
+        if (match := pattern.search(str(text or '')))
+    ]
+    return min(matches)[1] if matches else None
+
+
+def _is_transition_document(text):
+    return bool(re.search(
+        r'\b(?:transi[cç][aã]o(?:\s+legislativa|\s+entre\s+regimes?)?|'
+        r'compara[cç][aã]o(?:\s+entre\s+regimes?)?|regimes?\s+comparados|'
+        r'aplica[cç][aã]o\s+temporal\s+das\s+leis)\b',
+        str(text or ''),
+        re.I,
+    ))
+
+
+def _detect_regime(text, source_values):
     explicit = source_values.get('regime_juridico') or source_values.get('regime')
     if explicit:
         explicit_norm = str(explicit).strip().casefold()
@@ -158,11 +179,30 @@ def _detect_regime(text, source_values):
             if explicit_norm in {key, label.casefold()}:
                 return key, label
         return str(explicit).strip(), str(explicit).strip()
-    detected = [key for key, pattern in rules if pattern.search(haystack)]
-    if len(detected) > 1:
+
+    source_id = str(source_values.get('source_id') or '').casefold()
+    title = str(source_values.get('title') or '').casefold()
+    if _is_transition_document(source_id):
         return 'transicao', REGIME_CANONICAL['transicao']
-    if detected:
-        key = detected[0]
+    key = _regime_in_text(source_id)
+    if key:
+        return key, REGIME_CANONICAL[key]
+    if _is_transition_document(title):
+        return 'transicao', REGIME_CANONICAL['transicao']
+    key = _regime_in_text(title)
+    if key:
+        return key, REGIME_CANONICAL[key]
+
+    header = '\n'.join(str(text or '').splitlines()[:12])
+    if _is_transition_document(header):
+        return 'transicao', REGIME_CANONICAL['transicao']
+    header_match = re.search(r'(?im)^\s*(?:lei|lei\s+complementar|lc)\b[^\n]*', header)
+    key = _regime_in_text(header_match.group(0)) if header_match else None
+    if key:
+        return key, REGIME_CANONICAL[key]
+
+    key = _regime_in_text(str(text or '')[:40000])
+    if key:
         return key, REGIME_CANONICAL[key]
     if source_values.get('tipo_documento') == 'jurisprudencia' or source_values.get('source_role') in {'jurisprudencia', 'jurisprudencia_controle'}:
         return 'jurisprudencia', REGIME_CANONICAL['jurisprudencia']

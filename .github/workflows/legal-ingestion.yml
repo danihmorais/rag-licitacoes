@@ -9,6 +9,15 @@ on:
       - 'scripts/web_sources.py'
       - 'scripts/sources.py'
       - 'jurisprudencia/**'
+      - 'chunking.py'
+      - 'ingest.py'
+      - 'metadata.py'
+      - 'query.py'
+      - 'config.py'
+      - 'evaluation.py'
+      - 'index_manifest.py'
+      - 'embedding_utils.py'
+      - 'evaluation/**'
       - 'tests/**'
       - 'requirements.txt'
   push:
@@ -20,6 +29,15 @@ on:
       - 'scripts/web_sources.py'
       - 'scripts/sources.py'
       - 'jurisprudencia/**'
+      - 'chunking.py'
+      - 'ingest.py'
+      - 'metadata.py'
+      - 'query.py'
+      - 'config.py'
+      - 'evaluation.py'
+      - 'index_manifest.py'
+      - 'embedding_utils.py'
+      - 'evaluation/**'
       - 'tests/**'
       - 'requirements.txt'
 
@@ -34,6 +52,16 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.16.3
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "wget -q -O - http://localhost:6333/healthz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
 
@@ -92,6 +120,15 @@ jobs:
 
       - name: Testes offline
         run: python -m pytest -q
+
+      - name: E2E estrutural com Qdrant Server
+        env:
+          RAG_E2E_QDRANT: '1'
+          RAG_QDRANT_URL: http://127.0.0.1:6333
+          RAG_QDRANT_PREFER_GRPC: '0'
+          RAG_FASTEMBED_REQUIRE_CUDA: '0'
+          RAG_FASTEMBED_PROVIDERS: CPUExecutionProvider
+        run: python -m pytest -q tests/test_real_fixture_e2e.py
 
       - name: Publicar evidências do smoke em caso de falha
         if: failure()
