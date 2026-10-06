@@ -133,16 +133,30 @@ def parse_filters(raw):
     return clean, filters
 
 
-def _is_transition_query(query):
+def _is_comparative_query(query):
     normalized = _normalize_query_text(query)
     return any(term in normalized for term in (
         'transicao', 'transicao legislativa', 'regime anterior',
-        'lei 8.666', 'lei 8666', '8.666/1993',
-        'lei 10.520', 'lei 10520', '10.520/2002',
-        'historico', 'historico', 'antes e depois',
-        'diferenca entre', 'diferencas entre', 'comparar', 'comparacao',
-        'o que mudou', 'mudancas da nova lei', 'nova lei',
+        'antes e depois', 'diferenca entre', 'diferencas entre',
+        'comparar', 'comparacao', 'comparativo', 'versus', ' vs ',
+        'em relacao', 'o que mudou', 'o que muda',
+        'mudancas da nova lei', 'mudancas entre',
     ))
+
+
+def _is_historical_query(query):
+    normalized = _normalize_query_text(query)
+    return any(term in normalized for term in (
+        'historico', 'historica', 'a epoca', 'naquela epoca',
+        'era aplicavel', 'era aplicavel em', 'estava vigente',
+        'estava em vigor', 'quando era aplicavel', 'antes de',
+    ))
+
+
+def _is_transition_query(query):
+    # "transição" no retrieval significa comparação entre regimes,
+    # não simples presença do nome de uma lei histórica.
+    return _is_comparative_query(query)
 
 
 def _query_regime(query):
@@ -319,6 +333,7 @@ def build_retrieval_plan(query, filters=None):
         filter_values = {**parsed_filters, **filter_values}
     qdrant_filter = qfilter(filter_values, normalized_query) if (filter_values or normalized_query) else None
     is_transition = _is_transition_query(normalized_query)
+    is_historical = _is_historical_query(normalized_query)
     regime_hint = _query_regime(normalized_query)
     return {
         'query': normalized_query,
@@ -326,6 +341,7 @@ def build_retrieval_plan(query, filters=None):
         'filters': filter_values,
         'qdrant_filter': qdrant_filter,
         'is_transition': is_transition,
+        'is_historical': is_historical,
         'regime_hint': regime_hint,
         'mandatory_sources': list(MANDATORY_CONTEXT_SOURCE_IDS),
         'filtered_for_current_only': (not is_transition and regime_hint is not None) or (not is_transition and not regime_hint),
