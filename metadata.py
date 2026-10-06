@@ -193,10 +193,14 @@ def _detect_regime(text, source_values):
     if key:
         return key, REGIME_CANONICAL[key]
 
+    # O cabeçalho normativo da própria fonte prevalece sobre qualquer citação
+    # posterior. Palavras como "transição" no corpo jamais transformam uma
+    # norma primária em documento de transição.
     header = '\n'.join(str(text or '').splitlines()[:12])
-    if _is_transition_document(header):
-        return 'transicao', REGIME_CANONICAL['transicao']
-    header_match = re.search(r'(?im)^\s*(?:lei|lei\s+complementar|lc)\b[^\n]*', header)
+    header_match = re.search(
+        r'(?im)^\s*(?:lei|lei\s+complementar|lc|decreto(?:-lei)?|portaria|resolu[cç][aã]o|instru[cç][aã]o)\b[^\n]*',
+        header,
+    )
     key = _regime_in_text(header_match.group(0)) if header_match else None
     if key:
         return key, REGIME_CANONICAL[key]
