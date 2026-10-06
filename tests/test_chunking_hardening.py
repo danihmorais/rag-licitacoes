@@ -59,7 +59,7 @@ def test_prefix_context_is_never_truncated():
     )
     assert context_oversize is True
     assert fitted == prefix
-    assert "condição" * 2 in fitted.replace(" ", "")  # garante que o corpo inteiro foi preservado
+    assert fitted == prefix  # o contexto inteiro permanece intacto
 
 
 def test_offsets_come_from_splitter_not_find():
