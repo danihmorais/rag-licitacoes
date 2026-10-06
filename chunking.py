@@ -329,7 +329,13 @@ def _scan_structure(text):
                 rank,
                 f"{normalized_line} — {title}" if title and title not in normalized_line else normalized_line,
             )
-            header_events.append((header_start, tuple(_ordered_headers(levels))))
+            event_headers = _ordered_headers(levels)
+            if inside_anexo and current_anexo_ref:
+                norma_headers = _norma_only_headers(levels)
+                event_headers = norma_headers + [current_anexo_ref] + [
+                    header for header in event_headers if header not in norma_headers
+                ]
+            header_events.append((header_start, tuple(event_headers)))
             continue
 
         article_ref = match.group("article_ref")
