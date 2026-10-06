@@ -36,7 +36,7 @@ QDRANT_PAYLOAD_INDEXES = {
     'tipo_documento': 'keyword', 'source_role': 'keyword', 'status': 'keyword', 'municipio': 'keyword',
     'modalidade': 'keyword', 'tipo': 'keyword', 'numero_sumula': 'keyword', 'regime_juridico': 'keyword',
     'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
-    'revogado': 'bool', 'chunking_method': 'keyword', 'semantic_topic': 'keyword', 'semantic_section': 'keyword',
+    'revogado': 'bool', 'chunking_method': 'keyword',
 }
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
