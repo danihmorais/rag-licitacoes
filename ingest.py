@@ -140,6 +140,7 @@ def _cache_entry_matches_index(entry, digest, indexed_count):
 def cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
     return (
         _cache_entry_matches_index(entry, digest, indexed_count)
+        and int(entry.get('_cache_version') or CACHE_VERSION) == CACHE_VERSION
         and entry.get('metadata_fingerprint') == metadata_digest
     )
 
