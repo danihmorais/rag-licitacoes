@@ -265,6 +265,8 @@ def _scan_structure(text):
     units = []
     current = None
     inside_anexo = False
+    current_anexo_ref = None
+    current_anexo_id = None
 
     def finalize(end):
         nonlocal current
@@ -296,16 +298,27 @@ def _scan_structure(text):
             finalize(header_start)
 
             if key == "anexo":
+                for other in list(levels):
+                    if other != "norma":
+                        del levels[other]
+                current_anexo_ref = normalized_line
+                current_anexo_id = f"anexo:{_normalize_article_ref(normalized_line) or header_start}@{header_start}"
                 current = {
                     "kind": "anexo",
                     "ref": normalized_line,
                     "start": header_start,
                     "headers": _norma_only_headers(levels),
+                    "node_id": current_anexo_id,
+                    "anexo_ref": normalized_line,
+                    "anexo_path": [normalized_line],
                 }
                 inside_anexo = True
                 continue
 
-            inside_anexo = False
+            if key == "norma":
+                inside_anexo = False
+                current_anexo_ref = None
+                current_anexo_id = None
             rank = next(rank for name, rank, _pattern in _HEADER_LEVELS if name == key)
             title = _heading_title_at(normalized, match.end("header")) if key != "norma" else None
             for other, (other_rank, _value) in list(levels.items()):
@@ -329,13 +342,29 @@ def _scan_structure(text):
             continue
 
         finalize(article_start)
-        headers = _norma_only_headers(levels) if inside_anexo else _ordered_headers(levels)
+        if inside_anexo and current_anexo_ref:
+            headers = _norma_only_headers(levels) + [current_anexo_ref] + [
+                header for header in _ordered_headers(levels)
+                if header not in _norma_only_headers(levels)
+            ]
+            anexo_ref = current_anexo_ref
+            anexo_path = [current_anexo_ref]
+            anexo_id = current_anexo_id
+        else:
+            headers = _ordered_headers(levels)
+            anexo_ref = None
+            anexo_path = []
+            anexo_id = None
         current = {
             "kind": "artigo",
             "ref": ref,
             "start": article_start,
             "text": "",
             "headers": headers,
+            "node_id": f"artigo:{_normalize_article_ref(ref) or article_start}@{article_start}",
+            "anexo_ref": anexo_ref,
+            "anexo_path": anexo_path,
+            "anexo_id": anexo_id,
         }
 
     finalize(len(text))
@@ -776,6 +805,158 @@ def _article_units(text):
         }
         for unit in scanned["units"]
     ] or None
+
+LEGAL_AST_SCHEMA_VERSION = 1
+
+
+@dataclass
+class LegalNode:
+    """Nó canônico da árvore jurídica; offsets apontam para o texto original recebido."""
+    node_id: str
+    kind: str
+    ref: str | None
+    parent_id: str | None
+    source_start: int
+    source_end: int
+    source_text: str
+    children: list["LegalNode"] = field(default_factory=list)
+    path: list[str] = field(default_factory=list)
+    anexo_ref: str | None = None
+    anexo_path: list[str] = field(default_factory=list)
+
+    def add_child(self, child: "LegalNode") -> None:
+        child.parent_id = self.node_id
+        self.children.append(child)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "kind": self.kind,
+            "ref": self.ref,
+            "parent_id": self.parent_id,
+            "source_start": self.source_start,
+            "source_end": self.source_end,
+            "source_text": self.source_text,
+            "children": [child.to_dict() for child in self.children],
+            "path": list(self.path),
+            "anexo_ref": self.anexo_ref,
+            "anexo_path": list(self.anexo_path),
+        }
+
+
+def build_legal_ast(text: str) -> LegalNode:
+    """Constrói a árvore jurídica canônica que alimenta a projeção em chunks."""
+    scanned = _scan_structure(text)
+    root = LegalNode(
+        node_id="norma",
+        kind="norma",
+        ref=None,
+        parent_id=None,
+        source_start=0,
+        source_end=len(text),
+        source_text=text,
+    )
+    annex_nodes: dict[str, LegalNode] = {}
+
+    for unit in scanned["units"]:
+        kind = str(unit.get("kind") or "generic")
+        ref = unit.get("ref")
+        start = int(unit.get("start") or 0)
+        source_text = str(unit.get("text") or "")
+        source_end = start + len(source_text)
+
+        if kind == "anexo":
+            node = LegalNode(
+                node_id=str(unit.get("node_id") or f"anexo:{_normalize_article_ref(ref) or start}@{start}"),
+                kind="anexo",
+                ref=ref,
+                parent_id=root.node_id,
+                source_start=start,
+                source_end=source_end,
+                source_text=source_text,
+                path=[str(ref)] if ref else [],
+                anexo_ref=str(ref) if ref else None,
+                anexo_path=list(unit.get("anexo_path") or ([str(ref)] if ref else [])),
+            )
+            root.add_child(node)
+            annex_nodes[str(unit.get("anexo_id") or node.anexo_ref or node.node_id)] = node
+            continue
+
+        if kind != "artigo":
+            continue
+
+        anexo_ref = unit.get("anexo_ref")
+        annex_key = str(unit.get("anexo_id") or anexo_ref or "")
+        parent = annex_nodes.get(annex_key) if anexo_ref else root
+        if parent is None:
+            parent = root
+
+        path = list(unit.get("headers") or [])
+        if ref:
+            path.append(str(ref))
+        node = LegalNode(
+            node_id=str(unit.get("node_id") or f"artigo:{_normalize_article_ref(ref) or start}@{start}"),
+            kind="artigo",
+            ref=ref,
+            parent_id=parent.node_id,
+            source_start=start,
+            source_end=source_end,
+            source_text=source_text,
+            path=path,
+            anexo_ref=str(anexo_ref) if anexo_ref else None,
+            anexo_path=list(unit.get("anexo_path") or []),
+        )
+        parent.add_child(node)
+
+        # Dispositivos filhos são nós explícitos da mesma árvore.
+        _caput, children = _article_children(source_text)
+        for child_kind, child_ref, child_text, child_start, path_tail in children:
+            child_source_start = start + child_start
+            child = LegalNode(
+                node_id=f"{node.node_id}/{child_kind}:{_normalize_article_ref(child_ref) or child_start}",
+                kind=child_kind,
+                ref=child_ref,
+                parent_id=node.node_id,
+                source_start=child_source_start,
+                source_end=child_source_start + len(child_text),
+                source_text=child_text,
+                path=path + list(path_tail),
+                anexo_ref=node.anexo_ref,
+                anexo_path=list(node.anexo_path),
+            )
+            node.add_child(child)
+
+    return root
+
+
+def _ast_units(root: LegalNode) -> list[dict[str, Any]]:
+    """Projeta a AST em unidades compatíveis com o splitter atual."""
+    units = []
+
+    def walk(node: LegalNode):
+        for child in node.children:
+            if child.kind in {"artigo", "anexo"}:
+                units.append({
+                    "kind": child.kind,
+                    "ref": child.ref,
+                    "start": child.source_start,
+                    "text": child.source_text,
+                    "headers": list(child.path[:-1]) if child.kind == "artigo" and child.ref else list(child.path),
+                    "node_id": child.node_id,
+                    "parent_id": child.parent_id,
+                    "anexo_ref": child.anexo_ref,
+                    "anexo_path": list(child.anexo_path),
+                    "anexo_id": next(
+                        (candidate.node_id for candidate in root.children
+                         if candidate.kind == "anexo" and candidate.node_id == child.parent_id),
+                        None,
+                    ),
+                })
+            walk(child)
+
+    walk(root)
+    return units
+
 
 
 JURIS_SECTION_RE=re.compile(r"(?im)^[ \t]*(EMENTA|TESE/ENTENDIMENTO|TESE|DECISÃO|DECISAO|INTEIRO TEOR|RELATÓRIO|RELATORIO|VOTO|DISPOSITIVO)\s*:?[ \t]*$")
