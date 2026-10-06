@@ -48,13 +48,18 @@ def test_roman_false_positive_is_not_classified_as_inciso():
     assert any(item[0] == "inciso" and item[1].startswith("I") for item in children)
 
 
-def test_prefix_truncation_is_explicit():
+def test_prefix_context_is_never_truncated():
     tokenizer = FakeTokenizer()
     prefix = "Art. 1º\n" + " ".join(["condição"] * 80)
-    fitted, truncated = chunking._fit_child_prefix_info(prefix, "IV - consequência " + "texto " * 20, 32, tokenizer)
-    assert truncated is True
-    assert fitted
-    assert chunking._token_count(fitted, tokenizer) <= 32
+    fitted, context_oversize = chunking._fit_child_prefix_info(
+        prefix,
+        "IV - consequência " + "texto " * 20,
+        32,
+        tokenizer,
+    )
+    assert context_oversize is True
+    assert fitted == prefix
+    assert "condição" * 2 in fitted.replace(" ", "")  # garante que o corpo inteiro foi preservado
 
 
 def test_offsets_come_from_splitter_not_find():
@@ -98,10 +103,12 @@ Acordam.
     assert names.index("ementa") < names.index("voto") < names.index("dispositivo")
 
 
-def test_structural_chunk_marks_prefix_truncation():
+def test_structural_chunk_marks_context_oversize_without_truncating_prefix():
     tokenizer = FakeTokenizer()
     text = "CAPÍTULO I\nArt. 1º " + " ".join(["condição"] * 80) + "\nIV - " + " ".join(["consequência"] * 30)
     chunks = chunking.build_structural_chunks(text, 32, 0, tokenizer=tokenizer)
     child_chunks = [item for item in chunks if item.get("segment_kind") == "inciso"]
     assert child_chunks
-    assert any(item["prefix_truncated"] for item in child_chunks)
+    assert all(not item["prefix_truncated"] for item in child_chunks)
+    assert any(item["context_oversize"] for item in child_chunks)
+    assert all("condição" in item["text"] for item in child_chunks)
