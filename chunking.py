@@ -309,6 +309,7 @@ def _scan_structure(text):
                     "start": header_start,
                     "headers": _norma_only_headers(levels),
                     "node_id": current_anexo_id,
+                    "anexo_id": current_anexo_id,
                     "anexo_ref": normalized_line,
                     "anexo_path": [normalized_line],
                 }
@@ -1170,7 +1171,7 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
                     rendered=f"{child_prefix}\n{piece}".strip()
                 if _token_count(rendered,tokenizer)>max_size:
                     raise RuntimeError("Segmento jurídico excede o orçamento de tokens após a divisão.")
-                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
+                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"node_id":node_id + "/" + kind + ":" + (_normalize_article_ref(child_ref) or str(child_index)),"parent_id":node_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path})
             next_index+=len(child_spans)
     output = _attach_device_ids(output)
     _assert_source_spans(full_text, output)
