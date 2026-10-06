@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from jurisprudencia.queries import parse_queries
@@ -10,7 +11,6 @@ load_dotenv(BASE_DIR / '.env', override=False)
 PDFS_DIR = BASE_DIR / 'pdfs'
 DB_DIR = BASE_DIR / 'db'
 SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
-QDRANT_PATH = DB_DIR / 'qdrant'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
 INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '1')
@@ -29,6 +29,10 @@ CANDIDATES_K = int(os.getenv('RAG_CANDIDATES_K', '60'))
 FINAL_K = int(os.getenv('RAG_FINAL_K', '6'))
 CONTEXT_NEIGHBORS = int(os.getenv('RAG_CONTEXT_NEIGHBORS', '1'))
 MAX_CONTEXT_CHARS = int(os.getenv('RAG_MAX_CONTEXT_CHARS', '16000'))
+QDRANT_URL = os.getenv('RAG_QDRANT_URL', 'http://127.0.0.1:6333').strip().rstrip('/')
+QDRANT_API_KEY = os.getenv('RAG_QDRANT_API_KEY', '').strip()
+QDRANT_PREFER_GRPC = os.getenv('RAG_QDRANT_PREFER_GRPC', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+QDRANT_TIMEOUT = float(os.getenv('RAG_QDRANT_TIMEOUT', '30'))
 QDRANT_UPSERT_BATCH_SIZE = int(os.getenv('RAG_QDRANT_UPSERT_BATCH_SIZE', '100'))
 QDRANT_PAYLOAD_INDEXES = {
     'doc_id': 'keyword', 'source_id': 'keyword', 'source': 'keyword', 'unit_id': 'keyword',
@@ -72,6 +76,17 @@ OPENAI_COMPATIBLE_API_KEY = os.getenv('RAG_OPENAI_API_KEY', '')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
 
+def create_qdrant_client():
+    from qdrant_client import QdrantClient
+
+    return QdrantClient(
+        url=QDRANT_URL,
+        api_key=QDRANT_API_KEY or None,
+        prefer_grpc=QDRANT_PREFER_GRPC,
+        timeout=QDRANT_TIMEOUT,
+    )
+
+
 def parse_bool(value: str) -> bool:
     return str(value).strip().lower() not in {'0', 'false', 'no', 'off'}
 
@@ -85,6 +100,9 @@ def validate_config() -> None:
         (CANDIDATES_K > 0, 'RAG_CANDIDATES_K deve ser maior que zero.'),
         (0 < FINAL_K <= CANDIDATES_K, 'RAG_FINAL_K deve ser maior que zero e não exceder RAG_CANDIDATES_K.'),
         (MAX_CONTEXT_CHARS > 0, 'RAG_MAX_CONTEXT_CHARS deve ser maior que zero.'),
+        (bool(QDRANT_URL), 'RAG_QDRANT_URL não pode ser vazio.'),
+        (urlparse(QDRANT_URL).scheme in {'http', 'https'} and bool(urlparse(QDRANT_URL).netloc), 'RAG_QDRANT_URL deve ser uma URL HTTP(S) válida.'),
+        (QDRANT_TIMEOUT > 0, 'RAG_QDRANT_TIMEOUT deve ser maior que zero.'),
         (QDRANT_UPSERT_BATCH_SIZE > 0, 'RAG_QDRANT_UPSERT_BATCH_SIZE deve ser maior que zero.'),
         (0 <= MIN_EVIDENCE_SCORE <= 1, 'RAG_MIN_EVIDENCE_SCORE deve estar entre zero e um.'),
         (0 <= EVIDENCE_TOKEN_OVERLAP <= 1, 'RAG_EVIDENCE_TOKEN_OVERLAP deve estar entre zero e um.'),
