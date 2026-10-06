@@ -28,7 +28,7 @@ PAYLOAD_INDEX_TYPES = {
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
-CACHE_VERSION = 6
+CACHE_VERSION = 1
 LEGACY_CACHE_VERSIONS = set()
 
 
