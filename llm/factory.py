@@ -7,20 +7,14 @@ from .openai_compatible import OpenAICompatibleProvider
 
 
 def get_llm_provider(purpose: str = 'answer') -> LLMProvider:
-    if purpose == 'semantic_chunking':
-        provider = config.AI_CHUNKING_PROVIDER.strip().lower()
-        model = config.AI_CHUNKING_MODEL
-        temperature = config.AI_CHUNKING_TEMPERATURE
-        timeout = config.AI_CHUNKING_TIMEOUT
-        max_tokens = config.AI_CHUNKING_MAX_TOKENS
-    elif purpose == 'answer':
-        provider = config.LLM_PROVIDER.strip().lower()
-        model = config.LLM_MODEL
-        temperature = config.LLM_TEMPERATURE
-        timeout = config.LLM_TIMEOUT
-        max_tokens = config.LLM_MAX_TOKENS
-    else:
+    if purpose != 'answer':
         raise ValueError(f'Finalidade de LLM inválida: {purpose!r}.')
+
+    provider = config.LLM_PROVIDER.strip().lower()
+    model = config.LLM_MODEL
+    temperature = config.LLM_TEMPERATURE
+    timeout = config.LLM_TIMEOUT
+    max_tokens = config.LLM_MAX_TOKENS
 
     if provider == 'ollama':
         return OllamaProvider(
