@@ -589,6 +589,15 @@ def _detect_amendment(text, current_ref=None):
 
     selected = []
     for candidate in sorted(matches, key=lambda item: (item[0], -(item[1] - item[0]))):
+        # Referências compostas, como "§ 2º do art. 75", devem permanecer
+        # como um único dispositivo-alvo, sem gerar o artigo pai como alvo irmão.
+        if candidate[2] == "artigo" and any(
+            selected_item[2] != "artigo"
+            and selected_item[0] <= candidate[0]
+            and candidate[1] <= selected_item[1]
+            for selected_item in selected
+        ):
+            continue
         if any(candidate[0] < end and candidate[1] > start for start, end, _kind, _ref in selected):
             continue
         if not any(kind == candidate[2] and ref.casefold() == candidate[3].casefold() for _start, _end, kind, ref in selected):
