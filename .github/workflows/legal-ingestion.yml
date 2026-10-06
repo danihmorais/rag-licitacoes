@@ -57,11 +57,8 @@ jobs:
         image: qdrant/qdrant:v1.16.3
         ports:
           - 6333:6333
-        options: >-
-          --health-cmd "wget -q -O - http://localhost:6333/healthz"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+        # A imagem oficial do Qdrant não precisa de um healthcheck externo
+        # baseado em wget/curl. A prontidão é validada explicitamente pelo runner.
     steps:
       - uses: actions/checkout@v6
 
@@ -75,6 +72,29 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check -r requirements.txt pytest
+
+      - name: Aguardar Qdrant Server
+        run: |
+          python - <<'PY'
+          import time
+          from urllib.error import URLError
+          from urllib.request import urlopen
+
+          url = "http://127.0.0.1:6333/healthz"
+          deadline = time.time() + 90
+          last_error = None
+          while time.time() < deadline:
+              try:
+                  with urlopen(url, timeout=3) as response:
+                      if 200 <= response.status < 300:
+                          print(f"Qdrant Server pronto: HTTP {response.status}")
+                          raise SystemExit(0)
+              except Exception as exc:
+                  last_error = exc
+              time.sleep(2)
+
+          raise SystemExit(f"Qdrant Server não ficou pronto em 90s: {last_error}")
+          PY
 
       - name: Sincronizar todas as legislações explícitas do catálogo
         run: |
