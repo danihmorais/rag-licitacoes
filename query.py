@@ -7,7 +7,7 @@ import unicodedata
 
 from fastembed import SparseTextEmbedding, TextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
-from qdrant_client import QdrantClient, models
+from qdrant_client import models
 
 import config
 from index_manifest import IndexCompatibilityError, validate_manifest
@@ -822,15 +822,22 @@ def answer_query(client, dense, sparse, reranker, llm, raw):
 def build_runtime():
     config.ensure_directories()
     config.validate_config()
-    if not config.QDRANT_PATH.exists():
-        raise RuntimeError('Índice não encontrado. Rode python ingest.py.')
     try:
         validate_manifest()
     except (IndexCompatibilityError, FileNotFoundError, ValueError) as error:
         raise RuntimeError(f'ERRO DE COMPATIBILIDADE: {error}') from error
-    client = QdrantClient(path=str(config.QDRANT_PATH))
-    if not client.collection_exists(config.COLLECTION_NAME):
-        raise RuntimeError(f'Coleção Qdrant não encontrada: {config.COLLECTION_NAME}. Rode python ingest.py.')
+    client = config.create_qdrant_client()
+    try:
+        collection_exists = client.collection_exists(config.COLLECTION_NAME)
+    except Exception as error:
+        raise RuntimeError(
+            f'Qdrant Server indisponível em {config.QDRANT_URL}: {error}'
+        ) from error
+    if not collection_exists:
+        raise RuntimeError(
+            f'Coleção Qdrant não encontrada no servidor {config.QDRANT_URL}: '
+            f'{config.COLLECTION_NAME}. Rode python ingest.py.'
+        )
     dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     reranker = TextCrossEncoder(model_name=config.RERANK_MODEL, **embedding_kwargs())
