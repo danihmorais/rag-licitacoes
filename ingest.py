@@ -1,5 +1,6 @@
 import argparse
-import datetimeimport hashlib
+import datetime
+import hashlib
 import json
 import math
 import os
@@ -726,14 +727,7 @@ def main():
             indexed_count,
         ):
             skipped += 1
-            if legacy_cache_entry_is_reusable(entry, digest, indexed_count):
-                cache[document.name] = {
-                    'sha256': digest,
-                    'metadata_fingerprint': metadata_digest,
-                    'chunks': indexed_count,
-                    'doc_id': doc_id,
-                    'source_id': document_meta.get('source_id'),
-                }
+
             document_manifest[doc_id] = {
                 'sha256': digest,
                 'chunks': indexed_count,
