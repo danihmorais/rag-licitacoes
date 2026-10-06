@@ -313,6 +313,7 @@ def _scan_structure(text):
                     "anexo_path": [normalized_line],
                 }
                 inside_anexo = True
+                header_events.append((header_start, tuple(_norma_only_headers(levels) + [normalized_line])))
                 continue
 
             if key == "norma":
@@ -851,6 +852,42 @@ def build_legal_ast(text: str) -> LegalNode:
         source_text=text,
     )
     annex_nodes: dict[str, LegalNode] = {}
+    header_nodes: dict[tuple[str, ...], LegalNode] = {}
+
+    # A hierarquia de títulos/capítulos/seções também é materializada como nós.
+    for event_index, (position, headers) in enumerate(scanned["header_events"]):
+        if not headers:
+            continue
+        path = tuple(str(item) for item in headers)
+        if path in header_nodes:
+            continue
+        heading = path[-1]
+        line_start = int(position)
+        line_end = text.find("\n", line_start)
+        if line_end < 0:
+            line_end = len(text)
+        parent = root
+        parent_path = path[:-1]
+        if parent_path:
+            parent = header_nodes.get(parent_path, root)
+        key_suffix = _normalize_article_ref(heading) or str(position)
+        node = LegalNode(
+            node_id=f"header:{'/'.join(_normalize_article_ref(item) or item for item in path)}@{position}",
+            kind=(
+                "anexo" if re.match(r"^ANEXO\\b", heading, re.I) else
+                next((kind for kind, rank, pattern in _HEADER_LEVELS if kind != "anexo" and pattern.match(heading)), "estrutura")
+            ),
+            ref=heading,
+            parent_id=parent.node_id,
+            source_start=line_start,
+            source_end=line_end,
+            source_text=text[line_start:line_end],
+            path=list(path),
+            anexo_ref=path[-1] if re.match(r"^ANEXO\\b", heading, re.I) else None,
+            anexo_path=[path[-1]] if re.match(r"^ANEXO\\b", heading, re.I) else [],
+        )
+        parent.add_child(node)
+        header_nodes[path] = node
 
     for unit in scanned["units"]:
         kind = str(unit.get("kind") or "generic")
@@ -883,13 +920,18 @@ def build_legal_ast(text: str) -> LegalNode:
 
         anexo_ref = unit.get("anexo_ref")
         annex_key = str(unit.get("anexo_id") or anexo_ref or "")
-        parent = annex_nodes.get(annex_key) if anexo_ref else root
-        if parent is None:
-            parent = root
-
         path = list(unit.get("headers") or [])
         if ref:
             path.append(str(ref))
+
+        header_path = tuple(path[:-1])
+        parent = (
+            annex_nodes.get(annex_key)
+            if anexo_ref
+            else header_nodes.get(header_path, root)
+        )
+        if parent is None:
+            parent = root
         node = LegalNode(
             node_id=str(unit.get("node_id") or f"artigo:{_normalize_article_ref(ref) or start}@{start}"),
             kind="artigo",
