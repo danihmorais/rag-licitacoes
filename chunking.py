@@ -102,7 +102,7 @@ _CHILD_MARKER = (
 
 # Início de linha ou pontuação anterior cobre tanto PDF convencional quanto PDF achatado.
 CHILD_RE = re.compile(
-    rf"(?m)(?:(?<=^)|(?<=[\f.;:!?»”]))[ \t]*({_CHILD_MARKER})[ \t]*",
+    rf"(?m)(?:(?<=^)|(?<=[\f;:!?»”])|(?<!\d)(?<=\.))[ \t]*({_CHILD_MARKER})[ \t]*",
     re.IGNORECASE,
 )
 CHILD_INLINE_RE = CHILD_RE
@@ -266,6 +266,8 @@ def _scan_structure(text):
         if current is None:
             return
         raw = text[current["start"]:end].strip()
+        if current.get("kind") == "artigo":
+            raw = raw.removesuffix("“").rstrip()
         if not raw:
             current = None
             return
