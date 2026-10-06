@@ -993,7 +993,11 @@ def _ast_units(root: LegalNode) -> list[dict[str, Any]]:
                     "ref": child.ref,
                     "start": child.source_start,
                     "text": child.source_text,
-                    "headers": list(child.path[:-1]) if child.kind == "artigo" and child.ref else list(child.path),
+                    "headers": (
+                        list(child.path[:-1])
+                        if child.kind == "artigo" and child.ref
+                        else list(child.path[:-1]) if child.kind == "anexo" and child.ref else list(child.path)
+                    ),
                     "node_id": child.node_id,
                     "parent_id": child.parent_id,
                     "anexo_ref": child.anexo_ref,
