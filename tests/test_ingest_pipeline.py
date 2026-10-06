@@ -1,16 +1,16 @@
 from pathlib import Path
 
 
-def test_ingest_precomputes_semantic_chunks_before_gpu_models():
+def test_ingest_uses_structural_chunking_without_llm_preprocessing():
     source = (Path(__file__).parents[1] / "ingest.py").read_text(encoding="utf-8")
-    semantic_provider = source.index("get_llm_provider('semantic_chunking')")
-    cpu_tokenizer = source.index("get_cpu_tokenizer()")
-    phase_two = source.index("Fase 2/2: carregando modelos de embeddings/reranker na GPU.")
-    gpu_dense = source.index("TextEmbedding(model_name=config.DENSE_MODEL")
-    precomputed_argument = source.index("precomputed_chunks=semantic_precomputed.get(document.name)")
 
-    assert semantic_provider < phase_two
-    assert cpu_tokenizer < phase_two
-    assert gpu_dense > phase_two
-    assert precomputed_argument > phase_two
-    assert "CACHE_VERSION = 5" in source
+    assert "get_llm_provider('semantic_chunking')" not in source
+    assert "get_cpu_tokenizer()" not in source
+    assert "precomputed_chunks" not in source
+    assert "AI_CHUNKING" not in source
+    assert "Carregando modelos de embeddings/reranker na GPU." in source
+    assert "CACHE_VERSION = 6" in source
+
+    gpu_dense = source.index("TextEmbedding(model_name=config.DENSE_MODEL")
+    structural = source.index("build_structural_chunks(")
+    assert gpu_dense > structural
