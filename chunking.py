@@ -416,11 +416,26 @@ def _classify_child(ref):
 _CHILD_RANK = {"paragrafo": 1, "inciso": 2, "alinea": 3, "item": 4}
 
 
+def _is_thousands_fragment(article_text, match):
+    ref = match.group(1).strip()
+    if not re.fullmatch(r"\d{1,3}\s*[.)–—-]", ref):
+        return False
+    marker_start = match.start(1)
+    # Em "Art. 1.045.", o regex de item pode enxergar "045." após o ponto.
+    # Um item real após uma frase ("2024. 1. ...") possui espaço antes do marcador.
+    return (
+        marker_start >= 2
+        and article_text[marker_start - 2].isdigit()
+        and article_text[marker_start - 1] == "."
+    )
+
+
 def _article_children(article_text):
     matches = [
         match
         for match in _merged_marker_matches(_ocr_structure_view(article_text), CHILD_RE, CHILD_INLINE_RE)
         if not _is_article_number_inline_child(article_text, match)
+        and not _is_thousands_fragment(article_text, match)
     ]
     if not matches:
         return article_text.strip(), []
