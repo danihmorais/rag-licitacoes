@@ -1,6 +1,7 @@
 import bisect
 import re
 from functools import lru_cache
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import config
@@ -10,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Número de artigo: 5, 5º, 5-A, 337-AB, 1.045 (milhar). O ponto final faz parte da referência.
 _ART_NUMBER = r"(?:\d{1,3}(?:\.\d{3})+|\d+)[ºo°]?(?:-[A-Za-z]{1,3})?\.?"
 ARTIGO_RE = re.compile(
-    rf"^[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)",
+    rf"^[ \t]*(Art(?:igo)?\.?[ \t]*{_ART_NUMBER})(?=\s|$)",
     re.IGNORECASE | re.MULTILINE,
 )
 ARTIGO_INLINE_RE = re.compile(
@@ -216,7 +217,7 @@ _HEADER_SCAN_PATTERN = (
     r"(?P<header>^[ \t]*(?:LEI COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO|PARTE|LIVRO|TÍTULO|TITULO|CAPÍTULO|CAPITULO|SEÇÃO|SECAO|SUBSEÇÃO|SUBSECAO|ANEXO)\b[^\n]*$)"
 )
 _STRUCTURE_SCAN_RE = re.compile(
-    rf"{_HEADER_SCAN_PATTERN}|(?P<article_ref>(?<![\w])Art(?:igo)?\.?[ \t]+{_ART_NUMBER}(?=\s|$))",
+    rf"{_HEADER_SCAN_PATTERN}|(?P<article_ref>(?<![\w])Art(?:igo)?\.?[ \t]*{_ART_NUMBER}(?=\s|$))",
     re.IGNORECASE | re.MULTILINE,
 )
 
