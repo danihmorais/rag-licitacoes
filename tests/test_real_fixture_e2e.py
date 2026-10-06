@@ -88,7 +88,7 @@ def test_official_legal_excerpts_are_hashed_structural_fixtures():
 
 
 def test_retrieval_plan_builds_the_qdrant_contract_for_real_queries():
-    plan = build_retrieval_plan("quais são as regras da Lei 14.133/2021 e da Lei 8.666/1993?")
+    plan = build_retrieval_plan("o que mudou entre a Lei 14.133/2021 e a Lei 8.666/1993?")
 
     assert plan["is_transition"] is True
     assert plan["regime_hint"] == "lei_14133"
