@@ -1,7 +1,5 @@
 import argparse
-import datetime
-import gc
-import hashlib
+import datetimeimport hashlib
 import json
 import math
 import os
@@ -18,12 +16,7 @@ from qdrant_client import QdrantClient, models
 import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
-from chunking import (
-    build_structural_chunks,
-    get_cpu_tokenizer,
-    is_ai_semantic_metadata_candidate,
-    should_use_ai_semantic,
-)
+from chunking import build_structural_chunks,
 from embedding_utils import validate_embedding_inputs
 
 PAYLOAD_INDEX_TYPES = {
@@ -34,8 +27,8 @@ PAYLOAD_INDEX_TYPES = {
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
-CACHE_VERSION = 5
-LEGACY_CACHE_VERSIONS = {4}
+CACHE_VERSION = 6
+LEGACY_CACHE_VERSIONS = set()
 
 
 def sync_sources():
@@ -116,10 +109,6 @@ def metadata_fingerprint(document):
     chunking_path = Path(__file__).with_name('chunking.py')
     digest.update(b'chunking.py\0')
     digest.update(chunking_path.read_bytes())
-    semantic_chunker_path = Path(__file__).with_name('llm') / 'semantic_chunker.py'
-    if semantic_chunker_path.exists():
-        digest.update(b'llm/semantic_chunker.py\0')
-        digest.update(semantic_chunker_path.read_bytes())
     config_values = (
         config.OCR_ENABLED,
         config.OCR_REQUIRED,
@@ -127,18 +116,6 @@ def metadata_fingerprint(document):
         config.OCR_MIN_NATIVE_CONFIDENCE,
         config.OCR_DPI,
         config.OCR_LANGUAGE,
-        config.AI_CHUNKING_ENABLED,
-        config.AI_CHUNKING_REQUIRED,
-        config.AI_CHUNKING_FALLBACK_TO_STRUCTURAL,
-        config.AI_CHUNKING_MIN_CHARS,
-        config.AI_CHUNKING_WINDOW_CHARS,
-        config.AI_CHUNKING_ATTEMPTS,
-        config.AI_CHUNKING_PROMPT_VERSION,
-        config.AI_CHUNKING_PROVIDER,
-        config.AI_CHUNKING_MODEL,
-        config.AI_CHUNKING_TEMPERATURE,
-        config.AI_CHUNKING_TIMEOUT,
-        config.AI_CHUNKING_MAX_TOKENS,
         config.LLM_PROVIDER,
         config.LLM_MODEL,
     )
@@ -159,30 +136,10 @@ def _cache_entry_matches_index(entry, digest, indexed_count):
     )
 
 
-def cache_entry_is_valid(
-    entry,
-    digest,
-    metadata_digest,
-    indexed_count,
-    *,
-    semantic_candidate=False,
-):
-    if not _cache_entry_matches_index(entry, digest, indexed_count):
-        return False
-    entry_version = int(entry.get('_cache_version') or CACHE_VERSION)
-    if entry_version in LEGACY_CACHE_VERSIONS:
-        # Versões anteriores não tinham a semântica separada no fingerprint.
-        # Mantemos o índice estrutural para documentos que não são candidatos
-        # ao chunking semântico e marcamos o cache como migrado abaixo.
-        return not semantic_candidate
-    return entry.get('metadata_fingerprint') == metadata_digest
-
-
-def legacy_cache_entry_is_reusable(entry, digest, indexed_count):
+def cache_entry_is_valid(entry, digest, metadata_digest, indexed_count):
     return (
-        isinstance(entry, dict)
-        and int(entry.get('_cache_version') or 0) in LEGACY_CACHE_VERSIONS
-        and _cache_entry_matches_index(entry, digest, indexed_count)
+        _cache_entry_matches_index(entry, digest, indexed_count)
+        and entry.get('metadata_fingerprint') == metadata_digest
     )
 
 
@@ -383,7 +340,7 @@ def document_id_for(document, metadata=None):
     return f'{source_id}::{document.stem}'
 
 
-def build_chunks(document, pages, page_records=None, *, tokenizer=None, precomputed_chunks=None):
+def build_chunks(document, pages, page_records=None, *, tokenizer=None):
     full = PAGE_BREAK.join(pages)
     meta = extract_metadata(full, document)
     doc_id = document_id_for(document, meta)
@@ -431,16 +388,12 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None, precompu
         )
     chunk_overlap = min(config.CHUNK_OVERLAP, chunk_size - 1)
     output = []
-    chunk_source = (
-        precomputed_chunks
-        if precomputed_chunks is not None
-        else build_structural_chunks(
-            full,
-            chunk_size,
-            chunk_overlap,
-            metadata=meta,
-            tokenizer=tokenizer,
-        )
+    chunk_source = build_structural_chunks(
+        full,
+        chunk_size,
+        chunk_overlap,
+        metadata=meta,
+        tokenizer=tokenizer,
     )
     for chunk in chunk_source:
         if not chunk['text'].strip():
@@ -503,11 +456,6 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None, precompu
             'page_extraction': page_details,
             **meta,
             'chunking_method': chunk.get('chunking_method') or 'structural',
-            'chunking_model': chunk.get('chunking_model'),
-            'chunking_prompt_version': chunk.get('chunking_prompt_version'),
-            'semantic_topic': chunk.get('semantic_topic'),
-            'semantic_section': chunk.get('semantic_section'),
-            'semantic_source_units': chunk.get('semantic_source_units') or [],
         })
     return output
 
@@ -747,80 +695,7 @@ def main():
     document_manifest = {}
     revocations = []
 
-    # O chunking semântico precisa acontecer antes de qualquer modelo FastEmbed
-    # ocupar a GPU. O tokenizer usado nessa fase roda somente em CPU.
-    semantic_precomputed = {}
-    semantic_candidates = set()
-    if config.AI_CHUNKING_ENABLED:
-        candidates = []
-        for document in files:
-            digest = file_hash(document)
-            metadata_digest = metadata_fingerprint(document)
-            document_meta = extract_metadata('', document)
-            doc_id = document_id_for(document, document_meta)
-            indexed_count = client.count(
-                config.COLLECTION_NAME,
-                count_filter=_filter_for_doc_id(doc_id),
-                exact=True,
-            ).count
-            semantic_hint = is_ai_semantic_metadata_candidate(document_meta)
-            if cache_entry_is_valid(
-                cache.get(document.name),
-                digest,
-                metadata_digest,
-                indexed_count,
-                semantic_candidate=semantic_hint,
-            ):
-                continue
-            if legacy_cache_entry_is_reusable(cache.get(document.name), digest, indexed_count) and not semantic_hint:
-                # O documento já está corretamente indexado pela estrutura antiga.
-                # Não gastamos GPU/LLM nem refazemos embeddings desnecessariamente.
-                continue
-            candidates.append((document, document_meta))
-
-        if candidates:
-            from llm.factory import get_llm_provider
-
-            print(
-                f'Fase 1/2: avaliando chunking semântico ({len(candidates)} documento(s)) '
-                'antes do carregamento dos modelos GPU.'
-            )
-            semantic_provider = get_llm_provider('semantic_chunking')
-            cpu_tokenizer = get_cpu_tokenizer()
-            try:
-                for document, document_meta in candidates:
-                    try:
-                        page_records = extract_page_records(document)
-                        pages = [record['text'] for record in page_records]
-                        full = PAGE_BREAK.join(pages)
-                        if not should_use_ai_semantic(full, document_meta):
-                            continue
-                        semantic_candidates.add(document.name)
-                        semantic_precomputed[document.name] = build_structural_chunks(
-                            full,
-                            config.CHUNK_SIZE,
-                            config.CHUNK_OVERLAP,
-                            metadata=document_meta,
-                            semantic_provider=semantic_provider,
-                            tokenizer=cpu_tokenizer,
-                        )
-                        print(f'Chunking semântico preparado: {document.name}')
-                    except Exception as exc:
-                        print(
-                            f'Aviso: não foi possível preparar o chunking semântico de '
-                            f'{document.name}; o documento será processado normalmente: {exc}'
-                        )
-            finally:
-                del semantic_provider
-                del cpu_tokenizer
-                gc.collect()
-                try:
-                    from chunking import _default_tokenizer
-                    _default_tokenizer.cache_clear()
-                except Exception:
-                    pass
-
-    print('Fase 2/2: carregando modelos de embeddings/reranker na GPU.')
+    print('Carregando modelos de embeddings/reranker na GPU.')
     dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
@@ -843,13 +718,12 @@ def main():
             count_filter=count_filter,
             exact=True,
         ).count
-        semantic_hint = document.name in semantic_candidates or is_ai_semantic_metadata_candidate(document_meta)
+
         if cache_entry_is_valid(
             entry,
             digest,
             metadata_digest,
             indexed_count,
-            semantic_candidate=semantic_hint,
         ):
             skipped += 1
             if legacy_cache_entry_is_reusable(entry, digest, indexed_count):
@@ -880,7 +754,6 @@ def main():
                 pages,
                 page_records=page_records,
                 tokenizer=dense_tokenizer,
-                precomputed_chunks=semantic_precomputed.get(document.name),
             )
             if not chunks:
                 print('Aviso: sem texto em', document.name)
