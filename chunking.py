@@ -318,6 +318,10 @@ def _scan_structure(text):
     }
 
 
+CITATION_WORD_RE = re.compile(
+    r"[ \t]+(?:desta|deste|dessa|desse|daquela|daquele|da|do|das|dos|de|e|ou|a|à|ao|aos|no|na|nos|nas|pelo|pela|pelos|pelas|c/c|combinado|caput|incisos?|par[aá]grafos?|al[ií]neas?|bem|todos|seguintes?|anterior(?:es)?|supra|infra|acima|abaixo|cit|mencionado|referido|supracitado)\b"
+)
+
 def _article_marker_is_real_header_at(text, start, end, ref):
     tail = text[end:end + 220]
     if not ref or not ref[:1].isupper():
