@@ -487,16 +487,6 @@ def _is_thousands_fragment(article_text, match):
     )
 
 
-AMENDMENT_RE = re.compile(
-    r"(?:"
-    r"(?P<target_before>(?:O\s+|Os\s+)?(?:Art(?:igo)?s?\.?\s+\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?|Inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?))"
-    r"\s+(?:passa(?:m)?\s+a\s+vigorar(?:\s+com\s+a\s+seguinte\s+reda[cç][aã]o)?|fica(?:m)?\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida|acrescentados|acrescentadas|inseridos|inseridas|incluidos|incluidas)|acrescenta(?:m|-se)?|inclui(?:m|-se)?)"
-    r"|"
-    r"(?:passa(?:m)?\s+a\s+vigorar(?:\s+com\s+a\s+seguinte\s+reda[cç][aã]o)?|fica(?:m)?\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida|acrescentados|acrescentadas|inseridos|inseridas|incluidos|incluidas)|acrescenta(?:m|-se)?|inclui(?:m|-se)?)"
-    r"\s*(?:o(?:s)?\s+)?(?P<target_after>(?:Art(?:igo)?s?\.?\s+\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?|Inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?))"
-    r")",
-    re.I,
-)
 AMENDMENT_ACTION_RE = re.compile(
     r"(?i)\b(?:passa(?:m)?\s+a\s+vigorar|fica(?:m)?\s+(?:acrescid[oa]s?|acrescentad[oa]s?|"
     r"inserid[oa]s?|inclu[ií]d[oa]s?|revogad[oa]s?|suprimid[oa]s?|alterad[oa]s?|"
