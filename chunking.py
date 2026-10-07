@@ -1151,8 +1151,36 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         tokenizer=_default_tokenizer()
     elif hasattr(tokenizer,"no_truncation"):
         tokenizer.no_truncation()
-    ast = build_legal_ast(full_text)
-    units = _ast_units(ast) or _units(full_text)
+    source_metadata = metadata or {}
+    source_role = str(source_metadata.get("source_role") or "").strip().casefold()
+    tipo_documento = str(source_metadata.get("tipo_documento") or "").strip().casefold()
+    normative_types = {
+        "constituicao", "constituicao_estadual", "lei", "lei_complementar",
+        "lei_ordinaria", "decreto", "decreto_lei", "emenda_constitucional",
+        "instrucao_normativa", "portaria", "resolucao", "deliberacao",
+        "ato_normativo", "norma",
+    }
+    # O parser jurídico só deve ser aplicado quando a fonte é normativa.
+    # Mantemos o comportamento legado quando metadata não foi fornecido ou
+    # quando a classificação é desconhecida, para não quebrar chamadas externas.
+    use_legal_ast = (
+        metadata is None
+        or source_role in {"", "norma"}
+        or tipo_documento in normative_types
+    )
+    if use_legal_ast:
+        try:
+            ast = build_legal_ast(full_text)
+            units = _ast_units(ast) or _units(full_text)
+        except Exception:
+            # Uma falha do parser não pode tornar uma fonte inteira indisponível.
+            # O fallback preserva os offsets da evidência e mantém o orçamento de tokens.
+            start, value = _trimmed_span(full_text)
+            units = [{"kind": "generic", "ref": None, "start": start, "text": value, "headers": []}]
+    else:
+        start, value = _trimmed_span(full_text)
+        units = [{"kind": "generic", "ref": None, "start": start, "text": value, "headers": []}]
+
     juris_units=_jurisprudencia_units(full_text)
     if juris_units:
         output=[];ref_counts={}
