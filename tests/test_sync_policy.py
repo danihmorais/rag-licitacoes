@@ -82,3 +82,21 @@ def test_runtime_limits_do_not_expand_existing_web_bounds():
 
     assert limited[0]["max_documents"] == 2
     assert limited[0]["discovery_max_pages"] == 4
+
+
+def test_legislation_smoke_selects_one_source_per_primary_domain():
+    from scripts.sync_sources import legislation_smoke_sources
+
+    sources = [
+        {"id": "planalto-a", "source_role": "norma", "urls": ["https://www.planalto.gov.br/a"]},
+        {"id": "planalto-b", "source_role": "norma", "urls": ["https://www.planalto.gov.br/b"]},
+        {"id": "camara", "source_role": "norma", "urls": ["https://www2.camara.leg.br/c"]},
+        {"id": "camara-www", "source_role": "norma", "urls": ["https://www.camara.leg.br/d"]},
+        {"id": "alsp", "source_role": "norma", "urls": ["https://www.al.sp.gov.br/e"]},
+        {"id": "portal", "source_role": "orientacao_oficial", "urls": ["https://www.gov.br/f"]},
+        {"id": "indice", "source_role": "norma", "index_only": True, "urls": ["https://www.gov.br/g"]},
+    ]
+
+    selected = legislation_smoke_sources(sources)
+
+    assert [source["id"] for source in selected] == ["planalto-a", "camara", "alsp"]
