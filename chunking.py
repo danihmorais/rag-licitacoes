@@ -352,12 +352,14 @@ def _scan_structure(text):
 
         finalize(article_start)
         if inside_anexo and current_anexo_ref:
-            headers = _norma_only_headers(levels) + [current_anexo_ref] + [
+            norma_headers = _norma_only_headers(levels)
+            internal_headers = [
                 header for header in _ordered_headers(levels)
-                if header not in _norma_only_headers(levels)
+                if header not in norma_headers
             ]
+            headers = norma_headers + [current_anexo_ref] + internal_headers
             anexo_ref = current_anexo_ref
-            anexo_path = [current_anexo_ref]
+            anexo_path = [current_anexo_ref] + internal_headers
             anexo_id = current_anexo_id
         else:
             headers = _ordered_headers(levels)
