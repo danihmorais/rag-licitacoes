@@ -433,6 +433,49 @@ def _date_key(value, default):
         raise RuntimeError(f'Data de vigência inválida no metadata: {value!r}') from exc
 
 
+EFFECTIVE_RANGE_STATUSES = {'closed', 'open_start', 'open_end', 'unknown'}
+
+
+def _effective_range_payload(metadata):
+    """Materializa a vigência sem confundir limite aberto com dado desconhecido."""
+    effective_from = metadata.get('effective_from')
+    effective_to = metadata.get('effective_to')
+    explicit_status = str(metadata.get('effective_range_status') or '').strip().casefold()
+
+    if explicit_status:
+        if explicit_status not in EFFECTIVE_RANGE_STATUSES:
+            raise RuntimeError(
+                f'Status de vigência inválido no metadata: {metadata.get("effective_range_status")!r}'
+            )
+        status = explicit_status
+    elif effective_from and effective_to:
+        status = 'closed'
+    else:
+        status = 'unknown'
+
+    if status == 'closed' and (not effective_from or not effective_to):
+        raise RuntimeError('Vigência fechada exige effective_from e effective_to.')
+    if status == 'open_start' and (effective_from or not effective_to):
+        raise RuntimeError('Vigência open_start exige effective_to e ausência de effective_from.')
+    if status == 'open_end' and (not effective_from or effective_to):
+        raise RuntimeError('Vigência open_end exige effective_from e ausência de effective_to.')
+
+    payload = {'effective_range_status': status}
+    if effective_from:
+        payload['effective_from_day'] = _date_key(effective_from, 0)
+    elif status == 'open_start':
+        # Sentinela somente para limite deliberadamente aberto.
+        payload['effective_from_day'] = 0
+
+    if effective_to:
+        payload['effective_to_day'] = _date_key(effective_to, 99991231)
+    elif status == 'open_end':
+        # Sentinela somente para limite deliberadamente aberto.
+        payload['effective_to_day'] = 99991231
+
+    return payload
+
+
 def document_id_for(document, metadata=None):
     metadata = metadata or extract_metadata('', document)
     explicit = metadata.get('document_id')
@@ -569,8 +612,7 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
             'extraction_confidence': round(extraction_confidence, 4),
             'page_extraction': page_details,
             **meta,
-            'effective_from_day': _date_key(meta.get('effective_from'), 0),
-            'effective_to_day': _date_key(meta.get('effective_to'), 99991231),
+            **_effective_range_payload(meta),
             'chunking_method': chunk.get('chunking_method') or 'structural',
         })
     return output
