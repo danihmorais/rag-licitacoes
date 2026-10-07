@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import config
 import evaluation
 import query
+import chunking
+import ingest
 from chunking import build_legal_ast
 
 
