@@ -863,7 +863,9 @@ def main():
         from index_manifest import validate_manifest
         validate_manifest()
     elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME, exact=True).count:
-        raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
+        if not args.only_documents:
+            raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
+        print('Aviso: índice existente sem manifest; recuperação direcionada ativada por --only.')
 
     ensure_collection(client)
     active_names = {document_id_for(document) for document in files}
