@@ -255,6 +255,49 @@ def _sanitize_extracted_page_text(text):
     return cleaned
 
 
+def _remove_repeated_page_noise(records):
+    """Remove apenas cabeçalhos/rodapés não normativos repetidos nas bordas de páginas."""
+    if len(records) < 2:
+        return records
+
+    edge_counts = {}
+    for record in records:
+        lines = [line.strip() for line in str(record.get('text') or '').splitlines() if line.strip()]
+        if not lines:
+            continue
+        for line in {lines[0], lines[-1]}:
+            normalized = re.sub(r'\s+', ' ', line).strip().casefold()
+            edge_counts[normalized] = edge_counts.get(normalized, 0) + 1
+
+    def removable(line):
+        token = re.sub(r'\s+', ' ', line).strip()
+        normalized = token.casefold()
+        if edge_counts.get(normalized, 0) < 2:
+            return False
+        # Preservamos linhas que podem ser conteúdo normativo mesmo quando
+        # aparecem repetidas; repetição sozinha não autoriza apagar evidência.
+        if re.match(
+            r'(?i)^(?:LEI|DECRETO|DECRETO-LEI|PORTARIA|RESOLUÇÃO|RESOLUCAO|'
+            r'INSTRUÇÃO|INSTRUCAO|EMENDA|MEDIDA|ART(?:IGO)?\b|§)',
+            token,
+        ):
+            return False
+        if re.match(r'(?i)^(?:CAP[IÍ]TULO|T[IÍ]TULO|SE[CÇ][AÃ]O|SUBSE[CÇ][AÃ]O|PARTE|LIVRO|ANEXO)\b', token):
+            return False
+        if len(token) > 180:
+            return False
+        return True
+
+    for record in records:
+        lines = [line.strip() for line in str(record.get('text') or '').splitlines() if line.strip()]
+        while lines and removable(lines[0]):
+            lines.pop(0)
+        while lines and removable(lines[-1]):
+            lines.pop()
+        record['text'] = '\n'.join(lines).strip()
+    return records
+
+
 def _ocr_page(pdf_document, page_number):
     try:
         import pymupdf
@@ -291,7 +334,7 @@ def _ocr_page(pdf_document, page_number):
 
 def extract_page_records(path):
     if path.suffix.lower() != '.pdf':
-        return [
+        records = [
             {
                 'page': index,
                 'text': _sanitize_extracted_page_text(text),
@@ -300,6 +343,7 @@ def extract_page_records(path):
             }
             for index, text in enumerate(path.read_text(encoding='utf-8').split(PAGE_BREAK), 1)
         ]
+        return _remove_repeated_page_noise(records)
 
     records = []
     pdf_reader = PdfReader(str(path))
@@ -351,6 +395,7 @@ def extract_page_records(path):
                     'extraction_confidence': round(confidence, 4),
                 }
             )
+        return _remove_repeated_page_noise(records)
     finally:
         if ocr_document is not None:
             ocr_document.close()

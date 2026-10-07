@@ -133,45 +133,57 @@ def parse_filters(raw):
     return clean, filters
 
 
-def _is_transition_query(query):
+def _is_comparative_query(query):
     normalized = _normalize_query_text(query)
     return any(term in normalized for term in (
         'transicao', 'transicao legislativa', 'regime anterior',
-        'lei 8.666', 'lei 8666', '8.666/1993',
-        'lei 10.520', 'lei 10520', '10.520/2002',
-        'historico', 'historico', 'antes e depois',
-        'diferenca entre', 'diferencas entre', 'comparar', 'comparacao',
-        'o que mudou', 'mudancas da nova lei', 'nova lei',
+        'antes e depois', 'diferenca entre', 'diferencas entre',
+        'comparar', 'comparacao', 'comparativo', 'versus', ' vs ',
+        'em relacao', 'o que mudou', 'o que muda',
+        'mudancas da nova lei', 'mudancas entre',
     ))
 
 
-def _query_regime(query):
+def _is_historical_query(query):
     normalized = _normalize_query_text(query)
-    rules = (
-        ('lei_14133', ('lei 14.133', 'lei 14133', '14.133/2021')),
-        ('lei_8666', ('lei 8.666', 'lei 8666', '8.666/1993')),
-        ('lei_10520', ('lei 10.520', 'lei 10520', '10.520/2002')),
-        ('lei_12462', ('lei 12.462', 'lei 12462', '12.462/2011')),
-    )
-    for regime, markers in rules:
+    return any(term in normalized for term in (
+        'historico', 'historica', 'a epoca', 'naquela epoca',
+        'era aplicavel', 'era aplicavel em', 'estava vigente',
+        'estava em vigor', 'quando era aplicavel', 'antes de',
+    ))
+
+
+def _is_transition_query(query):
+    # "transição" no retrieval significa comparação entre regimes,
+    # não simples presença do nome de uma lei histórica.
+    return _is_comparative_query(query)
+
+
+REGIME_QUERY_MARKERS = (
+    ('lei_14133', ('lei 14.133', 'lei 14133', '14.133/2021')),
+    ('lei_8666', ('lei 8.666', 'lei 8666', '8.666/1993')),
+    ('lei_10520', ('lei 10.520', 'lei 10520', '10.520/2002')),
+    ('lei_12462', ('lei 12.462', 'lei 12462', '12.462/2011')),
+)
+
+
+def _query_regimes(query):
+    normalized = _normalize_query_text(query)
+    regimes = []
+    for regime, markers in REGIME_QUERY_MARKERS:
         if any(marker in normalized for marker in markers):
-            return regime
-    return None
+            regimes.append(regime)
+    return tuple(regimes)
+
+
+def _query_regime(query):
+    regimes = _query_regimes(query)
+    return regimes[0] if regimes else None
 
 
 def _transition_regimes(query):
     normalized = _normalize_query_text(query)
-    regimes = []
-
-    explicit_markers = (
-        ('lei_14133', ('lei 14.133', 'lei 14133', '14.133/2021')),
-        ('lei_8666', ('lei 8.666', 'lei 8666', '8.666/1993')),
-        ('lei_10520', ('lei 10.520', 'lei 10520', '10.520/2002')),
-        ('lei_12462', ('lei 12.462', 'lei 12462', '12.462/2011')),
-    )
-    for regime, markers in explicit_markers:
-        if any(marker in normalized for marker in markers):
-            regimes.append(regime)
+    regimes = list(_query_regimes(query))
 
     if not regimes:
         regimes.extend(('lei_14133', 'lei_8666'))
@@ -290,12 +302,19 @@ def qfilter(filters=None, query=None):
             continue
         conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=_coerce_filter_value(key, value))))
     if explicit_regime is None and query and not _is_transition_query(query):
-        target_regime = _query_regime(query)
-        if target_regime:
+        target_regimes = _query_regimes(query)
+        if len(target_regimes) > 1:
             conditions.append(
                 models.FieldCondition(
                     key='regime_juridico',
-                    match=models.MatchValue(value=target_regime),
+                    match=models.MatchAny(any=list(target_regimes)),
+                )
+            )
+        elif target_regimes:
+            conditions.append(
+                models.FieldCondition(
+                    key='regime_juridico',
+                    match=models.MatchValue(value=target_regimes[0]),
                 )
             )
         else:
@@ -319,6 +338,7 @@ def build_retrieval_plan(query, filters=None):
         filter_values = {**parsed_filters, **filter_values}
     qdrant_filter = qfilter(filter_values, normalized_query) if (filter_values or normalized_query) else None
     is_transition = _is_transition_query(normalized_query)
+    is_historical = _is_historical_query(normalized_query)
     regime_hint = _query_regime(normalized_query)
     return {
         'query': normalized_query,
@@ -326,6 +346,7 @@ def build_retrieval_plan(query, filters=None):
         'filters': filter_values,
         'qdrant_filter': qdrant_filter,
         'is_transition': is_transition,
+        'is_historical': is_historical,
         'regime_hint': regime_hint,
         'mandatory_sources': list(MANDATORY_CONTEXT_SOURCE_IDS),
         'filtered_for_current_only': (not is_transition and regime_hint is not None) or (not is_transition and not regime_hint),
@@ -861,8 +882,17 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     )
     mandatory = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
     context_points = expand_context(client, points) if points else []
-    mandatory_ids = {point.id for point in mandatory}
-    ordered = mandatory + [point for point in context_points if point.id not in mandatory_ids]
+    primary_ids = {point.id for point in context_points}
+    for point in mandatory:
+        if point.id not in primary_ids:
+            point.payload['_context_only'] = True
+            point.payload['_mandatory_context'] = True
+
+    # A evidência recuperada tem precedência. Fontes obrigatórias entram
+    # somente depois e podem ser descartadas pelo limite de contexto sem
+    # expulsar a prova principal.
+    ordered = list(context_points)
+    ordered.extend(point for point in mandatory if point.id not in primary_ids)
     context_text, context_sources = context_with_sources(ordered)
     if not context_sources:
         return query, [], []

@@ -1,6 +1,7 @@
 import bisect
 import re
 from functools import lru_cache
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import config
@@ -10,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Número de artigo: 5, 5º, 5-A, 337-AB, 1.045 (milhar). O ponto final faz parte da referência.
 _ART_NUMBER = r"(?:\d{1,3}(?:\.\d{3})+|\d+)[ºo°]?(?:-[A-Za-z]{1,3})?\.?"
 ARTIGO_RE = re.compile(
-    rf"^[ \t]*(Art(?:igo)?\.?[ \t]+{_ART_NUMBER})(?=\s|$)",
+    rf"^[ \t]*(Art(?:igo)?\.?[ \t]*{_ART_NUMBER})(?=\s|$)",
     re.IGNORECASE | re.MULTILINE,
 )
 ARTIGO_INLINE_RE = re.compile(
@@ -216,7 +217,7 @@ _HEADER_SCAN_PATTERN = (
     r"(?P<header>^[ \t]*(?:LEI COMPLEMENTAR|LEI|DECRETO-LEI|DECRETO|PORTARIA|RESOLUÇÃO|RESOLUCAO|INSTRUÇÃO|INSTRUCAO|EMENDA CONSTITUCIONAL|CONSTITUIÇÃO|CONSTITUICAO|PARTE|LIVRO|TÍTULO|TITULO|CAPÍTULO|CAPITULO|SEÇÃO|SECAO|SUBSEÇÃO|SUBSECAO|ANEXO)\b[^\n]*$)"
 )
 _STRUCTURE_SCAN_RE = re.compile(
-    rf"{_HEADER_SCAN_PATTERN}|(?P<article_ref>(?<![\w])Art(?:igo)?\.?[ \t]+{_ART_NUMBER}(?=\s|$))",
+    rf"{_HEADER_SCAN_PATTERN}|(?P<article_ref>(?<![\w])Art(?:igo)?\.?[ \t]*{_ART_NUMBER}(?=\s|$))",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -264,6 +265,8 @@ def _scan_structure(text):
     units = []
     current = None
     inside_anexo = False
+    current_anexo_ref = None
+    current_anexo_id = None
 
     def finalize(end):
         nonlocal current
@@ -295,16 +298,29 @@ def _scan_structure(text):
             finalize(header_start)
 
             if key == "anexo":
+                for other in list(levels):
+                    if other != "norma":
+                        del levels[other]
+                current_anexo_ref = normalized_line
+                current_anexo_id = f"anexo:{_normalize_article_ref(normalized_line) or header_start}@{header_start}"
                 current = {
                     "kind": "anexo",
                     "ref": normalized_line,
                     "start": header_start,
                     "headers": _norma_only_headers(levels),
+                    "node_id": current_anexo_id,
+                    "anexo_id": current_anexo_id,
+                    "anexo_ref": normalized_line,
+                    "anexo_path": [normalized_line],
                 }
                 inside_anexo = True
+                header_events.append((header_start, tuple(_norma_only_headers(levels) + [normalized_line])))
                 continue
 
-            inside_anexo = False
+            if key == "norma":
+                inside_anexo = False
+                current_anexo_ref = None
+                current_anexo_id = None
             rank = next(rank for name, rank, _pattern in _HEADER_LEVELS if name == key)
             title = _heading_title_at(normalized, match.end("header")) if key != "norma" else None
             for other, (other_rank, _value) in list(levels.items()):
@@ -314,7 +330,13 @@ def _scan_structure(text):
                 rank,
                 f"{normalized_line} — {title}" if title and title not in normalized_line else normalized_line,
             )
-            header_events.append((header_start, tuple(_ordered_headers(levels))))
+            event_headers = _ordered_headers(levels)
+            if inside_anexo and current_anexo_ref:
+                norma_headers = _norma_only_headers(levels)
+                event_headers = norma_headers + [current_anexo_ref] + [
+                    header for header in event_headers if header not in norma_headers
+                ]
+            header_events.append((header_start, tuple(event_headers)))
             continue
 
         article_ref = match.group("article_ref")
@@ -328,13 +350,29 @@ def _scan_structure(text):
             continue
 
         finalize(article_start)
-        headers = _norma_only_headers(levels) if inside_anexo else _ordered_headers(levels)
+        if inside_anexo and current_anexo_ref:
+            headers = _norma_only_headers(levels) + [current_anexo_ref] + [
+                header for header in _ordered_headers(levels)
+                if header not in _norma_only_headers(levels)
+            ]
+            anexo_ref = current_anexo_ref
+            anexo_path = [current_anexo_ref]
+            anexo_id = current_anexo_id
+        else:
+            headers = _ordered_headers(levels)
+            anexo_ref = None
+            anexo_path = []
+            anexo_id = None
         current = {
             "kind": "artigo",
             "ref": ref,
             "start": article_start,
             "text": "",
             "headers": headers,
+            "node_id": f"artigo:{_normalize_article_ref(ref) or article_start}@{article_start}",
+            "anexo_ref": anexo_ref,
+            "anexo_path": anexo_path,
+            "anexo_id": anexo_id,
         }
 
     finalize(len(text))
@@ -450,16 +488,6 @@ def _is_thousands_fragment(article_text, match):
     )
 
 
-AMENDMENT_RE = re.compile(
-    r"(?:"
-    r"(?P<target_before>(?:O\s+|Os\s+)?(?:Art(?:igo)?s?\.?\s+\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?|Inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?))"
-    r"\s+(?:passa(?:m)?\s+a\s+vigorar(?:\s+com\s+a\s+seguinte\s+reda[cç][aã]o)?|fica(?:m)?\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida|acrescentados|acrescentadas|inseridos|inseridas|incluidos|incluidas)|acrescenta(?:m|-se)?|inclui(?:m|-se)?)"
-    r"|"
-    r"(?:passa(?:m)?\s+a\s+vigorar(?:\s+com\s+a\s+seguinte\s+reda[cç][aã]o)?|fica(?:m)?\s+(?:acrescido|acrescida|acrescentado|acrescentada|inserido|inserida|incluido|incluida|acrescentados|acrescentadas|inseridos|inseridas|incluidos|incluidas)|acrescenta(?:m|-se)?|inclui(?:m|-se)?)"
-    r"\s*(?:o(?:s)?\s+)?(?P<target_after>(?:Art(?:igo)?s?\.?\s+\d+(?:[ºo°]|-[A-Za-z]{1,3})?(?:\.\d+)?(?:-[A-Za-z]{1,3})?|Inciso\s+[IVXLCDM]+(?:-[A-Za-z]{1,3})?))"
-    r")",
-    re.I,
-)
 AMENDMENT_ACTION_RE = re.compile(
     r"(?i)\b(?:passa(?:m)?\s+a\s+vigorar|fica(?:m)?\s+(?:acrescid[oa]s?|acrescentad[oa]s?|"
     r"inserid[oa]s?|inclu[ií]d[oa]s?|revogad[oa]s?|suprimid[oa]s?|alterad[oa]s?|"
@@ -559,6 +587,15 @@ def _detect_amendment(text, current_ref=None):
 
     selected = []
     for candidate in sorted(matches, key=lambda item: (item[0], -(item[1] - item[0]))):
+        # Referências compostas, como "§ 2º do art. 75", devem permanecer
+        # como um único dispositivo-alvo, sem gerar o artigo pai como alvo irmão.
+        if candidate[2] == "artigo" and any(
+            selected_item[2] != "artigo"
+            and selected_item[0] <= candidate[0]
+            and candidate[1] <= selected_item[1]
+            for selected_item in selected
+        ):
+            continue
         if any(candidate[0] < end and candidate[1] > start for start, end, _kind, _ref in selected):
             continue
         if not any(kind == candidate[2] and ref.casefold() == candidate[3].casefold() for _start, _end, kind, ref in selected):
@@ -685,8 +722,20 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
     effective_overlap=min(overlap,max(0,max_size-1));protected=_protect_abbreviation_dots(text)
     splitter=RecursiveCharacterTextSplitter(chunk_size=max_size,chunk_overlap=effective_overlap,length_function=length_fn,separators=["\n\n","\n",". ","; ",": "," ",""],keep_separator="end",add_start_index=True)
     spans=[]
+    previous_start = -1
     for doc in splitter.create_documents([protected]):
-        piece=_restore_abbreviation_dots(doc.page_content);start=int(doc.metadata.get("start_index",0));spans.append((piece,start,start+len(piece)))
+        raw_piece = doc.page_content
+        piece = _restore_abbreviation_dots(raw_piece)
+        start = int(doc.metadata.get("start_index", -1))
+        if start < 0 or protected[start:start + len(raw_piece)] != raw_piece:
+            # Fallback somente quando o metadata do próprio splitter é inválido.
+            search_from = max(0, previous_start + 1)
+            start = protected.find(raw_piece, search_from)
+            if start < 0:
+                raise RuntimeError("Não foi possível reconstruir o span exato de um chunk.")
+        end = start + len(raw_piece)
+        spans.append((piece, start, end))
+        previous_start = start
     return spans
 
 def _token_count(text,tokenizer=None):return _token_length_factory(tokenizer)(text)
@@ -751,21 +800,6 @@ def _fit_child_prefix(prefix, child_text, max_size, tokenizer=None):
     return fitted
 
 
-def _split_trailing_structure(value,base_start):
-    """Corta do artigo o que não é dele: títulos do próximo capítulo/seção (já vão em `headers` do próximo
-    artigo) e ANEXOs, que viram unidade própria em vez de ser engolidos pelo último artigo."""
-    newline=value.find("\n")
-    if newline<0:return value,[]
-    found=STRUCT_HEADING_RE.search(value,newline+1)
-    if not found:return value,[]
-    rest=value[found.start():];article=value[:found.start()].rstrip()
-    if re.match(r"\s*ANEXO\b",rest):
-        ref=re.sub(r"\s+"," ",rest.strip().splitlines()[0]).strip()
-        return article,[{"kind":"anexo","ref":ref,"start":base_start+found.start(),"text":rest.strip()}]
-    body=[l for l in rest.splitlines() if l.strip() and not STRUCT_HEADING_RE.match(l) and not (l.strip().isupper() and len(l.strip())<=_HEADER_TITLE_MAX)]
-    if not body:return article,[]
-    return article,[{"kind":"generic","ref":None,"start":base_start+found.start(),"text":rest.strip()}]
-
 def _article_units(text):
     scanned = _scan_structure(text)
     return [
@@ -775,6 +809,214 @@ def _article_units(text):
         }
         for unit in scanned["units"]
     ] or None
+
+LEGAL_AST_SCHEMA_VERSION = 1
+
+
+@dataclass
+class LegalNode:
+    """Nó canônico da árvore jurídica; offsets apontam para o texto original recebido."""
+    node_id: str
+    kind: str
+    ref: str | None
+    parent_id: str | None
+    source_start: int
+    source_end: int
+    source_text: str
+    children: list["LegalNode"] = field(default_factory=list)
+    path: list[str] = field(default_factory=list)
+    anexo_ref: str | None = None
+    anexo_path: list[str] = field(default_factory=list)
+
+    def add_child(self, child: "LegalNode") -> None:
+        child.parent_id = self.node_id
+        self.children.append(child)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "kind": self.kind,
+            "ref": self.ref,
+            "parent_id": self.parent_id,
+            "source_start": self.source_start,
+            "source_end": self.source_end,
+            "source_text": self.source_text,
+            "children": [child.to_dict() for child in self.children],
+            "path": list(self.path),
+            "anexo_ref": self.anexo_ref,
+            "anexo_path": list(self.anexo_path),
+        }
+
+
+def build_legal_ast(text: str) -> LegalNode:
+    """Constrói a árvore jurídica canônica que alimenta a projeção em chunks."""
+    scanned = _scan_structure(text)
+    root = LegalNode(
+        node_id="norma",
+        kind="norma",
+        ref=None,
+        parent_id=None,
+        source_start=0,
+        source_end=len(text),
+        source_text=text,
+    )
+    annex_nodes: dict[str, LegalNode] = {}
+    header_nodes: dict[tuple[str, ...], LegalNode] = {}
+
+    # A hierarquia de títulos/capítulos/seções também é materializada como nós.
+    for event_index, (position, headers) in enumerate(scanned["header_events"]):
+        if not headers:
+            continue
+        path = tuple(str(item) for item in headers)
+        if path in header_nodes:
+            continue
+        heading = path[-1]
+        line_start = int(position)
+        line_end = text.find("\n", line_start)
+        if line_end < 0:
+            line_end = len(text)
+        parent = root
+        parent_path = path[:-1]
+        if parent_path:
+            parent = header_nodes.get(parent_path, root)
+        node = LegalNode(
+            node_id=f"header:{'/'.join(_normalize_article_ref(item) or item for item in path)}@{position}",
+            kind=(
+                "anexo" if re.match(r"^ANEXO\b", heading, re.I) else
+                next((kind for kind, rank, pattern in _HEADER_LEVELS if kind != "anexo" and pattern.match(heading)), "estrutura")
+            ),
+            ref=heading,
+            parent_id=parent.node_id,
+            source_start=line_start,
+            source_end=line_end,
+            source_text=text[line_start:line_end],
+            path=list(path),
+            anexo_ref=path[-1] if re.match(r"^ANEXO\b", heading, re.I) else None,
+            anexo_path=[path[-1]] if re.match(r"^ANEXO\b", heading, re.I) else [],
+        )
+        parent.add_child(node)
+        header_nodes[path] = node
+
+    for unit in scanned["units"]:
+        kind = str(unit.get("kind") or "generic")
+        ref = unit.get("ref")
+        start = int(unit.get("start") or 0)
+        source_text = str(unit.get("text") or "")
+        source_end = start + len(source_text)
+
+        if kind == "anexo":
+            path = tuple(list(unit.get("headers") or []) + ([str(ref)] if ref else []))
+            node = header_nodes.get(path)
+            if node is None:
+                node = LegalNode(
+                    node_id=str(unit.get("node_id") or f"anexo:{_normalize_article_ref(ref) or start}@{start}"),
+                    kind="anexo",
+                    ref=ref,
+                    parent_id=root.node_id,
+                    source_start=start,
+                    source_end=source_end,
+                    source_text=source_text,
+                    path=list(path),
+                    anexo_ref=str(ref) if ref else None,
+                    anexo_path=list(unit.get("anexo_path") or ([str(ref)] if ref else [])),
+                )
+                root.add_child(node)
+            else:
+                node.source_start = start
+                node.source_end = source_end
+                node.source_text = source_text
+                node.anexo_ref = str(ref) if ref else None
+                node.anexo_path = list(unit.get("anexo_path") or ([str(ref)] if ref else []))
+            annex_nodes[node.node_id] = node
+            for alias in (unit.get("anexo_id"), node.anexo_ref):
+                if alias:
+                    annex_nodes[str(alias)] = node
+            continue
+
+        if kind != "artigo":
+            continue
+
+        anexo_ref = unit.get("anexo_ref")
+        annex_key = str(unit.get("anexo_id") or anexo_ref or "")
+        path = list(unit.get("headers") or [])
+        if ref:
+            path.append(str(ref))
+
+        header_path = tuple(path[:-1])
+        parent = (
+            annex_nodes.get(annex_key)
+            if anexo_ref
+            else header_nodes.get(header_path, root)
+        )
+        if parent is None:
+            parent = root
+        node = LegalNode(
+            node_id=str(unit.get("node_id") or f"artigo:{_normalize_article_ref(ref) or start}@{start}"),
+            kind="artigo",
+            ref=ref,
+            parent_id=parent.node_id,
+            source_start=start,
+            source_end=source_end,
+            source_text=source_text,
+            path=path,
+            anexo_ref=str(anexo_ref) if anexo_ref else None,
+            anexo_path=list(unit.get("anexo_path") or []),
+        )
+        parent.add_child(node)
+
+        # Dispositivos filhos são nós explícitos da mesma árvore.
+        _caput, children = _article_children(source_text)
+        for child_kind, child_ref, child_text, child_start, path_tail in children:
+            child_source_start = start + child_start
+            child = LegalNode(
+                node_id=f"{node.node_id}/{child_kind}:{_normalize_article_ref(child_ref) or child_start}",
+                kind=child_kind,
+                ref=child_ref,
+                parent_id=node.node_id,
+                source_start=child_source_start,
+                source_end=child_source_start + len(child_text),
+                source_text=child_text,
+                path=path + list(path_tail),
+                anexo_ref=node.anexo_ref,
+                anexo_path=list(node.anexo_path),
+            )
+            node.add_child(child)
+
+    return root
+
+
+def _ast_units(root: LegalNode) -> list[dict[str, Any]]:
+    """Projeta a AST em unidades compatíveis com o splitter atual."""
+    units = []
+
+    def walk(node: LegalNode):
+        for child in node.children:
+            if child.kind in {"artigo", "anexo"}:
+                units.append({
+                    "kind": child.kind,
+                    "ref": child.ref,
+                    "start": child.source_start,
+                    "text": child.source_text,
+                    "headers": (
+                        list(child.path[:-1])
+                        if child.kind == "artigo" and child.ref
+                        else list(child.path[:-1]) if child.kind == "anexo" and child.ref else list(child.path)
+                    ),
+                    "node_id": child.node_id,
+                    "parent_id": child.parent_id,
+                    "anexo_ref": child.anexo_ref,
+                    "anexo_path": list(child.anexo_path),
+                    "anexo_id": next(
+                        (candidate.node_id for candidate in root.children
+                         if candidate.kind == "anexo" and candidate.node_id == child.parent_id),
+                        None,
+                    ),
+                })
+            walk(child)
+
+    walk(root)
+    return units
+
 
 
 JURIS_SECTION_RE=re.compile(r"(?im)^[ \t]*(EMENTA|TESE/ENTENDIMENTO|TESE|DECISÃO|DECISAO|INTEIRO TEOR|RELATÓRIO|RELATORIO|VOTO|DISPOSITIVO)\s*:?[ \t]*$")
@@ -821,6 +1063,20 @@ def _units(text):
     return [{"kind":"generic","ref":None,"start":0,"text":text.strip(),"headers":[]}]
 
 
+def _assert_source_spans(full_text: str, chunks: list[dict[str, Any]]) -> None:
+    """Garante que toda evidência recuperável aponta exatamente para a fonte."""
+    for index, chunk in enumerate(chunks):
+        start = int(chunk.get("source_start", chunk.get("start", 0)))
+        end = int(chunk.get("source_end", chunk.get("end", start)))
+        source_text = str(chunk.get("source_text") or "")
+        if start < 0 or end < start or end > len(full_text):
+            raise RuntimeError(f"Offset jurídico inválido no chunk {index}: {start}:{end}.")
+        if full_text[start:end] != source_text:
+            raise RuntimeError(
+                f"Fonte do chunk {index} não corresponde aos offsets fonte {start}:{end}."
+            )
+
+
 def _attach_device_ids(chunks):
     for chunk in chunks:
         unit_id = str(chunk.get("unit_id") or "")
@@ -846,7 +1102,8 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         tokenizer=_default_tokenizer()
     elif hasattr(tokenizer,"no_truncation"):
         tokenizer.no_truncation()
-    units=_units(full_text)
+    ast = build_legal_ast(full_text)
+    units = _ast_units(ast) or _units(full_text)
     juris_units=_jurisprudencia_units(full_text)
     if juris_units:
         output=[];ref_counts={}
@@ -859,31 +1116,45 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
                     source_start=u["start"]+section["start"]+rel;source_end=u["start"]+section["start"]+_end
-                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
-        if output:return _attach_device_ids(output)
+                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"node_id":f"{unit_id}/{section['section']}","parent_id":None,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
+        if output:
+            output = _attach_device_ids(output)
+            _assert_source_spans(full_text, output)
+            return output
     output=[];ref_counts={}
     for unit in units:
         ref=unit.get("ref")
         if ref:ref_counts[(unit["kind"],ref)]=ref_counts.get((unit["kind"],ref),0)+1
     for unit in units:
         if not unit["text"].strip():continue
-        ref=unit.get("ref");unit_id=(f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}")+(f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
+        ref=unit.get("ref")
+        legacy_unit_id = (
+            (f"{unit['kind']}:{ref}" if ref else f"{unit['kind']}:{unit['start']}")
+            + (f":{unit['start']}" if ref and ref_counts.get((unit["kind"],ref),0)>1 else "")
+        )
+        # unit_id continua compatível com o corpus histórico; node_id identifica
+        # a posição estrutural exata na AST. Em anexos, o node_id evita colisões.
+        unit_id = str(unit.get("node_id") or legacy_unit_id) if unit.get("anexo_ref") else legacy_unit_id
         headers=list(unit.get("headers") or [])
         amendment = _detect_amendment(unit["text"], ref) if unit["kind"] == "artigo" else None
         if unit["kind"]!="artigo":
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False,"node_id":unit.get("node_id"),"parent_id":unit.get("parent_id"),"anexo_ref":unit.get("anexo_ref"),"anexo_path":list(unit.get("anexo_path") or [])})
             continue
         caput,children=_article_children(unit["text"])
         article_ref=ref or "Artigo"
         article_header=[*headers,article_ref]
+        node_id = unit.get("node_id")
+        parent_id = unit.get("parent_id")
+        anexo_ref = unit.get("anexo_ref")
+        anexo_path = list(unit.get("anexo_path") or [])
         if not children:
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
             continue
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
+            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
             caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
@@ -900,6 +1171,8 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
                     rendered=f"{child_prefix}\n{piece}".strip()
                 if _token_count(rendered,tokenizer)>max_size:
                     raise RuntimeError("Segmento jurídico excede o orçamento de tokens após a divisão.")
-                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
+                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"node_id":node_id + "/" + kind + ":" + (_normalize_article_ref(child_ref) or str(child_index)),"parent_id":node_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path})
             next_index+=len(child_spans)
-    return _attach_device_ids(output)
+    output = _attach_device_ids(output)
+    _assert_source_spans(full_text, output)
+    return output
