@@ -275,16 +275,6 @@ SOURCES.extend([
         sitemap_urls=("https://licitacoespublicas.blog.br/wp-sitemap.xml",),
     ),
     _web_article(
-        "web-conlicitacao",
-        "ConLicitação — matérias sobre licitações e contratos",
-        "ConLicitação",
-        ("https://conlicitacao.com.br/blog/", "https://conlicitacao.com.br/blog/page/2/", "https://conlicitacao.com.br/blog/page/3/"),
-        max_documents=250,
-        discovery_max_pages=100,
-        sitemap_urls=("https://conlicitacao.com.br/wp-sitemap.xml",),
-        http_timeout=(10, 60),
-    ),
-    _web_article(
         "web-zenite",
         "Zênite — matérias sobre licitação e contratos administrativos",
         "Zênite",

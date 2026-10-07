@@ -447,7 +447,6 @@ As fontes configuradas atualmente são:
 |---|---|
 | Nova Lei de Licitação | conteúdo secundário especializado |
 | Licitações Públicas | conteúdo secundário especializado |
-| ConLicitação | conteúdo secundário especializado |
 | Zênite | conteúdo secundário especializado |
 | Migalhas | Direito Administrativo / Direito Público |
 | ConJur | Direito Administrativo / Direito Público |

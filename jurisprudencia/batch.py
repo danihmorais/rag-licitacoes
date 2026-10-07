@@ -160,6 +160,10 @@ def collect_batch(
         try:
             save_record(record, output_dir)
         except Exception as exc:
+            print(
+                f'FAIL {tribunal} persistência: {type(exc).__name__}: {exc} '
+                f'(processo={str(record.numero_processo or "")!r}, url={str(record.url_oficial or "")!r})'
+            )
             _write_dlq(
                 tribunal=tribunal,
                 query='<batch-save>',

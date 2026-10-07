@@ -206,6 +206,30 @@ def test_record_version_is_stable_and_cache_has_structured_metadata(tmp_path: Pa
     assert path.exists() and '"source_role": "jurisprudencia_controle"' in data and '"version_sha256":' in data
 
 
+def test_stj_scon_textarea_fallback_extracts_process():
+    html = '''<html><body>
+      <div class="resultado">
+        <div>Processo</div>
+        <div>REsp 2211999 / SP</div>
+        <div>Ministro Regina Helena Costa</div>
+        <div>DJe 18/02/2026</div>
+        <div>Decisão: 10/02/2026</div>
+        <textarea id="textSemformatacao1">DIREITO ADMINISTRATIVO. LICITAÇÃO E CONTRATOS.</textarea>
+        <a href="/SCON/GetInteiroTeorDoAcordao?num_registro=123&amp;dt_publicacao=18/02/2026">íntegra</a>
+      </div>
+    </body></html>'''.encode("iso-8859-1")
+
+    records = STJAdapter(FakeSession([
+        FakeResponse(html, content_type="text/html", url=STJAdapter.search_endpoint)
+    ])).search("licitação", 1)
+
+    assert len(records) == 1
+    assert records[0].numero_processo == "REsp 2211999 / SP"
+    assert records[0].data == "10/02/2026"
+    assert records[0].data_publicacao == "18/02/2026"
+    records[0].validate()
+
+
 def test_stj_adapter_parses_official_scon_snapshot():
     html = '''<html><body>
       <div class="row itemlistadocumentos p-2">

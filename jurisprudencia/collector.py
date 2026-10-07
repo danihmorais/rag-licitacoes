@@ -1134,6 +1134,27 @@ class STJAdapter(JurisprudenciaAdapter):
         return '&'.join(parts).encode('ascii')
 
     @staticmethod
+    def _extract_scon_process(text: str) -> str | None:
+        lines = [clean_text(line) for line in str(text or "").splitlines() if clean_text(line)]
+        for index, line in enumerate(lines):
+            match = re.match(r"(?i)^processo\s*[:\-]?\s*(.+)$", line)
+            if match:
+                candidate = clean_text(match.group(1))
+                if candidate and candidate.casefold() != "processo":
+                    return candidate
+                if index + 1 < len(lines) and lines[index + 1]:
+                    return clean_text(lines[index + 1])
+        patterns = (
+            r"(?i)\b(?:REsp|AREsp|AgInt(?:\s+no)?\s+(?:REsp|AREsp)|AgRg(?:\s+no)?\s+(?:REsp|AREsp)|RMS|RHC|HC|MS|CC|APn)\s+[0-9][0-9.]*?(?:\s*/\s*[A-Z]{2})?\b",
+            r"\b[0-9]{4,7}/[0-9]{7}-[0-9]\b",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, str(text or ""))
+            if match:
+                return clean_text(match.group(0))
+        return None
+
+    @staticmethod
     def _scon_records(raw_html: bytes, base_url: str) -> list[dict[str, Any]]:
         encoding = 'iso-8859-1'
         try:
@@ -1191,6 +1212,10 @@ class STJAdapter(JurisprudenciaAdapter):
                 continue
             parent = textarea.parent
             parent_html = str(parent) if parent is not None else text
+            parent_text = parent.get_text('\n', strip=True) if parent is not None else text
+            process = STJAdapter._extract_scon_process(parent_text)
+            if not process:
+                continue
             url_match = re.search(
                 r'GetInteiroTeorDoAcordao\?num_registro=(\d+)&(?:amp;)?dt_publicacao=([\d/]+)',
                 parent_html,
@@ -1200,13 +1225,16 @@ class STJAdapter(JurisprudenciaAdapter):
                 f'num_registro={url_match.group(1)}&dt_publicacao={url_match.group(2)}'
                 if url_match else None
             )
+            relator_match = re.search(r'(?im)^ministro(?:a)?\s+(.+)$', parent_text)
+            dje_match = re.search(r'(?i)\bDJe\s+(\d{2}/\d{2}/\d{4})\b', parent_text)
+            decisao_match = re.search(r'(?i)\bDecis[aã]o:\s*(\d{2}/\d{2}/\d{4})\b', parent_text)
             records.append({
-                'numero_processo': None,
+                'numero_processo': process,
                 'tipo_decisao': 'Acórdão',
                 'orgao_julgador': None,
-                'relator': None,
-                'data': None,
-                'data_publicacao': None,
+                'relator': clean_text(relator_match.group(1)) if relator_match else None,
+                'data': decisao_match.group(1) if decisao_match else None,
+                'data_publicacao': dje_match.group(1) if dje_match else None,
                 'ementa': ementa,
                 'tese': None,
                 'decisao': None,
