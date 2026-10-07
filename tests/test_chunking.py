@@ -84,7 +84,7 @@ def test_split_text_spans_recovers_invalid_splitter_offset(monkeypatch):
 
     monkeypatch.setattr(chunking, "RecursiveCharacterTextSplitter", FakeSplitter)
     text = "início " + "trecho exato" + " fim"
-    spans = chunking._split_text_spans(text, 5, 0, tokenizer=TruncatingTokenizer())
+    spans = chunking._split_text_spans(text, 3, 0, tokenizer=TruncatingTokenizer())
 
     assert spans == [("trecho exato", 7, 19)]
     assert text[spans[0][1]:spans[0][2]] == spans[0][0]
