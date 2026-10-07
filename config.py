@@ -134,51 +134,51 @@ def validate_config() -> None:
 
 
 def _preload_nvidia_cuda_libraries() -> None:
-    """Carrega as bibliotecas CUDA empacotadas pelo pip antes da sessão ONNX."""
+    """Carrega as bibliotecas CUDA distribuídas pelos wheels NVIDIA do ambiente Python."""
     if os.name != 'posix':
         return
 
     import ctypes
-    import sysconfig
+    from importlib.metadata import PackageNotFoundError, distribution
 
-    site_packages = Path(sysconfig.get_path('purelib'))
-    nvidia_root = site_packages / 'nvidia'
-    if not nvidia_root.is_dir():
-        return
-
-    lib_dirs = sorted(path for path in nvidia_root.glob('*/lib') if path.is_dir())
-    if lib_dirs:
-        current = [item for item in os.environ.get('LD_LIBRARY_PATH', '').split(':') if item]
-        merged = []
-        for path in lib_dirs:
-            value = str(path)
-            if value not in merged:
-                merged.append(value)
-        for value in current:
-            if value not in merged:
-                merged.append(value)
-        os.environ['LD_LIBRARY_PATH'] = ':'.join(merged)
-
-    packages_and_patterns = (
-        ('cuda_runtime', 'libcudart.so.*'),
-        ('nvjitlink', 'libnvJitLink.so.*'),
-        ('cublas', 'libcublasLt.so.*'),
-        ('cublas', 'libcublas.so.*'),
-        ('cuda_nvrtc', 'libnvrtc.so.*'),
-        ('curand', 'libcurand.so.*'),
-        ('cufft', 'libcufft.so.*'),
-        ('cudnn', 'libcudnn.so.*'),
+    libraries = (
+        ('nvidia-cuda-runtime-cu12', 'nvidia/cuda_runtime/lib/libcudart.so.12', False),
+        ('nvidia-nvjitlink-cu12', 'nvidia/nvjitlink/lib/libnvJitLink.so.12', False),
+        ('nvidia-cublas-cu12', 'nvidia/cublas/lib/libcublasLt.so.12', True),
+        ('nvidia-cublas-cu12', 'nvidia/cublas/lib/libcublas.so.12', True),
+        ('nvidia-cuda-nvrtc-cu12', 'nvidia/cuda_nvrtc/lib/libnvrtc.so.12', False),
+        ('nvidia-curand-cu12', 'nvidia/curand/lib/libcurand.so.10', False),
+        ('nvidia-cufft-cu12', 'nvidia/cufft/lib/libcufft.so.11', False),
+        ('nvidia-cudnn-cu12', 'nvidia/cudnn/lib/libcudnn.so.9', False),
     )
-    for package, pattern in packages_and_patterns:
-        candidates = sorted((nvidia_root / package / 'lib').glob(pattern))
-        if not candidates:
-            continue
+
+    missing = []
+    for package_name, relative_path, required in libraries:
         try:
-            ctypes.CDLL(str(candidates[-1]), mode=ctypes.RTLD_GLOBAL)
+            package = distribution(package_name)
+        except PackageNotFoundError:
+            if required:
+                missing.append(f'{package_name} (pacote não instalado)')
+            continue
+
+        library = Path(package.locate_file(relative_path))
+        if not library.is_file():
+            if required:
+                missing.append(f'{package_name}: {library}')
+            continue
+
+        try:
+            ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
         except OSError as exc:
-            raise RuntimeError(
-                f'Não foi possível carregar a biblioteca CUDA {candidates[-1].name}: {exc}'
-            ) from exc
+            if required:
+                missing.append(f'{library.name}: {exc}')
+
+    if missing:
+        raise RuntimeError(
+            'Dependências CUDA do ONNX Runtime não puderam ser carregadas: '
+            + ' | '.join(missing)
+            + '. Execute python -m pip install -r requirements.txt no ambiente virtual.'
+        )
 
 
 def validate_gpu_runtime() -> None:
