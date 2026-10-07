@@ -42,8 +42,8 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'chunking_algorithm_sha256': chunking_algorithm_sha256(),
         'dense_max_tokens': config.DENSE_MAX_TOKENS,
         'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
-        'schema': 'doc_id/unit_id/node_id/parent_id/chunk_index/source_start/source_end/page_span/page_uncertain/source_role/status/authority_level/source_id/source_identity/cited_regimes/document_hash/document_regime/regime_juridico/tipo_documento/numero_sumula/anexo_ref/anexo_path/device_id/effective_from/effective_to/effective_from_day/effective_to_day/amendment/amendment_type/amendment_operations/target_article/target_articles/target_devices/text_origin/extraction_confidence/page_extraction/page_content/retrieval_text/embedding_text/chunking_method',
-        'manifest_schema_version': 3,
+        'schema': 'doc_id/unit_id/node_id/parent_id/chunk_index/source_start/source_end/page_span/page_uncertain/source_role/status/authority_level/source_id/source_identity/cited_regimes/document_hash/document_regime/regime_juridico/tipo_documento/numero_sumula/anexo_ref/anexo_path/device_id/effective_from/effective_to/effective_from_day/effective_to_day/effective_range_status/amendment/amendment_type/amendment_operations/target_article/target_articles/target_devices/text_origin/extraction_confidence/page_extraction/page_content/retrieval_text/embedding_text/chunking_method',
+        'manifest_schema_version': 4,
         'legal_ast_schema_version': LEGAL_AST_SCHEMA_VERSION,
         'ocr_settings': {
             'enabled': config.OCR_ENABLED,
