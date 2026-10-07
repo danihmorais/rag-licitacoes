@@ -29,6 +29,45 @@ class TruncatingTokenizer:
         return SimpleNamespace(ids=tokens)
 
 
+def test_non_normative_documents_bypass_legal_ast(monkeypatch):
+    def fail_ast(*_args, **_kwargs):
+        raise AssertionError("AST jurídico não deveria ser executado")
+
+    monkeypatch.setattr(chunking, "build_legal_ast", fail_ast)
+    text = (
+        "Art. 1º Este texto parece normativo, mas pertence a um manual. "
+        + ("Orientação administrativa e boas práticas para contratação pública. " * 30)
+    )
+    chunks = build_structural_chunks(
+        text,
+        120,
+        20,
+        metadata={"source_role": "orientacao_oficial", "tipo_documento": "manual"},
+    )
+
+    assert chunks
+    assert all(item["unit_kind"] == "generic" for item in chunks)
+    assert all(text[item["source_start"]:item["source_end"]] == item["source_text"] for item in chunks)
+
+
+def test_normative_ast_failure_falls_back_to_generic(monkeypatch):
+    def fail_ast(*_args, **_kwargs):
+        raise RuntimeError("falha simulada do AST")
+
+    monkeypatch.setattr(chunking, "build_legal_ast", fail_ast)
+    text = "Art. 1º Regra normativa. " + ("Conteúdo jurídico substantivo. " * 30)
+    chunks = build_structural_chunks(
+        text,
+        120,
+        20,
+        metadata={"source_role": "norma", "tipo_documento": "lei"},
+    )
+
+    assert chunks
+    assert all(item["unit_kind"] == "generic" for item in chunks)
+    assert all(text[item["source_start"]:item["source_end"]] == item["source_text"] for item in chunks)
+
+
 def test_default_tokenizer_disables_fastembed_truncation(monkeypatch):
     import fastembed
 
