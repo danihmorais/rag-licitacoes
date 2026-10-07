@@ -424,6 +424,15 @@ def _page(offset, starts):
     return number
 
 
+def _date_key(value, default):
+    if value in (None, ''):
+        return default
+    try:
+        return int(datetime.date.fromisoformat(str(value)).strftime('%Y%m%d'))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f'Data de vigência inválida no metadata: {value!r}') from exc
+
+
 def document_id_for(document, metadata=None):
     metadata = metadata or extract_metadata('', document)
     explicit = metadata.get('document_id')
@@ -560,6 +569,8 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
             'extraction_confidence': round(extraction_confidence, 4),
             'page_extraction': page_details,
             **meta,
+            'effective_from_day': _date_key(meta.get('effective_from'), 0),
+            'effective_to_day': _date_key(meta.get('effective_to'), 99991231),
             'chunking_method': chunk.get('chunking_method') or 'structural',
         })
     return output

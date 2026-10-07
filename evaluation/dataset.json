@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "description": "Conjunto versionado para regressão da recuperação jurídica e do evidence gate. Inclui casos suportados, premissas falsas, perguntas fora do corpus e conflitos de jurisdição federal x São Paulo.",
   "cases": [
     {
@@ -227,6 +227,33 @@
       "temporal": {
         "effective_on": "2025-06-15"
       }
+    },
+    {
+      "id": "valores-2024",
+      "query": "Quais valores da Lei nº 14.133/2021 eram aplicáveis em 2024?",
+      "expected_source_ids": [
+        "decreto11871"
+      ],
+      "expected_jurisdicao": "federal",
+      "temporal": {
+        "effective_on": "2024-06-15"
+      }
+    },
+    {
+      "id": "valores-2025-fora-da-vigencia",
+      "query": "Quais valores da Lei nº 14.133/2021 estavam no Decreto nº 12.343/2024 depois de 2025?",
+      "expected_source_ids": [
+        "decreto12343"
+      ],
+      "expected_jurisdicao": "federal",
+      "temporal": {
+        "effective_on": "2026-06-15"
+      },
+      "rejection_test": true,
+      "expected_rejection": true,
+      "temporal_rejection_test": true,
+      "expected_temporal_rejection": true,
+      "case_type": "temporal_rejection"
     },
     {
       "id": "valores-2026",

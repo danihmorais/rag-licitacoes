@@ -11,10 +11,9 @@ import config
 from embedding_utils import validate_embedding_inputs
 from query import (
     EvidenceGateError,
+    build_retrieval_plan,
     embedding_kwargs,
     hybrid,
-    parse_filters,
-    qfilter,
     rerank,
     validate_generated_answer,
 )
@@ -60,6 +59,17 @@ def load_cases(path: Path = DEFAULT_DATASET) -> list[dict]:
             isinstance(item, str) for item in jurisdiction
         ):
             raise ValueError(f'expected_jurisdicao inválido no caso {case_id}.')
+        temporal = case.get('temporal')
+        if temporal is not None:
+            if not isinstance(temporal, dict):
+                raise ValueError(f'temporal inválido no caso {case_id}.')
+            for field in ('effective_on', 'effective_from', 'effective_to'):
+                if field in temporal and temporal[field] is not None:
+                    _parse_iso_date(temporal[field])
+        if case.get('expected_temporal_rejection') is not None and not isinstance(case['expected_temporal_rejection'], bool):
+            raise ValueError(f'expected_temporal_rejection inválido no caso {case_id}.')
+        if case.get('temporal_rejection_test') is not None and not isinstance(case['temporal_rejection_test'], bool):
+            raise ValueError(f'temporal_rejection_test inválido no caso {case_id}.')
         for field in ('expected_article_refs', 'expected_device_ids', 'expected_unit_ids'):
             value = case.get(field)
             if value is not None and (
@@ -113,15 +123,23 @@ def temporal_match(payload: dict, case: dict) -> bool | None:
     if str(payload.get('source_id')) not in expected_ids:
         return False
     target = _parse_iso_date(temporal.get('effective_on'))
-    if target is None:
-        return None
     effective_from = _parse_iso_date(payload.get('effective_from'))
     effective_to = _parse_iso_date(payload.get('effective_to'))
-    if effective_from and target < effective_from:
+    if target is not None:
+        if effective_from and target < effective_from:
+            return False
+        if effective_to and target > effective_to:
+            return False
+        if str(payload.get('status') or '').casefold() == 'vacatio_legis' and effective_from and target < effective_from:
+            return False
+        return True
+    target_from = _parse_iso_date(temporal.get('effective_from'))
+    target_to = _parse_iso_date(temporal.get('effective_to'))
+    if target_from is None and target_to is None:
+        return None
+    if effective_to and target_from and effective_to < target_from:
         return False
-    if effective_to and target > effective_to:
-        return False
-    if str(payload.get('status') or '').casefold() == 'vacatio_legis' and effective_from and target < effective_from:
+    if effective_from and target_to and effective_from > target_to:
         return False
     return True
 
@@ -219,6 +237,15 @@ def evaluate_case(points, case: dict, k_values: tuple[int, ...]) -> dict:
     for k in k_values:
         metrics[f'recall@{k}'] = recall_at_k(points, expected_source_ids, k)
         metrics[f'ndcg@{k}'] = ndcg_at_k(points, expected_source_ids, k)
+        if case.get('temporal_rejection_test'):
+            expected_temporal_rejection = bool(case.get('expected_temporal_rejection', True))
+            compatible = any(
+                temporal_match(point.payload, case) is True
+                for point in points[:k]
+            )
+            metrics[f'temporal_rejection_correct@{k}'] = (
+                (not compatible) == expected_temporal_rejection
+            )
         expected_articles = {
             str(item).strip() for item in case.get('expected_article_refs', []) if str(item).strip()
         }
@@ -236,6 +263,10 @@ def evaluate_case(points, case: dict, k_values: tuple[int, ...]) -> dict:
             metrics[f'device_recall@{k}'] = device_recall_at_k(points, expected_devices, k)
     top = points[0] if points else None
     metrics['reciprocal_rank'] = reciprocal_rank(points, expected_source_ids)
+    metrics['regime_correct'] = (
+        None if not expected_source_ids
+        else bool(top and str(top.payload.get('source_id')) in expected_source_ids)
+    )
     expected_jurisdictions = _expected_jurisdictions(case)
     metrics['jurisdiction_correct'] = (
         None
@@ -276,6 +307,9 @@ def aggregate(case_results: list[dict], cases: list[dict], k_values: tuple[int, 
                 item[f'false_positive_article_rate@{k}'] for item in case_results if f'false_positive_article_rate@{k}' in item
             )
     summary['mrr'] = _mean(item['reciprocal_rank'] for item in case_results)
+    summary['regime_accuracy'] = _mean(
+        item['regime_correct'] for item in case_results if item['regime_correct'] is not None
+    )
     jurisdiction_values = [
         item['jurisdiction_correct']
         for item in case_results
@@ -288,6 +322,14 @@ def aggregate(case_results: list[dict], cases: list[dict], k_values: tuple[int, 
         if item['temporal_correct'] is not None
     ]
     summary['temporal_accuracy'] = _mean(temporal_values)
+    max_k = max(k_values)
+    temporal_rejection_values = [
+        item.get(f'temporal_rejection_correct@{max_k}')
+        for item in case_results
+        if item.get(f'temporal_rejection_correct@{max_k}') is not None
+    ]
+    summary['temporal_rejection_accuracy'] = _mean(temporal_rejection_values)
+    summary['temporal_rejection_cases'] = len(temporal_rejection_values)
     rejection_values = [
         item['rejection_correct']
         for item, case in zip(case_results, cases)
@@ -399,10 +441,11 @@ def build_retriever():
 
 
 def retrieve_case(client, dense, sparse, reranker, raw_query: str, limit: int):
-    query, filters = parse_filters(raw_query)
+    plan = build_retrieval_plan(raw_query)
+    query = plan['query']
     if not query:
         return []
-    embedding_text = 'query: ' + query
+    embedding_text = 'query: ' + plan['retrieval_query']
     validate_embedding_inputs(dense, [embedding_text], label='avaliação')
     dense_vector = list(dense.embed([embedding_text]))[0]
     candidates = hybrid(
@@ -410,10 +453,10 @@ def retrieve_case(client, dense, sparse, reranker, raw_query: str, limit: int):
         dense,
         sparse,
         query,
-        qfilter(filters, query=query),
+        plan['qdrant_filter'],
         dense_vector=dense_vector,
     )
-    return rerank(reranker, query, candidates, filters, limit=limit)
+    return rerank(reranker, query, candidates, plan['filters'], limit=limit)
 
 
 def run_live_evaluation(cases: list[dict], gate_cases: list[dict], k_values: tuple[int, ...]) -> dict:
