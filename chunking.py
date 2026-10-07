@@ -364,13 +364,18 @@ def _scan_structure(text):
             anexo_ref = None
             anexo_path = []
             anexo_id = None
+        structural_path = "/".join(
+            _normalized_structure_component(item)
+            for item in (*headers, ref)
+            if item
+        )
         current = {
             "kind": "artigo",
             "ref": ref,
             "start": article_start,
             "text": "",
             "headers": headers,
-            "node_id": f"artigo:{_normalize_article_ref(ref) or article_start}@{article_start}",
+            "node_id": f"{structural_path}@{article_start}",
             "anexo_ref": anexo_ref,
             "anexo_path": anexo_path,
             "anexo_id": anexo_id,
