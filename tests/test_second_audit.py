@@ -230,3 +230,12 @@ def test_manifest_declares_the_legal_ast_schema():
     assert "source_start/source_end" in manifest["schema"]
     assert "device_id" in manifest["schema"]
     assert "anexo_ref" in manifest["schema"]
+
+
+def test_catalog_marks_intentional_open_effective_ranges():
+    from scripts.sources import SOURCES
+    by_id = {item["id"]: item for item in SOURCES}
+    assert by_id["lei8666"]["effective_range_status"] == "open_start"
+    assert by_id["lei10520"]["effective_range_status"] == "open_start"
+    assert by_id["lei12462"]["effective_range_status"] == "open_start"
+    assert by_id["in512"]["effective_range_status"] == "open_end"
