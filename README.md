@@ -435,17 +435,13 @@ Consulta direta:
 python query.py --query "Quais são os requisitos do ETP?"
 ~~~
 
-### Contexto jurídico-base obrigatório
+### Contexto jurídico-base auxiliar
 
-Toda consulta recupera, além das evidências relevantes para a pergunta, pelo menos um trecho da **Lei nº 14.133/2021** e um trecho do **Manual de Licitações e Contratos do TCU**. Essas fontes são âncoras de contexto e não devem ser tratadas automaticamente como aplicáveis à pergunta. A Lei é fonte normativa; o Manual é orientação oficial do TCU e mantém nível de autoridade distinto.
+Toda consulta pode incluir, além das evidências relevantes para a pergunta, um trecho da Lei nº 14.133/2021 e um trecho do Manual de Licitações e Contratos do TCU como referências-base auxiliares. Essas fontes não são automaticamente aplicáveis à pergunta e não possuem prioridade sobre a evidência primária recuperada.
 
-Caso uma dessas duas fontes ainda não esteja indexada, a consulta falha explicitamente e orienta sincronizar as fontes e executar o ingest. Isso evita uma resposta que aparente ter sido fundamentada com uma fonte obrigatória que não está realmente presente no contexto.
+O código preserva primeiro a evidência principal. As fontes-base são marcadas como contexto auxiliar e podem ser descartadas quando o orçamento de contexto estiver apertado. A política efetiva é coerente com o prompt: são referências auxiliares, não garantias absolutas de presença.
 
-Saída JSON:
-
-~~~bash
-python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP" --json
-~~~
+A resposta não é considerada fundamentada apenas porque uma fonte-base existe no índice. O conteúdo precisa sustentar a afirmação feita e passar pelo evidence gate.
 
 ### Filtros
 
@@ -606,7 +602,11 @@ data_vigencia
 retrieved_at
 ~~~
 
-Isso permite distinguir norma vigente, norma histórica, vacatio legis e versões anteriores do mesmo documento.
+Consultas com intenção histórica agora são classificadas e, quando contêm uma referência temporal única, essa referência é transformada em filtro real no Qdrant. São reconhecidos pelo menos anos, mês/ano, datas exatas e limites relativos como antes de e depois de. A regra usada no índice é de sobreposição de vigência: effective_from <= data e effective_to >= data; para intervalos, a janela consultada e a janela documental precisam se sobrepor.
+
+Os campos auxiliares effective_from_day e effective_to_day armazenam as datas como inteiros AAAAMMDD. Quando um limite não está informado no metadata, o projeto o representa como limite aberto (0000-00-00 / 9999-12-31) para permitir a consulta por intervalo de forma determinística.
+
+Consultas comparativas com mais de uma data não são reduzidas artificialmente a uma única data: a intenção comparativa é preservada e o filtro temporal fica sem data única, evitando recuperar um único regime como se representasse todas as fases da comparação.
 
 O histórico é protegido por hash e a ingestão preserva a versão anterior até que a nova versão seja indexada com sucesso.
 
