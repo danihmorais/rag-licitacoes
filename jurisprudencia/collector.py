@@ -1153,6 +1153,7 @@ class STJAdapter(JurisprudenciaAdapter):
             if match:
                 return clean_text(match.group(0))
         return None
+
     @staticmethod
     def _scon_records(raw_html: bytes, base_url: str) -> list[dict[str, Any]]:
         encoding = 'iso-8859-1'
