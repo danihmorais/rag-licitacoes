@@ -1,414 +1,166 @@
 # RAG de Licitações
 
-RAG especializado em **licitações, contratos administrativos e Direito Público brasileiro**, com atenção especial ao **Estado de São Paulo**.
+RAG especializado em **licitações, contratos administrativos e Direito Público brasileiro**, com foco em recuperação de evidências jurídicas e cobertura relevante do Estado de São Paulo.
 
-O projeto separa as evidências em três grupos:
+O projeto:
 
-- **normas**: Constituição, leis, decretos e atos normativos;
-- **jurisprudência e controle**: registros estruturados de tribunais;
-- **doutrina/conteúdo secundário**: matérias públicas de sites jurídicos selecionados.
+- coleta e versiona fontes jurídicas;
+- transforma documentos em chunks jurídicos estruturados;
+- indexa e recupera evidências com busca híbrida;
+- aplica filtros de jurisdição, autoridade e temporalidade;
+- opcionalmente usa um LLM para gerar a resposta final.
 
-A recuperação combina busca semântica e lexical, reranking, filtros jurídicos e expansão estrutural do contexto antes de chamar o LLM.
+> **Importante:** este projeto é uma ferramenta técnica de recuperação e apoio à pesquisa. O resultado não substitui a conferência da fonte oficial aplicável.
 
-> Jurisprudência, doutrina, pareceres e orientações não são tratados como texto legal. A resposta deve permanecer vinculada às evidências recuperadas e aos metadados de jurisdição, autoridade e temporalidade.
+---
 
-## Ambiente de execução
+## 1. Visão geral
 
-O projeto é validado e executado com Python 3.12. O ambiente 3.14 não é compatível com os pins de dependência do projeto e deve ser evitado.
-
-### Opção recomendada com uv
-
-```powershell
-uv venv --python 3.12 .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-### Execução direta em Python 3.12 sem ativar o venv
-
-```powershell
-uv run --python 3.12 --with-requirements requirements.txt python -m pytest -q
-```
-
-> A instalação deve usar o venv do projeto ou o comando `uv run` com Python 3.12. Evite executar `python` do instalador global do Windows ou o Python 3.14 gerenciado pelo uv diretamente, porque as versões pinadas em `requirements.txt` não são compatíveis com esse ambiente.
-
-## Arquitetura
+O fluxo completo é:
 
 ~~~text
-Fontes HTML / PDF / APIs / web
-            │
-            ▼
-Sincronização e coleta
-retry + validação + hash
-            │
-            ▼
-Cache local estruturado
-texto + metadados + versões
-            │
-            ├──────────────► jurisprudência estruturada
-            │
-            ▼
-Chunking jurídico estrutural
-artigo / súmula / blocos
-            │
-        ┌───┴───┐
-        ▼       ▼
-     Dense    BM25
-        └───┬───┘
-            ▼
-           RRF
-            │
-            ▼
-         Reranker
-relevância + autoridade + jurisdição
-            │
-            ▼
-Expansão de vizinhança estrutural
-            │
-            ▼
-     Evidências + [F#]
-            │
-            ▼
-           LLM
+FONTES
+  ├─ legislação oficial
+  ├─ jurisprudência / tribunais
+  ├─ súmulas TCU e TCESP
+  ├─ conteúdo jurídico web
+  └─ PDFs locais
+        │
+        ▼
+COLETA / SINCRONIZAÇÃO
+        │
+        ▼
+CACHE + METADADOS + HASHES
+        │
+        ▼
+CHUNKING JURÍDICO ESTRUTURAL
+        │
+        ├───────────────┐
+        ▼               ▼
+      DENSE          SPARSE / BM25
+        └───────┬───────┘
+                ▼
+               RRF
+                ▼
+            RERANKER
+                │
+                ▼
+ FILTROS + AUTORIDADE + JURISDIÇÃO + TEMPO
+                │
+                ▼
+       EXPANSÃO DE CONTEXTO
+                │
+                ▼
+          EVIDÊNCIAS [F#]
+                │
+                ▼
+               LLM
+                │
+                ▼
+             RESPOSTA
 ~~~
 
-O índice vetorial usa **Qdrant Server**. Embeddings, recuperação sparse e reranking usam o stack **FastEmbed**. Por padrão, o projeto exige `CUDAExecutionProvider`; execução em CPU é suportada de forma explícita por configuração, sem alterar o código.
+O Qdrant é usado como servidor separado. O LLM é desacoplado do índice: trocar o modelo de geração não exige reindexar o corpus.
 
-O LLM é desacoplado do índice. Trocar somente o gerador não exige reindexação.
+---
 
-## O que o projeto faz
+# 2. Pré-requisitos
 
-### Recuperação híbrida
+## Obrigatórios
 
-A consulta combina:
-
-1. embedding denso com **intfloat/multilingual-e5-large**, usando `query:` para perguntas e `passage:` para documentos;
-2. BM25 com **Qdrant/bm25**;
-3. fusão **RRF**;
-4. reranking com **BAAI/bge-reranker-base**;
-5. ponderação explícita de relevância, autoridade e jurisdição;
-6. expansão de chunks vizinhos da mesma unidade jurídica.
-
-Padrões atuais:
-
-~~~text
-RAG_CANDIDATES_K=60
-RAG_FINAL_K=6
-RAG_CHUNK_SIZE=1000
-RAG_CHUNK_OVERLAP=150
-RAG_CONTEXT_NEIGHBORS=1
-RAG_MAX_CONTEXT_CHARS=16000
-
-RAG_RERANK_RELEVANCE_WEIGHT=0.68
-RAG_RERANK_AUTHORITY_WEIGHT=0.20
-RAG_RERANK_JURISDICTION_WEIGHT=0.12
-~~~
-
-O tamanho configurado e um teto desejado. A ingestao reduz o chunk efetivo para reservar tokens aos metadados, ao prefixo E5 e a hierarquia juridica. A validacao final rejeita qualquer entrada que ainda exceda `RAG_DENSE_MAX_TOKENS`.
-
-### Chunking jurídico e integridade estrutural
-
-A legislação é segmentada a partir de uma **AST jurídica intermediária** em `chunking.py`. A árvore preserva norma, hierarquia de capítulos/seções, artigos, parágrafos, incisos, alíneas, itens e anexos antes da projeção para chunks de recuperação.
-
-Cada dispositivo reconhecido mantém identidade estrutural (`node_id`, `parent_id`, `kind`, `ref`) e localização verificável (`source_start`, `source_end`, `source_text`). O pipeline valida a invariável `source_text == fonte[source_start:source_end]` antes de indexar.
-
-Alterações legislativas mantêm o alvo completo em `target_devices`/`target_articles`, inclusive múltiplos dispositivos na mesma fórmula de alteração. Artigos reproduzidos entre aspas em leis alteradoras não são tratados como artigos irmãos da norma alteradora.
-
-Anexos possuem identidade própria, e artigos com a mesma referência em anexos diferentes recebem IDs estruturais distintos. Marcadores OCR e variações como `Art.1º` são normalizados somente para reconhecimento estrutural, sem deslocar offsets da fonte.
-
-A identificação de regime jurídico também é separada entre **regime documental** e **regimes citados**. Uma lei que menciona outra lei continua pertencendo ao seu regime primário; transição legislativa é reservada a documentos e consultas explicitamente comparativos.
-
-## Integridade da evidência
-
-Cada fragmento pode carregar, entre outros:
-
-~~~text
-source_id
-unit_id
-unit_ref
-chunk_index
-document_hash
-página
-jurisdição
-esfera
-órgão
-papel da fonte
-nível de autoridade
-status
-vigência
-text_origin
-extraction_confidence
-page_extraction
-~~~
-
-O sistema também:
-
-- rejeita filtros desconhecidos;
-- mantém versões por hash;
-- invalida o cache por documento quando `metadata.py`, o sidecar ou a configuração de extração/OCR muda;
-- evita remover a versão anterior antes de a nova ser indexada com sucesso;
-- valida a compatibilidade do índice por manifesto;
-- pode bloquear o LLM quando a evidência não atinge o mínimo configurado;
-- exige citações [F#] para afirmações jurídicas relevantes;
-- trata o conteúdo recuperado como **dados**, não como instruções para o modelo.
-
-## Corpus jurídico
-
-O catálogo principal fica em **scripts/sources.py**.
-
-Cada fonte possui metadados de jurisdição, esfera, órgão, tipo documental, papel, autoridade, status, vigência e ramo do Direito.
-
-A escala de autoridade é:
-
-| Nível | Papel |
+| Componente | Função |
 |---|---|
-| 1 | Norma |
-| 2 | Jurisprudência / controle |
-| 3 | Orientação oficial |
-| 4 | Doutrina / conteúdo secundário |
+| **Python 3.12** | execução do projeto |
+| **pip** | instalação das dependências |
+| **Qdrant Server** | banco vetorial |
+| **requirements.txt** | dependências de ingestão, recuperação e coleta |
 
-Dentro das normas, **normative_rank** diferencia Constituição, lei, decreto e atos infralegais.
+## Necessários para funções específicas
 
-### Cobertura federal
+| Componente | Quando |
+|---|---|
+| **Chromium via Playwright** | coleta que usa automação de navegador |
+| **Tesseract OCR** | PDFs escaneados ou páginas com extração nativa insuficiente |
+| **GPU NVIDIA + driver compatível** | configuração padrão de embeddings/reranking com CUDA |
 
-O corpus federal inclui, entre outros:
+### Não é obrigatório
 
-- Constituição Federal;
-- Lei nº 14.133/2021;
-- LINDB e processo administrativo;
-- improbidade e responsabilização;
-- licitações, contratos, contratação direta e registro de preços;
-- pesquisa de preços, ETP e Termo de Referência;
-- concessões e PPP;
-- Direito Financeiro e responsabilidade fiscal;
-- assinaturas eletrônicas;
-- anticorrupção e integridade;
-- contratação de serviços sob execução indireta, pesquisa de preços, ETP, Termo de Referência e técnica e preço;
-- atualização anual dos valores da Lei nº 14.133/2021;
-- transparência, LAI e LGPD;
-- governo digital;
-- servidores públicos;
-- controle e responsabilização;
-- urbanismo e patrimônio;
-- meio ambiente;
-- saúde, educação e assistência social;
-- ciência, tecnologia e inovação.
+**Docker não é requisito do projeto.**
 
-Leis e regimes históricos de contratação, como as Leis nº 8.666/1993, 10.520/2002 e o RDC, permanecem disponíveis com metadados próprios para não serem apresentados automaticamente como regime vigente.
+O projeto usa **Qdrant Server**, não o modo de armazenamento local embutido no cliente Python.
 
-### Estado de São Paulo
+---
 
-O catálogo estadual inclui, entre outros:
+# 3. Python
 
-- Constituição do Estado;
-- Lei nº 10.177/1998;
-- regulamentação paulista da Lei nº 14.133/2021;
-- PCA, pesquisa de preços e ETP;
-- catálogo e Termo de Referência;
-- agentes, gestores e fiscais;
-- contratação direta;
-- leilão eletrônico;
-- AUDESP;
-- integridade e responsabilização;
-- Compras SP;
-- Marketplace.SP;
-- orientações e pareceres da PGE-SP;
-- CADIN Estadual e sua regulamentação.
+Use **Python 3.12**.
 
-## Jurisprudência e controle
+O CI do repositório está configurado nessa versão, e o conjunto pinado de dependências não tem como alvo Python 3.14.
 
-A jurisprudência possui pipeline próprio em **jurisprudencia/**.
+Verifique:
 
-Além dos resultados temáticos, o batch coleta separadamente as **Súmulas do TCU e do TCESP**, cada enunciado como registro estruturado individual a partir dos catálogos oficiais consolidados (o catálogo do TCU atualmente informa 295 registros), com normalização das variações de cabeçalho dos enunciados. O catálogo do TCU usa Chromium como fallback quando a aplicação renderizada não entrega o enunciado no HTML inicial. Súmulas não são contabilizadas no alvo de acórdãos por tribunal.
+~~~bash
+python --version
+~~~
 
-O conjunto padrão utiliza:
+O esperado é:
 
-| Tribunal | Coleta | Registro estruturado | Inteiro teor |
-|---|---:|---:|---:|
-| TCU | Sim | Sim | Opcional |
-| TCESP | Sim | Sim | Opcional |
-| STJ | Sim | Sim | Opcional |
-| STF | Sim | Sim | Opcional |
-| TJSP | Sim | Sim | Opcional |
+~~~text
+Python 3.12.x
+~~~
 
-Os resultados são convertidos em registros individuais com informações como processo, tribunal, órgão julgador, relator, data, ementa, tese/decisão, assunto, URL oficial, situação e hash de versão.
+---
 
-Páginas genéricas de pesquisa não são usadas como evidência jurídica. Quando a fonte oferece o documento integral, ele pode ser recuperado com **--with-content**.
+# 4. Instalação
 
-### Coleta temática
+## Linux / WSL
 
-As consultas padrão abrangem temas como:
+~~~bash
+git clone https://github.com/danihmorais/rag-licitacoes.git
+cd rag-licitacoes
 
-- Lei nº 14.133/2021;
-- contratação direta;
-- edital e habilitação;
-- ETP e Termo de Referência;
-- registro de preços;
-- sanções;
-- equilíbrio econômico-financeiro;
-- fiscalização contratual;
-- ato e processo administrativo;
-- controle de constitucionalidade;
-- servidores públicos;
-- improbidade;
-- responsabilidade do Estado;
-- transparência e LGPD;
-- concessões e PPP;
-- temas específicos do Estado de São Paulo.
+python3.12 -m venv .venv
+source .venv/bin/activate
 
-O limite é um **alvo total por tribunal**. As consultas são percorridas em lotes de até 25 resultados por tribunal e duplicidades são eliminadas por **document_key**.
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+python -m playwright install chromium
+
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-por
+
+cp .env.example .env
+~~~
+
+O Tesseract e o Chromium só precisam estar instalados se você for utilizar OCR ou os coletores que dependem de navegador.
+
+## Windows / PowerShell
+
+~~~powershell
+git clone https://github.com/danihmorais/rag-licitacoes.git
+cd rag-licitacoes
+
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+python -m playwright install chromium
+
+Copy-Item .env.example .env
+~~~
+
+No Windows, o Tesseract precisa ser instalado separadamente.
+
+---
+
+# 5. Qdrant Server
+
+O RAG usa **Qdrant Server**.
 
 Configuração padrão:
-
-~~~text
-RAG_JURISPRUDENCIA_LIMIT=200
-RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL=150
-RAG_JURISPRUDENCIA_STRICT=1
-~~~
-
-Consulta única:
-
-~~~bash
-python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50
-~~~
-
-Coleta temática completa:
-
-~~~bash
-python -m jurisprudencia.batch --strict --limit 200 --min-records-per-tribunal 150
-~~~
-
-Com **--detail** e **--with-content**, o coletor tenta obter informações adicionais e o inteiro teor quando disponibilizados pelo tribunal.
-
-## Matérias jurídicas e de licitação
-
-O sincronizador também coleta conteúdo público secundário de seis fontes:
-
-### Fontes dedicadas a licitações
-
-- **Nova Lei de Licitação**
-- **Licitações Públicas**
-- **ConLicitação**
-- **Zênite**
-
-### Direito Administrativo e Direito Público
-
-- **Migalhas**
-- **ConJur**
-
-As quatro primeiras são consideradas fontes dedicadas a licitações e contratos.
-
-Migalhas e ConJur passam por filtro temático para restringir o corpus a Direito Administrativo e Direito Público, além dos assuntos diretamente relacionados a licitações e contratos.
-
-Política atual:
-
-~~~text
-publicações a partir de 01/01/2021
-
-Nova Lei de Licitação: até 250 matérias
-Licitações Públicas: até 250 matérias
-ConLicitação: até 250 matérias
-Zênite: até 250 matérias
-Migalhas: até 300 matérias
-ConJur: até 300 matérias
-~~~
-
-A coleta registra título, data, autor, seção, palavras-chave, URL e texto substantivo.
-
-Páginas de arquivo, categorias, paginação, navegação e assets estáticos não entram como matérias.
-
-**PDFs públicos podem ser candidatos válidos.** Quando um link web aponta para PDF, o sistema pode baixar o arquivo, extrair texto e metadados e armazená-lo como documento de origem web. Imagens, JavaScript, CSS e outros recursos estáticos continuam fora do corpus.
-
-As matérias web recebem:
-
-~~~text
-source_role=doutrina
-authority_level=4
-is_official=false
-status=orientativo
-~~~
-
-O projeto utiliza apenas conteúdo publicamente acessível e não tenta contornar login, paywall ou controles de acesso.
-
-Para validar somente as fontes web:
-
-~~~bash
-python scripts/sync_sources.py --web-only --strict
-~~~
-
-## Sincronização
-
-A sincronização baixa, descobre, valida e versiona o conteúdo jurídico.
-
-~~~bash
-python scripts/sync_sources.py
-~~~
-
-Modo estrito:
-
-~~~bash
-python scripts/sync_sources.py --strict
-~~~
-
-Verificação apenas das fontes obrigatórias:
-
-~~~bash
-python scripts/sync_sources.py --check --required-only
-~~~
-
-O sincronizador usa retry/backoff, validação de conteúdo e gravação atômica.
-
-O cache de fontes fica em:
-
-~~~text
-db/source_cache/
-~~~
-
-O catálogo versionado continua sendo **scripts/sources.py**; o cache é somente dado de execução.
-
-## PDFs locais
-
-PDFs fornecidos manualmente podem ser colocados em:
-
-~~~text
-pdfs/
-~~~
-
-Quando versionados no repositório, a identificação de versão utiliza o sufixo:
-
-~~~text
-.DDMMAAAA.pdf
-~~~
-
-Exemplo:
-
-~~~text
-.27082026.pdf
-~~~
-
-## Indexação
-
-Depois da sincronização:
-
-~~~bash
-python ingest.py
-~~~
-
-O pipeline de ingestão:
-
-1. sincroniza fontes configuradas;
-2. coleta jurisprudência quando habilitada;
-3. lê textos e PDFs;
-4. extrai e normaliza metadados;
-5. cria chunks estruturais;
-6. gera embeddings dense e sparse;
-7. indexa no Qdrant;
-8. atualiza o manifesto e o cache de ingestão;
-9. remove fontes obsoletas quando **RAG_PRUNE_STALE=1**.
-
-O RAG usa um **Qdrant Server** separado. Por padrão, conecta em `http://127.0.0.1:6333` e usa gRPC para as operações quando `RAG_QDRANT_PREFER_GRPC=1`.
-
-Configuração:
 
 ~~~text
 RAG_QDRANT_URL=http://127.0.0.1:6333
@@ -417,11 +169,765 @@ RAG_QDRANT_PREFER_GRPC=1
 RAG_QDRANT_TIMEOUT=30
 ~~~
 
-O diretório de dados do Qdrant é administrado pelo próprio servidor e não faz parte de `db/` do projeto.
+A coleção usada pelo projeto é:
 
-Antes de executar a ingestão ou as consultas, o Qdrant Server deve estar disponível no endereço configurado.
+~~~text
+licitacoes
+~~~
 
-## Consulta
+Antes de indexar ou consultar, o servidor deve estar disponível em:
+
+~~~text
+http://127.0.0.1:6333
+~~~
+
+Documentação oficial:
+
+https://qdrant.tech/documentation/
+
+### Teste rápido
+
+Com o Qdrant em execução:
+
+~~~bash
+python -c "from qdrant_client import QdrantClient; c=QdrantClient(url='http://127.0.0.1:6333'); print(c.get_collections())"
+~~~
+
+Se essa chamada não conectar, corrija primeiro o Qdrant ou RAG_QDRANT_URL.
+
+---
+
+# 6. Configuração
+
+A configuração completa está no arquivo:
+
+~~~text
+.env.example
+~~~
+
+Copie para:
+
+~~~text
+.env
+~~~
+
+Nunca versione chaves reais.
+
+## Configuração principal
+
+~~~text
+RAG_INDEX_VERSION=1
+
+RAG_QDRANT_URL=http://127.0.0.1:6333
+RAG_QDRANT_API_KEY=
+RAG_QDRANT_PREFER_GRPC=1
+RAG_QDRANT_TIMEOUT=30
+
+RAG_DENSE_MODEL=intfloat/multilingual-e5-large
+RAG_DENSE_DIM=1024
+RAG_DENSE_MAX_TOKENS=512
+
+RAG_SPARSE_MODEL=Qdrant/bm25
+
+RAG_RERANK_MODEL=BAAI/bge-reranker-base
+RAG_RERANK_SCORE_MODE=sigmoid
+RAG_RERANK_RELEVANCE_WEIGHT=0.68
+RAG_RERANK_AUTHORITY_WEIGHT=0.20
+RAG_RERANK_JURISDICTION_WEIGHT=0.12
+
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=150
+
+RAG_CANDIDATES_K=60
+RAG_FINAL_K=6
+RAG_CONTEXT_NEIGHBORS=1
+RAG_MAX_CONTEXT_CHARS=16000
+
+RAG_MIN_EVIDENCE_SCORE=0.20
+RAG_EVIDENCE_TOKEN_OVERLAP=0.25
+RAG_EVIDENCE_STEM_OVERLAP=0.20
+RAG_EVIDENCE_MIN_SHARED_STEMS=2
+~~~
+
+As demais variáveis estão documentadas no próprio .env.example.
+
+---
+
+# 7. GPU ou CPU
+
+## GPU — padrão
+
+O projeto usa:
+
+~~~text
+fastembed-gpu
+onnxruntime-gpu
+CUDAExecutionProvider
+~~~
+
+Configuração padrão:
+
+~~~text
+RAG_FASTEMBED_REQUIRE_CUDA=1
+RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
+~~~
+
+As bibliotecas CUDA necessárias também são pinadas no requirements.txt.
+
+## CPU
+
+CPU é suportada explicitamente.
+
+Use:
+
+~~~text
+RAG_FASTEMBED_REQUIRE_CUDA=0
+RAG_FASTEMBED_PROVIDERS=CPUExecutionProvider
+~~~
+
+Nesse modo o projeto não exige CUDA.
+
+---
+
+# 8. Primeira execução
+
+Depois de instalar as dependências e iniciar o Qdrant:
+
+### 8.1 Verificar sintaxe
+
+~~~bash
+python -m compileall -q .
+~~~
+
+### 8.2 Rodar testes
+
+~~~bash
+python -m pytest -q
+~~~
+
+### 8.3 Verificar fontes obrigatórias
+
+~~~bash
+python scripts/sync_sources.py --check --required-only
+~~~
+
+### 8.4 Construir / atualizar o índice
+
+~~~bash
+python ingest.py
+~~~
+
+A partir daí o índice está disponível para consulta.
+
+---
+
+# 9. O que o ingest.py faz
+
+O comando principal de ingestão executa, conforme a configuração:
+
+~~~text
+1. sincronização das fontes
+2. coleta de jurisprudência
+3. leitura dos documentos
+4. extração de texto / OCR
+5. normalização de metadados
+6. chunking jurídico
+7. embeddings dense
+8. representação sparse / BM25
+9. upsert no Qdrant
+10. atualização do manifesto
+11. atualização do cache de ingestão
+12. remoção de documentos obsoletos, quando habilitada
+~~~
+
+Para indexar sem sincronizar novamente:
+
+~~~bash
+python ingest.py --no-sync
+~~~
+
+Isso é útil quando o conteúdo já está disponível no cache e você quer reconstruir o índice sem disparar nova coleta.
+
+---
+
+# 10. Fontes e corpus
+
+O catálogo principal de fontes está em:
+
+~~~text
+scripts/sources.py
+~~~
+
+Fontes complementares:
+
+~~~text
+scripts/sources_additional.py
+~~~
+
+Cada fonte possui metadados jurídicos que permitem distinguir:
+
+~~~text
+jurisdição
+esfera
+órgão
+tipo documental
+papel da fonte
+nível de autoridade
+status
+vigência
+ramo do Direito
+~~~
+
+A política de autoridade é:
+
+| Nível | Tipo |
+|---:|---|
+| 1 | norma |
+| 2 | jurisprudência / controle |
+| 3 | orientação oficial |
+| 4 | doutrina / conteúdo secundário |
+
+A fonte primária não é tratada da mesma forma que conteúdo secundário.
+
+---
+
+# 11. Conteúdo web
+
+A coleta de conteúdo web está em:
+
+~~~text
+scripts/web_sources.py
+~~~
+
+As fontes configuradas atualmente são:
+
+| Fonte | Classificação |
+|---|---|
+| Nova Lei de Licitação | conteúdo secundário especializado |
+| Licitações Públicas | conteúdo secundário especializado |
+| ConLicitação | conteúdo secundário especializado |
+| Zênite | conteúdo secundário especializado |
+| Migalhas | Direito Administrativo / Direito Público |
+| ConJur | Direito Administrativo / Direito Público |
+
+Esse conteúdo não é tratado como legislação.
+
+Os documentos web recebem metadados equivalentes a:
+
+~~~text
+source_role=doutrina
+authority_level=4
+is_official=false
+status=orientativo
+~~~
+
+O coletor não tenta contornar:
+
+~~~text
+login
+paywall
+CAPTCHA
+controles de acesso
+~~~
+
+Páginas de arquivo, navegação, paginação e assets estáticos não entram no corpus como matérias.
+
+PDFs públicos apontados por essas fontes podem ser tratados como documentos de origem web.
+
+### Testar somente a coleta web
+
+~~~bash
+python scripts/sync_sources.py --web-only --strict
+~~~
+
+### Teste com quantidade reduzida
+
+~~~bash
+python scripts/sync_sources.py --web-only --max-web-documents 5
+~~~
+
+### Limitar páginas de descoberta
+
+~~~bash
+python scripts/sync_sources.py --web-only --max-web-discovery-pages 25
+~~~
+
+---
+
+# 12. Sincronização de fontes
+
+O sincronizador é:
+
+~~~text
+scripts/sync_sources.py
+~~~
+
+### Normal
+
+~~~bash
+python scripts/sync_sources.py
+~~~
+
+### Estrito
+
+~~~bash
+python scripts/sync_sources.py --strict
+~~~
+
+### Verificar fontes obrigatórias sem ingestão
+
+~~~bash
+python scripts/sync_sources.py --check --required-only
+~~~
+
+### Somente legislação
+
+~~~bash
+python scripts/sync_sources.py --legislation-only
+~~~
+
+### Somente web
+
+~~~bash
+python scripts/sync_sources.py --web-only
+~~~
+
+### Não seguir links de descoberta
+
+~~~bash
+python scripts/sync_sources.py --no-follow-links
+~~~
+
+O cache das fontes fica em:
+
+~~~text
+db/source_cache/
+~~~
+
+Falhas de rede ou de um portal não significam ausência da norma ou do conteúdo jurídico. O modo estrito existe para tornar uma coleta incompleta explícita.
+
+---
+
+# 13. Jurisprudência
+
+O pipeline de jurisprudência fica em:
+
+~~~text
+jurisprudencia/
+~~~
+
+Tribunais suportados:
+
+~~~text
+TCU
+TCESP
+STJ
+STF
+TJSP
+~~~
+
+Os registros são normalizados para um schema único e podem conter:
+
+~~~text
+tribunal
+tipo_documento
+numero_processo
+numero_sumula
+orgao_julgador
+relator
+data
+data_publicacao
+assunto
+ementa
+tese
+decisao
+inteiro_teor
+url_oficial
+tipo_decisao
+numero_decisao
+origem
+situacao
+retrieved_at
+sha256
+version_sha256
+~~~
+
+O identificador estável do registro permite deduplicação e controle de versão.
+
+---
+
+# 14. Coleta simples de jurisprudência
+
+Consulta única:
+
+~~~bash
+python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50
+~~~
+
+Com detalhamento:
+
+~~~bash
+python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50 --detail
+~~~
+
+Tentando obter também o inteiro teor:
+
+~~~bash
+python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50 --with-content
+~~~
+
+Selecionando tribunais:
+
+~~~bash
+python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tjsp --query "licitação" --limit 50
+~~~
+
+---
+
+# 15. Coleta temática de jurisprudência
+
+O lote usa consultas definidas em:
+
+~~~text
+jurisprudencia/queries.py
+~~~
+
+Entre os temas cobertos estão:
+
+~~~text
+Lei 14.133/2021
+contratação direta
+edital e habilitação
+ETP e Termo de Referência
+registro de preços
+sanções
+equilíbrio econômico-financeiro
+fiscalização contratual
+processo administrativo
+servidores públicos
+improbidade
+responsabilidade do Estado
+transparência
+LGPD
+Direito Financeiro
+meio ambiente
+saúde
+educação
+São Paulo
+~~~
+
+Execução padrão:
+
+~~~bash
+python -m jurisprudencia.batch --strict
+~~~
+
+Exemplo com limite e mínimo por tribunal:
+
+~~~bash
+python -m jurisprudencia.batch --limit 200 --min-records-per-tribunal 150 --strict
+~~~
+
+Consultas personalizadas podem ser repetidas com:
+
+~~~bash
+python -m jurisprudencia.batch --query "Lei 14.133 licitação contrato" --query "contratação direta dispensa inexigibilidade" --limit 100
+~~~
+
+### Súmulas
+
+Por padrão, a coleta em lote inclui as súmulas.
+
+Para coletar explicitamente:
+
+~~~bash
+python -m jurisprudencia.batch --with-sumulas
+~~~
+
+Para uma execução sem súmulas:
+
+~~~bash
+python -m jurisprudencia.batch --without-sumulas
+~~~
+
+Para executar a coleta de súmulas diretamente:
+
+~~~bash
+python -m jurisprudencia.sumulas --strict
+~~~
+
+As súmulas são registros próprios e não entram na contagem de acórdãos por tribunal.
+
+---
+
+# 16. PDFs locais
+
+PDFs locais ficam em:
+
+~~~text
+pdfs/
+~~~
+
+O pipeline tenta primeiro a extração nativa.
+
+Quando a página apresenta pouco texto ou baixa confiança heurística, o OCR pode ser acionado.
+
+O documento pode carregar informações como:
+
+~~~text
+text_origin
+extraction_confidence
+page_extraction
+~~~
+
+Isso permite diferenciar texto nativo de texto obtido por OCR.
+
+---
+
+# 17. OCR
+
+Configuração padrão:
+
+~~~text
+RAG_OCR_ENABLED=1
+RAG_OCR_REQUIRED=0
+RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE=80
+RAG_OCR_MIN_NATIVE_CONFIDENCE=0.60
+RAG_OCR_DPI=250
+RAG_OCR_LANGUAGE=por+eng
+~~~
+
+Para exigir que OCR necessário não falhe silenciosamente:
+
+~~~text
+RAG_OCR_REQUIRED=1
+~~~
+
+No Linux, instale o idioma português do Tesseract:
+
+~~~bash
+sudo apt-get install -y tesseract-ocr tesseract-ocr-por
+~~~
+
+---
+
+# 18. Chunking jurídico
+
+O chunking é **determinístico e estrutural**. Não depende de um LLM para decidir onde cortar os documentos.
+
+O componente principal é:
+
+~~~text
+chunking.py
+~~~
+
+A estrutura jurídica preservada inclui, quando reconhecida:
+
+~~~text
+norma
+capítulos
+seções
+artigos
+parágrafos
+incisos
+alíneas
+itens
+anexos
+~~~
+
+Cada unidade possui identidade estrutural e posição verificável na fonte.
+
+Metadados importantes:
+
+~~~text
+node_id
+parent_id
+kind
+ref
+source_start
+source_end
+source_text
+~~~
+
+Antes da indexação, o pipeline valida a relação entre o texto do chunk e a posição correspondente na fonte.
+
+---
+
+# 19. Embeddings e recuperação
+
+## Dense
+
+Modelo padrão:
+
+~~~text
+intfloat/multilingual-e5-large
+~~~
+
+Dimensão:
+
+~~~text
+1024
+~~~
+
+Limite:
+
+~~~text
+RAG_DENSE_MAX_TOKENS=512
+~~~
+
+O pipeline verifica o número de tokens antes de gerar o vetor, evitando truncamento silencioso.
+
+## Sparse / BM25
+
+Modelo:
+
+~~~text
+Qdrant/bm25
+~~~
+
+## Fusão e reranking
+
+O fluxo é:
+
+~~~text
+Dense + BM25
+      ↓
+     RRF
+      ↓
+  Reranker
+      ↓
+ordenação final
+~~~
+
+Reranker padrão:
+
+~~~text
+BAAI/bge-reranker-base
+~~~
+
+Pesos padrão:
+
+~~~text
+relevância      0.68
+autoridade      0.20
+jurisdição      0.12
+~~~
+
+Esses três pesos precisam somar 1.
+
+---
+
+# 20. Parâmetros principais de recuperação
+
+~~~text
+RAG_CANDIDATES_K=60
+RAG_FINAL_K=6
+RAG_CONTEXT_NEIGHBORS=1
+RAG_MAX_CONTEXT_CHARS=16000
+~~~
+
+Em termos práticos:
+
+- CANDIDATES_K = candidatos recuperados antes do estágio final;
+- FINAL_K = evidências finais mantidas;
+- CONTEXT_NEIGHBORS = chunks vizinhos que podem complementar a evidência;
+- MAX_CONTEXT_CHARS = limite do contexto enviado ao estágio de resposta.
+
+---
+
+# 21. Evidência e citações
+
+Cada resultado pode carregar, entre outros:
+
+~~~text
+fonte
+jurisdição
+esfera
+órgão
+tipo documental
+autoridade
+status
+vigência
+origem da extração
+qualidade da extração
+~~~
+
+As evidências são referenciadas no contexto por identificadores:
+
+~~~text
+[F1]
+[F2]
+[F3]
+...
+~~~
+
+A camada de evidência possui um gate próprio:
+
+~~~text
+RAG_MIN_EVIDENCE_SCORE=0.20
+RAG_EVIDENCE_TOKEN_OVERLAP=0.25
+RAG_EVIDENCE_STEM_OVERLAP=0.20
+RAG_EVIDENCE_MIN_SHARED_STEMS=2
+~~~
+
+O objetivo é evitar que um resultado apenas semanticamente parecido seja tratado como fundamento suficiente para uma afirmação jurídica.
+
+---
+
+# 22. Temporalidade e vigência
+
+O corpus preserva campos como:
+
+~~~text
+status
+revogado
+effective_from
+effective_to
+data_publicacao
+data_vigencia
+retrieved_at
+~~~
+
+Consultas com referência temporal podem transformar essa informação em filtros reais do Qdrant.
+
+Para uma data D, a regra é conceitualmente:
+
+~~~text
+effective_from <= D <= effective_to
+~~~
+
+Para intervalos, as janelas precisam se sobrepor.
+
+Consultas comparativas com mais de uma data não são reduzidas artificialmente a uma única data.
+
+---
+
+# 23. Regime jurídico
+
+O projeto diferencia:
+
+~~~text
+regime jurídico do documento
+versus
+regimes apenas citados no documento
+~~~
+
+Isso evita inferir que uma norma pertence automaticamente ao regime de uma lei que apenas aparece citada em seu texto.
+
+A distinção é particularmente importante quando se consultam regimes como:
+
+~~~text
+Lei 14.133/2021
+Lei 8.666/1993
+Lei 10.520/2002
+RDC
+~~~
+
+Normas históricas permanecem disponíveis com metadados próprios, sem serem apresentadas automaticamente como regime vigente.
+
+---
+
+# 24. Consulta
 
 Consulta interativa:
 
@@ -429,29 +935,27 @@ Consulta interativa:
 python query.py
 ~~~
 
-Consulta direta:
+Consulta única:
 
 ~~~bash
-python query.py --query "Quais são os requisitos do ETP?"
+python query.py --query "Quais são os requisitos do estudo técnico preliminar?"
 ~~~
-
-### Contexto jurídico-base auxiliar
-
-Toda consulta pode incluir, além das evidências relevantes para a pergunta, um trecho da Lei nº 14.133/2021 e um trecho do Manual de Licitações e Contratos do TCU como referências-base auxiliares. Essas fontes não são automaticamente aplicáveis à pergunta e não possuem prioridade sobre a evidência primária recuperada.
-
-O código preserva primeiro a evidência principal. As fontes-base são marcadas como contexto auxiliar e podem ser descartadas quando o orçamento de contexto estiver apertado. A política efetiva é coerente com o prompt: são referências auxiliares, não garantias absolutas de presença.
-
-A resposta não é considerada fundamentada apenas porque uma fonte-base existe no índice. O conteúdo precisa sustentar a afirmação feita e passar pelo evidence gate.
 
 Saída JSON:
 
 ~~~bash
-python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP" --json
+python query.py --query "Quais são os requisitos do ETP?" --json
 ~~~
 
-### Filtros
+O modo JSON exige uma consulta única com --query.
 
-São aceitos filtros como:
+---
+
+# 25. Filtros
+
+Os filtros são embutidos na própria consulta usando @.
+
+Exemplos:
 
 ~~~text
 @jurisdicao=estadual_sp
@@ -472,7 +976,7 @@ São aceitos filtros como:
 @regime_juridico=lei_14133
 ~~~
 
-Filtros numéricos também aceitam intervalos:
+Também há comparadores numéricos:
 
 ~~~text
 @ano>=2025
@@ -480,308 +984,230 @@ Filtros numéricos também aceitam intervalos:
 @authority_level<3
 ~~~
 
-Consultas que mencionam regimes históricos, como Lei nº 8.666/1993 ou Lei nº 10.520/2002, recebem tratamento específico para evitar mistura silenciosa entre regimes jurídicos.
-
-## Integração prevista com o LICITA.AI
-
-A integração futura deve ocorrer **no backend**, e não diretamente do navegador para o Qdrant ou para o servidor do LLM.
-
-Fluxo previsto:
-
-~~~text
-LICITA.AI (frontend)
-        │
-        ▼
-Backend do LICITA.AI
-        │
-        ├──► RAG: recuperação de evidências
-        │       ├── filtros jurídicos
-        │       ├── Lei 14.133/2021 + Manual TCU
-        │       ├── jurisprudência
-        │       └── contexto + fontes [F#]
-        │
-        ▼
-Prompt específico de DFD / ETP / TR
-        │
-        ▼
-Servidor LLM OpenAI-compatible
-        │
-        ▼
-Documento gerado
-~~~
-
-O contrato recomendado para o RAG é de **retrieval-first**: o serviço deve conseguir devolver o pacote de evidências sem chamar o LLM. Isso permite ao LICITA.AI reutilizar o mesmo contexto em DFD, ETP e TR, mantendo um único ponto de recuperação e evitando chamadas duplicadas ao modelo.
-
-Contrato HTTP previsto:
-
-~~~text
-POST /v1/retrieve
-
-{
-  "query": "...",
-  "filters": {
-    "jurisdicao": "estadual_sp"
-  },
-  "max_context_chars": 16000
-}
-
-→
-
-{
-  "query": "...",
-  "context": "...",
-  "sources": [
-    {
-      "citation": "[F1]",
-      "source": "...",
-      "title": "...",
-      "page": 1,
-      "authority_level": 1,
-      "mandatory_context": true
-    }
-  ]
-}
-~~~
-
-O endpoint de geração de resposta pode permanecer separado. O LICITA.AI deve enviar ao RAG apenas os dados necessários à recuperação e receber evidências estruturadas; o navegador nunca deve receber credenciais do Qdrant ou do servidor LLM.
-
-O código atual mantém a separação lógica entre recuperação e geração em `query.py`, permitindo transformar essa camada em serviço HTTP sem acoplar o índice ao pipeline de documentos do LICITA.AI. O RAG também não deve assumir que o backend se chama Unsloth: o contrato externo continua sendo OpenAI-compatible, permitindo trocar o servidor local sem modificar a camada de recuperação.
-
-## Qualidade de extração e OCR
-
-PDFs são primeiro processados por extração nativa. Páginas com pouco texto ou baixa confiança heurística podem ser reprocessadas por OCR. Cada página recebe `text_origin` (`native` ou `ocr`) e `extraction_confidence`; chunks que atravessam mais de uma página registram ainda `page_extraction` e podem ser classificados como `mixed`.
-
-A confiança do reranking incorpora essa qualidade de extração: uma evidência OCR de baixa confiança não recebe o mesmo peso de relevância de um trecho nativo de alta confiança. O valor é exposto também no contexto e na saída JSON.
-
-Configuração:
-
-~~~text
-RAG_OCR_ENABLED=1
-RAG_OCR_REQUIRED=0
-RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE=80
-RAG_OCR_MIN_NATIVE_CONFIDENCE=0.60
-RAG_OCR_DPI=250
-RAG_OCR_LANGUAGE=por+eng
-~~~
-
-`RAG_OCR_REQUIRED=1` transforma uma falha do OCR necessário em erro de ingestão, em vez de preservar silenciosamente a extração nativa degradada. Para uso local, o Tesseract deve estar instalado com o pacote de idioma correspondente, além das dependências Python do projeto.
-
-## Avaliação da recuperação
-
-O repositório agora inclui um harness de avaliação em `evaluation.py` e um conjunto versionado de perguntas em `evaluation/dataset.json`. O dataset contém dezenas de casos de recuperação, incluindo perguntas normais, premissas falsas, perguntas fora do corpus e conflitos entre jurisdição federal e São Paulo, além de casos específicos para o evidence gate.
-
-Para recuperação, cada caso registra as fontes esperadas, a jurisdição esperada e, quando pertinente, a data em que a regra deve ser avaliada. Quando mais de uma fonte é esperada, `recall@k` mede a fração de fontes relevantes recuperadas no top-k, em vez de reduzir o caso a acerto binário. Casos marcados como fora do corpus são avaliados separadamente quanto à rejeição da recuperação.
-
-As métricas de recuperação são `recall@k`, `nDCG@k`, MRR, acerto de jurisdição, acerto temporal e acurácia de rejeição nos casos que explicitamente exigem abstinência.
-
-O mesmo dataset contém uma suíte independente de casos do **evidence gate**, com respostas que devem ser aceitas e respostas adversariais que devem ser rejeitadas. O relatório mede:
-- `accuracy`: acerto global do gate;
-- `correct_rejection_rate`: proporção dos casos que deveriam ser rejeitados e foram efetivamente rejeitados;
-- `false_accept_rate`: proporção dos casos negativos aceitos indevidamente;
-- `correct_acceptance_rate`: proporção dos casos positivos aceitos corretamente;
-- `observed_rejection_rate`: proporção total de respostas rejeitadas.
-
-Com um índice já construído:
+Exemplo:
 
 ~~~bash
-python evaluation.py
-python evaluation.py --k 1 3 5 10
-python evaluation.py --gate-only
-python evaluation.py --k 1 3 5 10 --strict --min-recall 0.80 --min-ndcg 0.60 --min-gate-rejection 0.80
+python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP"
 ~~~
 
-A avaliação de recuperação reutiliza o pipeline real de dense + BM25 + RRF + reranker, sem chamar o LLM. A avaliação do evidence gate é determinística e offline: ela usa as respostas adversariais e as fontes sintéticas versionadas no próprio dataset, permitindo detectar regressões do gate sem depender da disponibilidade do índice.
+Filtros desconhecidos são rejeitados em vez de serem silenciosamente ignorados.
 
-Os limiares do modo `--strict` são fornecidos pelo chamador e não constituem uma nota universal do corpus. A finalidade é comparar sistematicamente alterações de embedding, reranker, pesos e regras do evidence gate contra o mesmo conjunto de referência.
+---
 
-## Temporalidade e vigência
+# 26. LLM
 
-O corpus preserva metadados como:
+O LLM gera a resposta final; ele não constrói o índice.
+
+Os provedores implementados são:
 
 ~~~text
-status
-revogado
-effective_from
-effective_to
-data_publicacao
-data_vigencia
-retrieved_at
+openai_compatible
+ollama
+gemini
 ~~~
 
-Consultas com intenção histórica agora são classificadas e, quando contêm uma referência temporal única, essa referência é transformada em filtro real no Qdrant. São reconhecidos pelo menos anos, mês/ano, datas exatas e limites relativos como antes de e depois de. A regra usada no índice é de sobreposição de vigência: effective_from <= data e effective_to >= data; para intervalos, a janela consultada e a janela documental precisam se sobrepor.
+O código também aceita openrouter como alias do adaptador OpenAI-compatible por compatibilidade.
 
-Os campos auxiliares effective_from_day e effective_to_day armazenam as datas como inteiros AAAAMMDD. Quando um limite não está informado no metadata, o projeto o representa como limite aberto (0 / 99991231) para permitir a consulta por intervalo de forma determinística.
-
-Consultas comparativas com mais de uma data não são reduzidas artificialmente a uma única data: a intenção comparativa é preservada e o filtro temporal fica sem data única, evitando recuperar um único regime como se representasse todas as fases da comparação.
-
-O histórico é protegido por hash e a ingestão preserva a versão anterior até que a nova versão seja indexada com sucesso.
-
-## LLM
-
-O gerador é independente da recuperação.
+## OpenAI-compatible
 
 Configuração padrão:
 
 ~~~text
 RAG_LLM_PROVIDER=openai_compatible
-RAG_OPENAI_BASE_URL=http://127.0.0.1:8888/v1
 RAG_LLM_MODEL=local
+RAG_OPENAI_BASE_URL=http://127.0.0.1:8888/v1
+RAG_OPENAI_API_KEY=
 ~~~
 
-O adaptador OpenAI-compatible usa **/v1/chat/completions**, permitindo conectar qualquer servidor compatível com essa interface.
+A chamada é feita para:
 
-O projeto também possui adapters adicionais de provedor. A troca do LLM não altera o índice vetorial.
+~~~text
+/v1/chat/completions
+~~~
 
-Configuração inicial:
+Qualquer servidor compatível com essa interface pode ser usado.
+
+## Ollama
+
+~~~text
+RAG_LLM_PROVIDER=ollama
+RAG_LLM_MODEL=nome-do-modelo
+OLLAMA_HOST=http://127.0.0.1:11434
+RAG_OLLAMA_NUM_CTX=16384
+~~~
+
+## Gemini
+
+~~~text
+RAG_LLM_PROVIDER=gemini
+RAG_LLM_MODEL=nome-do-modelo
+GEMINI_API_KEY=sua-chave
+~~~
+
+---
+
+# 27. O LLM é necessário para tudo?
+
+Não.
+
+| Operação | LLM de geração |
+|---|---|
+| sincronização | não |
+| coleta de jurisprudência | não |
+| indexação | não |
+| testes | não |
+| avaliação da recuperação | não |
+| geração da resposta textual | sim |
+
+Isso permite testar o RAG e medir a recuperação sem depender do servidor de geração.
+
+---
+
+# 28. Avaliação
+
+O harness está em:
+
+~~~text
+evaluation.py
+evaluation/dataset.json
+~~~
+
+### Avaliação padrão
 
 ~~~bash
-cp .env.example .env
+python evaluation.py
 ~~~
 
-Nunca versione chaves de API.
-
-## Runtime de embeddings
-
-O pacote padrão usa `fastembed-gpu` e mantém CUDA como caminho recomendado. Para manter esse comportamento previsível, o padrão é:
-
-~~~text
-RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
-RAG_FASTEMBED_REQUIRE_CUDA=1
-~~~
-
-O runtime verifica a presença de `CUDAExecutionProvider` quando `RAG_FASTEMBED_REQUIRE_CUDA=1`.
-
-Execução somente em CPU é suportada para CI, notebooks e máquinas sem GPU:
-
-~~~text
-RAG_FASTEMBED_REQUIRE_CUDA=0
-RAG_FASTEMBED_PROVIDERS=CPUExecutionProvider
-~~~
-
-Não use `CPUExecutionProvider` com `RAG_FASTEMBED_REQUIRE_CUDA=1`: nesse modo a configuração é rejeitada de propósito.
-
-## Instalação
-
-O CI utiliza **Python 3.12**.
+### Escolher k
 
 ~~~bash
-git clone https://github.com/danihmorais/rag-licitacoes.git
-cd rag-licitacoes
-
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-
-python -m playwright install chromium
-
-# Linux: requerido para OCR de PDFs escaneados
-sudo apt-get update
-sudo apt-get install -y tesseract-ocr tesseract-ocr-por
-
-cp .env.example .env
+python evaluation.py --k 1 3 5 10
 ~~~
 
-Execução inicial:
+### Somente evidence gate
 
 ~~~bash
-python scripts/sync_sources.py --strict
-python ingest.py
-python query.py
+python evaluation.py --gate-only
 ~~~
 
-Os coletores que dependem de automação de navegador precisam do Chromium instalado pelo Playwright.
+### Modo estrito
 
-## Configuração
+~~~bash
+python evaluation.py --k 1 3 5 10 --strict --min-recall 0.80 --min-ndcg 0.60 --min-gate-rejection 0.80
+~~~
 
-As variáveis disponíveis estão em **.env.example**.
-
-### Modelos
+As métricas de recuperação incluem:
 
 ~~~text
-RAG_DENSE_MODEL=intfloat/multilingual-e5-large
-RAG_DENSE_DIM=1024
-RAG_SPARSE_MODEL=Qdrant/bm25
-RAG_RERANK_MODEL=BAAI/bge-reranker-base
-RAG_RERANK_SCORE_MODE=sigmoid
+recall@k
+nDCG@k
+MRR
+acerto de jurisdição
+acerto temporal
 ~~~
 
-### Recuperação
+O evidence gate possui métricas próprias, incluindo:
 
 ~~~text
-RAG_CANDIDATES_K=60
-RAG_FINAL_K=6
-RAG_CONTEXT_NEIGHBORS=1
-RAG_MAX_CONTEXT_CHARS=16000
-RAG_MIN_EVIDENCE_SCORE=0.20
-RAG_EVIDENCE_TOKEN_OVERLAP=0.25
+accuracy
+correct_rejection_rate
+false_accept_rate
+correct_acceptance_rate
+observed_rejection_rate
 ~~~
 
-### Jurisprudência
+A avaliação de recuperação reutiliza o pipeline real de dense + BM25 + RRF + reranker e não chama o LLM.
+
+---
+
+# 29. Cache e manifesto
+
+O estado local fica principalmente em:
 
 ~~~text
-RAG_SYNC_JURISPRUDENCIA=1
-RAG_JURISPRUDENCIA_QUERY=
-RAG_JURISPRUDENCIA_QUERIES=...
-RAG_JURISPRUDENCIA_LIMIT=200
-RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL=150
-RAG_JURISPRUDENCIA_DETAIL=0
-RAG_JURISPRUDENCIA_WITH_CONTENT=0
-RAG_JURISPRUDENCIA_STRICT=1
+db/
+├── source_cache/
+├── ingest_cache.json
+├── index_manifest.json
+└── ...
 ~~~
 
-### Indexação e Qdrant
+O armazenamento do Qdrant é administrado pelo próprio Qdrant Server e não deve ser confundido com o cache do projeto.
 
-O embedding denso usa limite explícito de **512 tokens**. Antes de gerar o vetor, o pipeline conta os tokens sem truncagem e interrompe a indexação ou consulta quando o limite é excedido. Isso evita que um texto seja cortado silenciosamente pelo tokenizer.
+O manifesto registra os parâmetros necessários para verificar a compatibilidade do índice.
 
-A coleção usa distância **Cosine** para o vetor denso. O Qdrant normaliza automaticamente vetores em coleções Cosine, portanto não há uma normalização manual redundante no código.
+A versão atual é:
 
-Os campos utilizados pelos filtros do retrieval recebem índices de payload tipados (`keyword`, `integer` ou `bool`) na criação da coleção. O carregamento de pontos também é particionado em lotes pequenos para evitar upserts excessivamente grandes.
+~~~text
+RAG_INDEX_VERSION=1
+~~~
+
+Mudanças em itens como modelo de embedding, dimensão, chunking ou reranker podem exigir reindexação.
+
+O cache também acompanha hashes e fingerprints de extração/metadados para detectar documentos que precisam ser processados novamente.
+
+---
+
+# 30. Remoção de documentos obsoletos
 
 Configuração padrão:
 
 ~~~text
-RAG_DENSE_MAX_TOKENS=512
-RAG_QDRANT_UPSERT_BATCH_SIZE=100
-RAG_INDEX_VERSION=1
-~~~
-
-### Sincronização
-
-~~~text
-RAG_SYNC_SOURCES=1
 RAG_PRUNE_STALE=1
 ~~~
 
-### OCR
+Quando habilitada, fontes que deixaram de fazer parte do corpus atual podem ser removidas do índice após a atualização bem-sucedida.
 
-~~~text
-RAG_OCR_ENABLED=1
-RAG_OCR_REQUIRED=0
-RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE=80
-RAG_OCR_MIN_NATIVE_CONFIDENCE=0.60
-RAG_OCR_DPI=250
-RAG_OCR_LANGUAGE=por+eng
+---
+
+# 31. Testes
+
+Verificação de sintaxe:
+
+~~~bash
+python -m compileall -q .
 ~~~
 
-### Reranking
+Suíte principal:
 
-~~~text
-RAG_RERANK_SCORE_MODE=sigmoid
-RAG_RERANK_RELEVANCE_WEIGHT=0.68
-RAG_RERANK_AUTHORITY_WEIGHT=0.20
-RAG_RERANK_JURISDICTION_WEIGHT=0.12
+~~~bash
+python -m pytest -q
 ~~~
 
-## Estrutura
+Verificação das fontes obrigatórias:
+
+~~~bash
+python scripts/sync_sources.py --check --required-only
+~~~
+
+---
+
+# 32. GitHub Actions
+
+O repositório possui:
+
+| Workflow | Função |
+|---|---|
+| ci.yml | testes determinísticos, sintaxe, OCR e evidence gate offline |
+| sync-sources.yml | health-check das fontes jurídicas |
+| jurisprudencia-health.yml | health-check de jurisprudência e súmulas |
+| legal-ingestion.yml | smoke test do pipeline de ingestão |
+
+A validação do pipeline de ingestão usa Qdrant Server no CI.
+
+---
+
+# 33. Estrutura do projeto
 
 ~~~text
 .
+├── README.md
 ├── config.py
 ├── ingest.py
 ├── query.py
 ├── metadata.py
 ├── chunking.py
+├── embedding_utils.py
 ├── index_manifest.py
 ├── evaluation.py
 │
@@ -789,7 +1215,8 @@ RAG_RERANK_JURISDICTION_WEIGHT=0.12
 │   ├── batch.py
 │   ├── collector.py
 │   ├── queries.py
-│   └── schema.py
+│   ├── schema.py
+│   └── sumulas.py
 │
 ├── llm/
 │   ├── base.py
@@ -800,35 +1227,160 @@ RAG_RERANK_JURISDICTION_WEIGHT=0.12
 │
 ├── scripts/
 │   ├── sources.py
+│   ├── sources_additional.py
 │   ├── sync_sources.py
 │   └── web_sources.py
 │
-├── tests/
 ├── evaluation/
 │   └── dataset.json
+│
+├── tests/
+│   └── ...
+│
 ├── pdfs/
+│
 └── db/
-    ├── qdrant/
-    ├── source_cache/
-    ├── ingest_cache.json
-    └── index_manifest.json
+    └── ...
 ~~~
 
-Os diretórios de cache e o índice local são dados de execução e não substituem o código ou o catálogo versionado.
+---
 
-## Integridade do índice
+# 34. Arquivos principais
 
-O manifesto registra parâmetros necessários para verificar compatibilidade do índice.
+| Arquivo | Responsabilidade |
+|---|---|
+| config.py | configuração e validações |
+| ingest.py | ingestão e indexação |
+| query.py | consulta e geração da resposta |
+| chunking.py | parsing e chunking jurídico |
+| metadata.py | normalização de metadados |
+| embedding_utils.py | utilidades de embeddings |
+| index_manifest.py | manifesto e compatibilidade do índice |
+| evaluation.py | avaliação |
+| scripts/sources.py | catálogo de fontes normativas |
+| scripts/web_sources.py | coleta web |
+| scripts/sync_sources.py | sincronização |
+| jurisprudencia/collector.py | coleta de jurisprudência |
+| jurisprudencia/batch.py | coleta temática |
+| jurisprudencia/sumulas.py | coleta de súmulas |
+| llm/ | adapters de LLM |
 
-Alterações em itens como modelo de embedding, dimensão, chunking ou reranker podem exigir reindexação.
+---
 
-O cache de ingestão registra hash do documento, fingerprint de metadados/OCR e quantidade de chunks por documento. Assim, alterar a lógica de extração de metadados força a reindexação dos documentos afetados mesmo quando o PDF não mudou.
+# 35. Integração com aplicações externas
 
-Quando **RAG_PRUNE_STALE=1**, documentos que deixaram de pertencer ao corpus atual são removidos depois da atualização bem-sucedida.
+A separação entre recuperação e geração permite um desenho retrieval-first:
 
-## Testes e GitHub Actions
+~~~text
+aplicação
+   │
+   ▼
+RAG
+   │
+   ├─ filtros
+   ├─ recuperação
+   ├─ autoridade
+   ├─ jurisdição
+   ├─ temporalidade
+   └─ evidências [F#]
+   │
+   ▼
+LLM
+   │
+   ▼
+resposta
+~~~
 
-Verificações locais:
+Isso permite que uma aplicação externa reutilize o mesmo pacote de evidências em diferentes etapas de geração.
+
+Credenciais do Qdrant e do LLM devem permanecer no backend, nunca no navegador.
+
+---
+
+# 36. Diagnóstico rápido
+
+## Qdrant não conecta
+
+Confirme:
+
+~~~text
+RAG_QDRANT_URL
+~~~
+
+e verifique se o servidor responde na porta 6333.
+
+## Erro de CUDA
+
+Confirme:
+
+~~~text
+RAG_FASTEMBED_REQUIRE_CUDA=1
+RAG_FASTEMBED_PROVIDERS=CUDAExecutionProvider
+~~~
+
+ou mude explicitamente para CPU:
+
+~~~text
+RAG_FASTEMBED_REQUIRE_CUDA=0
+RAG_FASTEMBED_PROVIDERS=CPUExecutionProvider
+~~~
+
+## OCR não funciona
+
+Confirme:
+
+~~~bash
+tesseract --version
+~~~
+
+e que o idioma português está instalado.
+
+## Coleta web falha
+
+Pode ser:
+
+~~~text
+timeout
+erro de rede
+mudança no HTML
+WAF
+CAPTCHA
+indisponibilidade temporária
+~~~
+
+Uma falha de coleta não deve ser interpretada como inexistência do conteúdo jurídico.
+
+## Jurisprudência não retorna resultados
+
+Verifique:
+
+~~~text
+tribunal
+consulta
+limite
+disponibilidade do portal
+~~~
+
+Ausência de resultado também não prova inexistência do entendimento.
+
+---
+
+# 37. Comandos essenciais
+
+### Instalação
+
+~~~bash
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+~~~
+
+### Configuração
+
+~~~text
+.env.example → .env
+~~~
+
+### Verificação
 
 ~~~bash
 python -m compileall -q .
@@ -836,37 +1388,98 @@ python -m pytest -q
 python scripts/sync_sources.py --check --required-only
 ~~~
 
-Avaliação de recuperação, com índice já indexado:
+### Indexação
 
 ~~~bash
-python evaluation.py --k 1 3 5
+python ingest.py
 ~~~
 
-Os workflows são separados por responsabilidade:
+### Indexação sem sincronização
 
-- **ci.yml**: testes determinísticos, verificação de sintaxe e presença do runtime OCR;
-- **sync-sources.yml**: health-check das fontes jurídicas;
-- **jurisprudencia-health.yml**: health-check dos coletores de jurisprudência e dos catálogos oficiais de súmulas;
-- **legal-ingestion.yml**: execução do pipeline de ingestão.
+~~~bash
+python ingest.py --no-sync
+~~~
 
-O CI cobre regressões de chunking, filtros, autoridade e jurisdição, catálogo de fontes, temporalidade, cache, versionamento, sincronização, adaptadores de jurisprudência, recuperação e integração OpenAI-compatible.
+### Consulta
 
-A suíte principal não depende de sites externos para passar. O harness de avaliação é separado dos testes unitários: ele usa o índice local e dados de referência para medir a qualidade de recuperação antes/depois de alterações no pipeline.
+~~~bash
+python query.py
+~~~
 
-## Limitações
+### Consulta única
 
-Falhas de rede, CAPTCHA, WAF, mudanças estruturais dos portais ou retirada de documentos não significam ausência de jurisprudência ou legislação. O sistema deve registrar a falha de coleta explicitamente.
+~~~bash
+python query.py --query "pergunta"
+~~~
 
-Da mesma forma, ausência de resultado na recuperação não deve ser interpretada como inexistência da norma, decisão ou entendimento procurado.
+### JSON
 
-Conteúdo web, pareceres, manuais e decisões judiciais também não substituem a conferência da fonte primária aplicável.
+~~~bash
+python query.py --query "pergunta" --json
+~~~
 
-Para uso jurídico real, a resposta deve ser conferida na fonte oficial correspondente, especialmente quando vigência, redação consolidada ou jurisprudência recente forem determinantes.
+### Web
 
-## Finalidade
+~~~bash
+python scripts/sync_sources.py --web-only --strict
+~~~
 
-Este repositório é um projeto técnico de recuperação e indexação de informação jurídica.
+### Jurisprudência
 
-O uso de cada fonte deve respeitar seus termos, direitos autorais e eventuais restrições de acesso. O projeto prioriza fontes oficiais e conteúdo público.
+~~~bash
+python -m jurisprudencia.batch --strict
+~~~
+
+### Súmulas
+
+~~~bash
+python -m jurisprudencia.sumulas --strict
+~~~
+
+### Avaliação
+
+~~~bash
+python evaluation.py
+~~~
+
+---
+
+# 38. Limitações e responsabilidade jurídica
+
+O sistema depende de fontes externas e pode sofrer com:
+
+~~~text
+mudanças de sites
+indisponibilidade temporária
+bloqueios
+mudanças de estrutura
+documentos removidos
+falhas de extração
+OCR imperfeito
+mudanças legislativas
+atualização de jurisprudência
+~~~
+
+Portanto:
+
+> **ausência de resultado não significa ausência de norma, decisão ou entendimento.**
+
+E:
+
+> **um resultado recuperado não significa, sozinho, que a regra seja aplicável ao caso concreto.**
+
+Para uso jurídico real, confirme a fonte primária, a redação vigente, a competência e a jurisprudência aplicável.
+
+---
+
+## Uso e fontes
+
+O projeto prioriza fontes oficiais e conteúdo publicamente acessível.
+
+O uso dos dados coletados deve respeitar os termos de uso, direitos autorais e eventuais restrições de cada fonte.
+
+Este repositório é uma ferramenta técnica de recuperação de informação jurídica e não constitui parecer jurídico.
+
+---
 
 **Repositório:** https://github.com/danihmorais/rag-licitacoes
