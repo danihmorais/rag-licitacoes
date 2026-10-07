@@ -1137,7 +1137,7 @@ class STJAdapter(JurisprudenciaAdapter):
     def _extract_scon_process(text: str) -> str | None:
         lines = [clean_text(line) for line in str(text or "").splitlines() if clean_text(line)]
         for index, line in enumerate(lines):
-            match = re.match(r"(?i)^processo\\s*[:\\-]?\\s*(.+)$", line)
+            match = re.match(r"(?i)^processo\s*[:\-]?\s*(.+)$", line)
             if match:
                 candidate = clean_text(match.group(1))
                 if candidate and candidate.casefold() != "processo":
@@ -1145,15 +1145,14 @@ class STJAdapter(JurisprudenciaAdapter):
                 if index + 1 < len(lines) and lines[index + 1]:
                     return clean_text(lines[index + 1])
         patterns = (
-            r"(?i)\\b(?:REsp|AREsp|AgInt(?:\\s+no)?\\s+(?:REsp|AREsp)|AgRg(?:\\s+no)?\\s+(?:REsp|AREsp)|RMS|RHC|HC|MS|CC|APn)\\s+[0-9][0-9.]*?(?:\\s*/\\s*[A-Z]{2})?\\b",
-            r"\\b[0-9]{4,7}/[0-9]{7}-[0-9]\\b",
+            r"(?i)\b(?:REsp|AREsp|AgInt(?:\s+no)?\s+(?:REsp|AREsp)|AgRg(?:\s+no)?\s+(?:REsp|AREsp)|RMS|RHC|HC|MS|CC|APn)\s+[0-9][0-9.]*?(?:\s*/\s*[A-Z]{2})?\b",
+            r"\b[0-9]{4,7}/[0-9]{7}-[0-9]\b",
         )
         for pattern in patterns:
             match = re.search(pattern, str(text or ""))
             if match:
                 return clean_text(match.group(0))
         return None
-
     @staticmethod
     def _scon_records(raw_html: bytes, base_url: str) -> list[dict[str, Any]]:
         encoding = 'iso-8859-1'
