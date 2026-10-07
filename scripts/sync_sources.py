@@ -395,6 +395,27 @@ def sync_one(session, source, check=False, follow_links=True):
     return False, f'FAIL {source["id"]}: {last}', set()
 
 
+def legislation_smoke_sources(sources):
+    """Seleciona uma fonte normativa por domínio para o smoke-test live."""
+    selected = []
+    seen_domains = set()
+    for source in sources:
+        if source.get("source_role") != "norma" or source.get("index_only"):
+            continue
+        urls = _source_urls(source)
+        if not urls:
+            continue
+        host = urlparse(urls[0]).hostname
+        if not host:
+            continue
+        domain = re.sub(r"^www\\d*\\.", "", host.casefold())
+        if domain in seen_domains:
+            continue
+        seen_domains.add(domain)
+        selected.append(source)
+    return selected
+
+
 def strict_failure_ids(sources, failures):
     failed = set(failures)
     return [
@@ -429,6 +450,11 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--required-only', action='store_true')
     parser.add_argument('--legislation-only', action='store_true')
+    parser.add_argument(
+        '--one-per-domain',
+        action='store_true',
+        help='No modo de teste, mantém apenas uma fonte normativa por domínio primário.',
+    )
     parser.add_argument('--strict', action='store_true')
     parser.add_argument('--no-follow-links', action='store_true')
     parser.add_argument('--web-only', action='store_true')
@@ -461,6 +487,9 @@ def main():
             or s.get('source_type') == 'web_articles'
         )
     ]
+    if args.one_per_domain:
+        sources = legislation_smoke_sources(sources)
+
     sources = apply_runtime_limits(
         sources,
         max_web_documents=args.max_web_documents,
