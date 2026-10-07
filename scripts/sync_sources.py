@@ -408,7 +408,7 @@ def legislation_smoke_sources(sources):
         host = urlparse(urls[0]).hostname
         if not host:
             continue
-        domain = re.sub(r"^www\\d*\\.", "", host.casefold())
+        domain = re.sub(r"^www\d*\.", "", host.casefold())
         if domain in seen_domains:
             continue
         seen_domains.add(domain)
