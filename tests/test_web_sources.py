@@ -71,19 +71,7 @@ def test_web_topic_filter_rejects_unrelated_migalhas_content():
     })
 
 
-def test_web_article_url_policy_avoids_archive_and_accepts_article_paths():
-    conlic = next(item for item in SOURCES if item["id"] == "web-conlicitacao")
-    assert _is_web_article_url(conlic, "https://conlicitacao.com.br/blog/criterios-de-julgamento/")
-    assert _is_web_article_url(
-        conlic,
-        "https://conlicitacao.com.br/inteligencia-artificial-para-licitacoes/",
-    )
-    assert _is_web_article_url(
-        conlic,
-        "https://conlicitacao.com.br/lei-14133-atualizada/",
-    )
-    assert not _is_web_article_url(conlic, "https://conlicitacao.com.br/blog/page/4/")
-
+def test_web_article_url_policy_accepts_article_paths():
     mig = next(item for item in SOURCES if item["id"] == "web-migalhas")
     assert _is_web_article_url(mig, "https://www.migalhas.com.br/depeso/123456")
     assert not _is_web_article_url(mig, "https://www.migalhas.com.br/tour_juridico")
@@ -110,7 +98,6 @@ def test_web_sources_have_date_floor_and_bounded_corpus():
     assert {item["id"] for item in web} == {
         "web-nova-lei-licitacao",
         "web-licitacoes-publicas-blog",
-        "web-conlicitacao",
         "web-zenite",
         "web-migalhas",
         "web-conjur",
@@ -210,10 +197,6 @@ def test_extract_web_pdf_reads_text_metadata_and_date():
 
 
 
-def test_conlicitacao_uses_redundant_discovery_seeds_and_longer_timeout():
-    source = next(item for item in SOURCES if item["id"] == "web-conlicitacao")
-    assert len(source["urls"]) >= 3
-    assert source["http_timeout"] == (10, 60)
 
 
 def test_wget_fallback_retries_transient_http_errors(monkeypatch):
