@@ -623,6 +623,20 @@ def embedding_kwargs():
     return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
+def validate_model_cuda(model, *, label):
+    """Impede que o FastEmbed silenciosamente caia para CPU no modelo denso."""
+    onnx_model = getattr(model, 'model', None)
+    session = getattr(onnx_model, 'model', None)
+    if session is None:
+        raise RuntimeError(f'{label}: sessão ONNX do FastEmbed não foi criada.')
+    providers = session.get_providers()
+    if 'CUDAExecutionProvider' not in providers:
+        raise RuntimeError(
+            f'{label}: CUDAExecutionProvider não está ativo na sessão ONNX. '
+            f'Provedores ativos: {", ".join(providers) or "nenhum"}.'
+        )
+
+
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
         client.create_collection(
@@ -876,7 +890,8 @@ def main():
     revocations = []
 
     print('Carregando modelos de embeddings/reranker na GPU.')
-    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
+    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, cuda=True)
+    validate_model_cuda(dense, label='Embedding denso')
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
