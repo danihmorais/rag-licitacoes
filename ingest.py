@@ -890,11 +890,7 @@ def main():
     revocations = []
 
     print('Carregando modelos de embeddings/reranker na GPU.')
-    dense = TextEmbedding(
-        model_name=config.DENSE_MODEL,
-        max_length=config.DENSE_MAX_TOKENS,
-        cuda=True,
-    )
+    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, cuda=True)
     validate_model_cuda(dense, label='Embedding denso')
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
