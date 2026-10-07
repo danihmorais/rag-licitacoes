@@ -41,6 +41,29 @@ def test_cache_round_trip_and_legacy_invalidation(tmp_path: Path, monkeypatch):
     assert ingest.read_cache() == {}
 
 
+
+def test_validate_model_cuda_rejects_cpu_session():
+    class Session:
+        def get_providers(self):
+            return ["CPUExecutionProvider"]
+
+    class Model:
+        model = Session()
+
+    with pytest.raises(RuntimeError, match="CUDAExecutionProvider"):
+        ingest.validate_model_cuda(Model(), label="Embedding denso")
+
+
+def test_validate_model_cuda_accepts_cuda_session():
+    class Session:
+        def get_providers(self):
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    class Model:
+        model = Session()
+
+    ingest.validate_model_cuda(Model(), label="Embedding denso")
+
 def test_validate_dense_vectors_accepts_expected_shape():
     ingest.validate_dense_vectors([[1.0] + [0.0] * (ingest.config.DENSE_DIM - 1)], 1)
 
