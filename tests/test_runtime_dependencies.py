@@ -61,11 +61,15 @@ def test_cuda_preload_uses_installed_distribution_locations(monkeypatch, tmp_pat
             return object()
 
     class FakeMetadata:
-        PackageNotFoundError = RuntimeError
+        class PackageNotFoundError(Exception):
+            pass
 
         @staticmethod
         def distribution(name):
-            return packages[name]
+            try:
+                return packages[name]
+            except KeyError as exc:
+                raise FakeMetadata.PackageNotFoundError(name) from exc
 
     monkeypatch.setattr(config.os, 'name', 'posix', raising=False)
     monkeypatch.setitem(__import__('sys').modules, 'ctypes', FakeCtypes)
