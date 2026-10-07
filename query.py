@@ -540,7 +540,8 @@ def build_retrieval_plan(query, filters=None):
         'temporal_context': temporal_context,
         'temporal_context_dict': temporal_context.to_dict(),
         'base_context_sources': list(BASE_CONTEXT_SOURCE_IDS),
-        'mandatory_sources': [],
+        # Campo legado: lista as mesmas fontes-base, sem implicar obrigatoriedade.
+        'mandatory_sources': list(BASE_CONTEXT_SOURCE_IDS),
         'filtered_for_current_only': not temporal_context.is_historicalish,
     }
 
@@ -1071,7 +1072,7 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     if not points:
         # O contexto-base auxiliar jamais pode substituir a evidência principal.
         return query, [], []
-    base_context = auxiliary_context_points(client, dense, query, dense_vector=dense_vector)
+    base_context = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
     context_points = expand_context(client, points)
     primary_ids = {point.id for point in context_points}
     for point in base_context:
