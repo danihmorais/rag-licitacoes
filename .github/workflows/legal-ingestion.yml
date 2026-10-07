@@ -98,7 +98,7 @@ jobs:
 
       - name: Sincronizar todas as legislações explícitas do catálogo
         run: |
-          python scripts/sync_sources.py --legislation-only --strict --no-follow-links
+          python scripts/sync_sources.py --legislation-only --one-per-domain --strict --no-follow-links
 
       - name: Coletar exatamente 5 matérias por website
         run: |
