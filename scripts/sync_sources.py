@@ -123,6 +123,10 @@ def _fetch_with_wget(url, timeout=None):
     if timeout is None:
         timeout = 180 if is_pdf else 20
     process_timeout = 240 if is_pdf else max(50, int(timeout * 2 + 10))
+    # Wget does not retry HTTP error responses by default. This matters for
+    # intermittent 5xx responses from the origin/Cloudflare during web discovery.
+    # Explicitly classify transient HTTP statuses as retryable so the fallback
+    # has retry semantics comparable to the requests/urllib3 path.
     result = subprocess.run(
         [
             'wget',
@@ -130,7 +134,9 @@ def _fetch_with_wget(url, timeout=None):
             '--server-response',
             '--max-redirect=10',
             f'--timeout={timeout}',
-            '--tries=2',
+            '--tries=3',
+            '--retry-on-http-error=408,429,500,502,503,504',
+            '--waitretry=2',
             '--user-agent=Mozilla/5.0',
             '--header=Accept: text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
             '--output-document=-',
