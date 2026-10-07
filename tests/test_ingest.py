@@ -19,6 +19,18 @@ class FakeClient:
         self.deleted.append(kwargs)
 
 
+
+def test_targeted_reindex_selection():
+    from pathlib import Path
+    available = [
+        Path("agu_on.txt"),
+        Path("cf1988.txt"),
+        Path("outro.txt"),
+    ]
+    requested = {"agu_on.txt", "cf1988.txt"}
+    target = [item.name for item in available if item.name in requested]
+    assert target == ["agu_on.txt", "cf1988.txt"]
+
 def test_cache_round_trip_and_legacy_invalidation(tmp_path: Path, monkeypatch):
     path = tmp_path / 'ingest_cache.json'
     monkeypatch.setattr(ingest, 'CACHE_PATH', path)

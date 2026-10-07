@@ -830,6 +830,14 @@ def main():
         action='store_true',
         help='não executa a coleta; indexa somente o conteúdo já presente no cache/fontes locais.',
     )
+    parser.add_argument(
+        '--only',
+        action='append',
+        dest='only_documents',
+        default=[],
+        metavar='ARQUIVO',
+        help='reprocessa somente os arquivos informados; pode ser repetido. Os demais documentos permanecem no índice.',
+    )
     args = parser.parse_args()
 
     config.ensure_directories()
@@ -837,6 +845,18 @@ def main():
         sync_sources()
         sync_jurisprudencia()
     files = load_documents()
+    if args.only_documents:
+        requested = {Path(value).name for value in args.only_documents if str(value).strip()}
+        available = {document.name for document in files}
+        missing = sorted(requested - available)
+        if missing:
+            raise RuntimeError(
+                'Arquivos informados em --only não encontrados no corpus local: '
+                + ', '.join(missing)
+            )
+        target_files = [document for document in files if document.name in requested]
+    else:
+        target_files = files
     client = config.create_qdrant_client()
     manifest = read_manifest()
     if manifest is not None:
@@ -864,7 +884,7 @@ def main():
     document_manifest = {}
     revocations = []
 
-    for document in files:
+    for document in target_files:
         digest = file_hash(document)
         metadata_digest = metadata_fingerprint(document)
         document_meta = extract_metadata('', document)
