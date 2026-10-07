@@ -42,7 +42,7 @@ QDRANT_PAYLOAD_INDEXES = {
     'document_regime': 'keyword', 'source_identity': 'keyword', 'cited_regimes': 'keyword',
     'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
     'revogado': 'bool', 'chunking_method': 'keyword',
-    'effective_from_day': 'integer', 'effective_to_day': 'integer',
+    'effective_from_day': 'integer', 'effective_to_day': 'integer', 'effective_range_status': 'keyword',
     'amendment_operations': 'keyword',
 }
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
