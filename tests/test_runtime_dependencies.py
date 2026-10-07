@@ -42,13 +42,19 @@ def test_cuda_preload_uses_installed_distribution_locations(monkeypatch, tmp_pat
             return self.root / relative
 
     packages = {}
-    for name, relative in (
-        ('nvidia-cublas-cu12', 'nvidia/cublas/lib/libcublasLt.so.12'),
-        ('nvidia-cuda-runtime-cu12', 'nvidia/cuda_runtime/lib/libcudart.so.12'),
+    for name, relatives in (
+        ('nvidia-cublas-cu12', (
+            'nvidia/cublas/lib/libcublasLt.so.12',
+            'nvidia/cublas/lib/libcublas.so.12',
+        )),
+        ('nvidia-cuda-runtime-cu12', (
+            'nvidia/cuda_runtime/lib/libcudart.so.12',
+        )),
     ):
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+        for relative in relatives:
+            path = tmp_path / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
         packages[name] = FakePackage(tmp_path)
 
     loaded = []
@@ -61,11 +67,15 @@ def test_cuda_preload_uses_installed_distribution_locations(monkeypatch, tmp_pat
             return object()
 
     class FakeMetadata:
-        PackageNotFoundError = RuntimeError
+        class PackageNotFoundError(Exception):
+            pass
 
         @staticmethod
         def distribution(name):
-            return packages[name]
+            try:
+                return packages[name]
+            except KeyError as exc:
+                raise FakeMetadata.PackageNotFoundError(name) from exc
 
     monkeypatch.setattr(config.os, 'name', 'posix', raising=False)
     monkeypatch.setitem(__import__('sys').modules, 'ctypes', FakeCtypes)
