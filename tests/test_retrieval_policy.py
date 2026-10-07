@@ -104,24 +104,20 @@ def test_mandatory_context_requires_law_and_tcu_manual():
     assert all(item.payload["_mandatory_context"] is True for item in result)
 
 
-def test_mandatory_context_fails_closed_when_a_required_source_is_missing():
+def test_base_context_is_optional_when_a_source_is_missing():
     available = {"lei14133": point("lei14133", 0.9, 1, "federal")}
-    import pytest
-    with pytest.raises(RuntimeError, match="Manual de Licitações e Contratos do TCU"):
-        mandatory_context_points(FakeClient(available), FakeDense(), "pergunta")
+    result = mandatory_context_points(FakeClient(available), FakeDense(), "pergunta")
+    assert [item.payload["source"] for item in result] == ["lei14133"]
+    assert result[0].payload["_context_only"] is True
 
 
-def test_retrieve_context_places_mandatory_sources_in_context(monkeypatch):
+def test_retrieve_context_does_not_answer_from_base_context_without_primary_evidence(monkeypatch):
     import query
 
     available = {
         "lei14133": point("lei14133", 0.9, 1, "federal"),
         "tcu-manual-licitacoes": point("tcu-manual-licitacoes", 0.8, 3, "federal"),
     }
-    available["lei14133"].payload["title"] = "Lei nº 14.133/2021"
-    available["lei14133"].payload["text"] = "A Lei nº 14.133/2021 estabelece normas gerais de licitação e contratação."
-    available["tcu-manual-licitacoes"].payload["title"] = "Manual de Licitações e Contratos do TCU"
-    available["tcu-manual-licitacoes"].payload["text"] = "Manual de Licitações e Contratos do TCU com orientações oficiais."
 
     monkeypatch.setattr(query, "hybrid", lambda *args, **kwargs: [])
     monkeypatch.setattr(query, "rerank", lambda *args, **kwargs: [])
@@ -132,9 +128,8 @@ def test_retrieve_context_places_mandatory_sources_in_context(monkeypatch):
     )
 
     assert query_text == "pergunta"
-    assert [item.payload["source"] for item in sources] == ["lei14133", "tcu-manual-licitacoes"]
-    assert "Lei nº 14.133/2021" in context_text
-    assert "Manual de Licitações e Contratos do TCU" in context_text
+    assert context_text == []
+    assert sources == []
 
 
 def _match_value(condition):
