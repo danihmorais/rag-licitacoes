@@ -11,6 +11,8 @@ def test_ingest_uses_structural_chunking_without_llm_preprocessing():
     assert "Carregando modelos de embeddings/reranker na GPU." in source
     assert "CACHE_VERSION = 1" in source
 
+    gpu_runtime = source.index("config.validate_gpu_runtime()")
     gpu_dense = source.index("TextEmbedding(model_name=config.DENSE_MODEL")
     structural = source.index("build_structural_chunks(")
     assert gpu_dense > structural
+    assert gpu_runtime < gpu_dense
