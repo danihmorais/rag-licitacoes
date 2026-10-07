@@ -96,7 +96,7 @@ jobs:
           raise SystemExit(f"Qdrant Server não ficou pronto em 90s: {last_error}")
           PY
 
-      - name: Sincronizar todas as legislações explícitas do catálogo
+      - name: Testar uma legislação por domínio do catálogo
         run: |
           python scripts/sync_sources.py --legislation-only --one-per-domain --strict --no-follow-links
 
