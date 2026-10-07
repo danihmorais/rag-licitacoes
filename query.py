@@ -88,7 +88,7 @@ _MONTHS_PT = {
 _TEMPORAL_EXACT_ISO_RE = re.compile(r'20\d{2}-\d{1,2}-\d{1,2}')
 _TEMPORAL_EXACT_BR_RE = re.compile(r'\b\d{1,2}/\d{1,2}/20\d{2}\b')
 _TEMPORAL_MONTH_RE = re.compile(
-    r'(?:(?:em|no|na|durante)\s+)?'
+    r'\b(?:em|no|na|durante)\s+'
     r'(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)'
     r'\s+de\s+(20\d{2})\b'
 )
@@ -485,7 +485,7 @@ def qfilter(filters=None, query=None, temporal_context=None):
                     range=models.Range(gte=start_day),
                 ))
 
-    if explicit_regime is None and query and not _is_transition_query(query) and not temporal_context.is_historicalish:
+    if explicit_regime is None and query and not _is_transition_query(query):
         target_regimes = _query_regimes(query)
         if len(target_regimes) > 1:
             conditions.append(
@@ -501,7 +501,7 @@ def qfilter(filters=None, query=None, temporal_context=None):
                     match=models.MatchValue(value=target_regimes[0]),
                 )
             )
-        else:
+        elif not temporal_context.is_historicalish:
             must_not.append(
                 models.FieldCondition(
                     key='regime_juridico',

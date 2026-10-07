@@ -225,8 +225,17 @@ def test_multi_regime_specific_query_filters_both_regimes_without_becoming_trans
 def test_manifest_declares_the_legal_ast_schema():
     import index_manifest
     manifest = index_manifest.current_manifest()
-    assert manifest["manifest_schema_version"] == 3
+    assert manifest["manifest_schema_version"] == 1
     assert manifest["legal_ast_schema_version"] == chunking.LEGAL_AST_SCHEMA_VERSION
     assert "source_start/source_end" in manifest["schema"]
     assert "device_id" in manifest["schema"]
     assert "anexo_ref" in manifest["schema"]
+
+
+def test_catalog_marks_intentional_open_effective_ranges():
+    from scripts.sources import SOURCES
+    by_id = {item["id"]: item for item in SOURCES}
+    assert by_id["lei8666"]["effective_range_status"] == "open_start"
+    assert by_id["lei10520"]["effective_range_status"] == "open_start"
+    assert by_id["lei12462"]["effective_range_status"] == "open_start"
+    assert by_id["in512"]["effective_range_status"] == "open_end"

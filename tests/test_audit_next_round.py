@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import config
 import evaluation
 import query
+import chunking
+import ingest
 from chunking import build_legal_ast
 
 
@@ -138,3 +140,76 @@ def test_temporal_rejection_metric_detects_version_outside_window():
         (1,),
     )
     assert report['summary']['temporal_rejection_accuracy'] == 1.0
+
+
+def test_historical_query_combines_regime_and_temporal_filters():
+    plan = query.build_retrieval_plan(
+        'A Lei 8.666/1993 estava vigente em dezembro de 2023?'
+    )
+    regime = next(
+        condition for condition in plan['qdrant_filter'].must
+        if condition.key == 'regime_juridico'
+    )
+    assert regime.match.value == 'lei_8666'
+    assert {condition.key for condition in plan['qdrant_filter'].must} >= {
+        'regime_juridico',
+        'effective_from_day',
+        'effective_to_day',
+    }
+
+
+def test_temporal_parser_ignores_normative_identification_month_year():
+    current = query.parse_query_temporal_context(
+        'Qual é a regra da Lei 14.133, de 1º de abril de 2021, sobre ETP?'
+    )
+    historical = query.parse_query_temporal_context(
+        'Qual regra valia em abril de 2021?'
+    )
+    assert current.mode == 'current'
+    assert current.has_filter is False
+    assert historical.mode == 'historical'
+    assert historical.effective_from.isoformat() == '2021-04-01'
+    assert historical.effective_to.isoformat() == '2021-04-30'
+
+
+def test_effective_range_states_keep_unknown_distinct_from_open_bounds():
+    assert ingest._effective_range_payload({
+        'effective_from': '2024-01-01',
+        'effective_to': '2024-12-31',
+    }) == {
+        'effective_range_status': 'closed',
+        'effective_from_day': 20240101,
+        'effective_to_day': 20241231,
+    }
+    assert ingest._effective_range_payload({
+        'effective_from': None,
+        'effective_to': '2024-12-31',
+        'effective_range_status': 'open_start',
+    }) == {
+        'effective_range_status': 'open_start',
+        'effective_from_day': 0,
+        'effective_to_day': 20241231,
+    }
+    assert ingest._effective_range_payload({
+        'effective_from': '2024-01-01',
+        'effective_to': None,
+        'effective_range_status': 'open_end',
+    }) == {
+        'effective_range_status': 'open_end',
+        'effective_from_day': 20240101,
+        'effective_to_day': 99991231,
+    }
+    assert ingest._effective_range_payload({
+        'effective_from': None,
+        'effective_to': None,
+    }) == {
+        'effective_range_status': 'unknown',
+    }
+
+
+def test_amendment_operations_ignore_reproduced_article_verbs():
+    result = chunking._detect_amendment(
+        'Fica alterado o art. 75: “Art. 75. O inciso X fica revogado.”',
+        'Art. 1º',
+    )
+    assert result['amendment_operations'] == ['alteracao']

@@ -214,3 +214,30 @@ def test_conlicitacao_uses_redundant_discovery_seeds_and_longer_timeout():
     source = next(item for item in SOURCES if item["id"] == "web-conlicitacao")
     assert len(source["urls"]) >= 3
     assert source["http_timeout"] == (10, 60)
+
+
+def test_wget_fallback_retries_transient_http_errors(monkeypatch):
+    import scripts.sync_sources as module
+
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = b"<!doctype html><html><body>conteudo</body></html>"
+        stderr = b""
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return Result()
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/wget")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(module, "_decode_response", lambda raw, final, content_type="": ("html", final, raw, "conteudo"))
+
+    module._fetch_with_wget("https://example.com/blog/page/7/")
+
+    assert len(calls) == 1
+    args = calls[0][0]
+    assert "--tries=3" in args
+    assert "--retry-on-http-error=408,429,500,502,503,504" in args
+    assert "--waitretry=2" in args

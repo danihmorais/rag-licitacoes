@@ -92,6 +92,7 @@ def test_ensure_collection_creates_payload_indexes(monkeypatch):
     assert fields['doc_id'] == ingest.models.PayloadSchemaType.KEYWORD
     assert fields['ano'] == ingest.models.PayloadSchemaType.INTEGER
     assert fields['revogado'] == ingest.models.PayloadSchemaType.BOOL
+    assert fields['effective_range_status'] == ingest.models.PayloadSchemaType.KEYWORD
 
 
 def test_cache_entry_requires_matching_metadata_fingerprint():
