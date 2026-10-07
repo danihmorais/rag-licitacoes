@@ -145,7 +145,7 @@ def _temporal_windows(query):
         if not parsed:
             continue
         exact, start, end = parsed
-        base = exact or (start if direction == 'depois' else end)
+        base = exact or (end if direction == 'depois' else start)
         target = base + (timedelta(days=1) if direction == 'depois' else timedelta(days=-1))
         windows.append((target, None, None, match.group(0)))
     for pattern in (_TEMPORAL_EXACT_ISO_RE, _TEMPORAL_EXACT_BR_RE):
