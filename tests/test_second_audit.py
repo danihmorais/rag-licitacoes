@@ -225,7 +225,7 @@ def test_multi_regime_specific_query_filters_both_regimes_without_becoming_trans
 def test_manifest_declares_the_legal_ast_schema():
     import index_manifest
     manifest = index_manifest.current_manifest()
-    assert manifest["manifest_schema_version"] == 3
+    assert manifest["manifest_schema_version"] == 4
     assert manifest["legal_ast_schema_version"] == chunking.LEGAL_AST_SCHEMA_VERSION
     assert "source_start/source_end" in manifest["schema"]
     assert "device_id" in manifest["schema"]
