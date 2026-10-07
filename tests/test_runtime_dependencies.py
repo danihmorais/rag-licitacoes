@@ -30,6 +30,49 @@ def test_gpu_requirements_do_not_mix_cpu_fastembed_stack():
     assert "onnxruntime-gpu==1.23.2" in lines
     assert not any(line.startswith("onnxruntime==") for line in lines)
 
+
+def test_cuda_preload_uses_installed_distribution_locations(monkeypatch, tmp_path):
+    import config
+
+    class FakePackage:
+        def __init__(self, root):
+            self.root = root
+
+        def locate_file(self, relative):
+            return self.root / relative
+
+    packages = {}
+    for name, relative in (
+        ('nvidia-cublas-cu12', 'nvidia/cublas/lib/libcublasLt.so.12'),
+        ('nvidia-cuda-runtime-cu12', 'nvidia/cuda_runtime/lib/libcudart.so.12'),
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        packages[name] = FakePackage(tmp_path)
+
+    loaded = []
+    class FakeCtypes:
+        RTLD_GLOBAL = 0
+
+        @staticmethod
+        def CDLL(path, mode=0):
+            loaded.append((path, mode))
+            return object()
+
+    class FakeMetadata:
+        PackageNotFoundError = RuntimeError
+
+        @staticmethod
+        def distribution(name):
+            return packages[name]
+
+    monkeypatch.setattr(config.os, 'name', 'posix', raising=False)
+    monkeypatch.setitem(__import__('sys').modules, 'ctypes', FakeCtypes)
+    monkeypatch.setitem(__import__('sys').modules, 'importlib.metadata', FakeMetadata)
+    config._preload_nvidia_cuda_libraries()
+    assert any(path.endswith('libcublasLt.so.12') for path, _ in loaded)
+    assert any(path.endswith('libcudart.so.12') for path, _ in loaded)
 def test_gpu_runtime_validation_preloads_cuda_dlls(monkeypatch):
     import config
 
