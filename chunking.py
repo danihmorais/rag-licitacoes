@@ -770,12 +770,20 @@ def _split_text_spans(text,max_size,overlap,tokenizer=None):
         piece = _restore_abbreviation_dots(raw_piece)
         start = int(doc.metadata.get("start_index", -1))
         if start < 0 or protected[start:start + len(raw_piece)] != raw_piece:
-            # Fallback somente quando o metadata do próprio splitter é inválido.
+            # O start_index gerado pelo splitter pode divergir do texto protegido.
+            # Como a proteção de abreviações altera apenas o último caractere,
+            # reconstruímos o offset usando o trecho restaurado no texto original.
             search_from = max(0, previous_start + 1)
-            start = protected.find(raw_piece, search_from)
+            start = text.find(piece, search_from)
+            if start < 0:
+                # Em textos com trechos repetidos, tentar também a primeira
+                # ocorrência evita depender de um start_index incorreto.
+                start = text.find(piece)
             if start < 0:
                 raise RuntimeError("Não foi possível reconstruir o span exato de um chunk.")
-        end = start + len(raw_piece)
+        end = start + len(piece)
+        if text[start:end] != piece:
+            raise RuntimeError("Não foi possível reconstruir o span exato de um chunk.")
         spans.append((piece, start, end))
         previous_start = start
     return spans

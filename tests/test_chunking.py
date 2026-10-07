@@ -68,6 +68,27 @@ def test_normative_ast_failure_falls_back_to_generic(monkeypatch):
     assert all(text[item["source_start"]:item["source_end"]] == item["source_text"] for item in chunks)
 
 
+
+def test_split_text_spans_recovers_invalid_splitter_offset(monkeypatch):
+    class FakeSplitter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def create_documents(self, _texts):
+            return [
+                SimpleNamespace(
+                    page_content="trecho exato",
+                    metadata={"start_index": 9999},
+                )
+            ]
+
+    monkeypatch.setattr(chunking, "RecursiveCharacterTextSplitter", FakeSplitter)
+    text = "início " + "trecho exato" + " fim"
+    spans = chunking._split_text_spans(text, 3, 0, tokenizer=TruncatingTokenizer())
+
+    assert spans == [("trecho exato", 7, 19)]
+    assert text[spans[0][1]:spans[0][2]] == spans[0][0]
+
 def test_default_tokenizer_disables_fastembed_truncation(monkeypatch):
     import fastembed
 
