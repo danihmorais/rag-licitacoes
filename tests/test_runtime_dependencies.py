@@ -48,6 +48,7 @@ def test_gpu_runtime_validation_preloads_cuda_dlls(monkeypatch):
             cls.called = True
             assert directory == ""
 
+    monkeypatch.setattr(config, "_preload_nvidia_cuda_libraries", lambda: None)
     monkeypatch.setitem(__import__("sys").modules, "onnxruntime", FakeOrt)
     config.validate_gpu_runtime()
     assert FakeOrt.called
