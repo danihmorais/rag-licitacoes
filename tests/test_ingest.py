@@ -47,8 +47,11 @@ def test_validate_model_cuda_rejects_cpu_session():
         def get_providers(self):
             return ["CPUExecutionProvider"]
 
-    class Model:
+    class OnnxModel:
         model = Session()
+
+    class Model:
+        model = OnnxModel()
 
     with pytest.raises(RuntimeError, match="CUDAExecutionProvider"):
         ingest.validate_model_cuda(Model(), label="Embedding denso")
@@ -59,8 +62,11 @@ def test_validate_model_cuda_accepts_cuda_session():
         def get_providers(self):
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
-    class Model:
+    class OnnxModel:
         model = Session()
+
+    class Model:
+        model = OnnxModel()
 
     ingest.validate_model_cuda(Model(), label="Embedding denso")
 
