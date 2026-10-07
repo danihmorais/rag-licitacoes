@@ -1,5 +1,6 @@
 import bisect
 import re
+import unicodedata
 from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -528,6 +529,13 @@ QUOTED_ARTICLE_RE = re.compile(
 )
 
 
+def _normalized_structure_component(value):
+    raw = unicodedata.normalize('NFKD', str(value or ''))
+    normalized = ''.join(char for char in raw if not unicodedata.combining(char)).casefold()
+    normalized = re.sub(r'[^a-z0-9]+', '-', normalized).strip('-')
+    return normalized or 'estrutura'
+
+
 def _normalize_article_ref(ref):
     if ref is None:
         return None
@@ -604,19 +612,25 @@ def _detect_amendment(text, current_ref=None):
     if not selected:
         return None
 
-    action_text = text.casefold()
-    if re.search(r"revog", action_text):
-        amendment_type = "revogacao"
-    elif re.search(r"suprim", action_text):
-        amendment_type = "supressao"
-    elif re.search(r"acrescid|acrescent|inserid|inclu[ií]d|inclu[ií]|inclui", action_text):
-        amendment_type = "inclusao" if re.search(r"inclu[ií]d|inclu[ií]|inclui", action_text) else "acrescimo"
-    elif "substitu" in action_text:
-        amendment_type = "substituicao"
-    elif re.search(r"alter", action_text):
-        amendment_type = "alteracao"
-    else:
-        amendment_type = "redacao"
+    amendment_operation_patterns = (
+        ('redacao', re.compile(r'(?i)passa\s+a\s+vigorar(?:\s+com\s+(?:a\s+)?seguinte\s+reda[cç][aã]o)?|d[aá]\s+nova\s+reda[cç][aã]o')),
+        ('alteracao', re.compile(r'(?i)\b(?:altera(?:m|-se)?|(?:fica|ficam)\s+alterad[oa]s?)\b')),
+        ('revogacao', re.compile(r'(?i)\b(?:revoga(?:m|-se)?|(?:fica|ficam)\s+revogad[oa]s?)\b')),
+        ('supressao', re.compile(r'(?i)\b(?:suprime(?:m|-se)?|(?:fica|ficam)\s+suprimid[oa]s?)\b')),
+        ('acrescimo', re.compile(r'(?i)\b(?:acrescenta(?:m|-se)?|(?:fica|ficam)\s+acrescentad[oa]s?|(?:fica|ficam)\s+acrescid[oa]s?)\b')),
+        ('inclusao', re.compile(r'(?i)\b(?:inclui(?:m|-se)?|(?:fica|ficam)\s+inclu[ií]d[oa]s?)\b')),
+        ('substituicao', re.compile(r'(?i)\b(?:substitu[ií]do[as]?|substitui(?:m|-se)?)\b')),
+    )
+    operation_hits = []
+    for operation, pattern in amendment_operation_patterns:
+        operation_hits.extend((match.start(), operation) for match in pattern.finditer(text))
+    amendment_operations = []
+    for _position, operation in sorted(operation_hits, key=lambda item: item[0]):
+        if operation not in amendment_operations:
+            amendment_operations.append(operation)
+    if not amendment_operations:
+        amendment_operations = ['redacao']
+    amendment_type = amendment_operations[0]
 
     target_devices = [
         {"kind": kind, "ref": ref}
@@ -629,6 +643,7 @@ def _detect_amendment(text, current_ref=None):
         "target_articles": target_articles,
         "target_article": target_articles[0] if target_articles else None,
         "amendment_type": amendment_type,
+        "amendment_operations": amendment_operations,
     }
 
 
@@ -810,7 +825,7 @@ def _article_units(text):
         for unit in scanned["units"]
     ] or None
 
-LEGAL_AST_SCHEMA_VERSION = 1
+LEGAL_AST_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -880,7 +895,7 @@ def build_legal_ast(text: str) -> LegalNode:
         if parent_path:
             parent = header_nodes.get(parent_path, root)
         node = LegalNode(
-            node_id=f"header:{'/'.join(_normalize_article_ref(item) or item for item in path)}@{position}",
+            node_id=f"header:{'/'.join(_normalized_structure_component(item) for item in path)}@{position}",
             kind=(
                 "anexo" if re.match(r"^ANEXO\b", heading, re.I) else
                 next((kind for kind, rank, pattern in _HEADER_LEVELS if kind != "anexo" and pattern.match(heading)), "estrutura")
@@ -891,8 +906,14 @@ def build_legal_ast(text: str) -> LegalNode:
             source_end=line_end,
             source_text=text[line_start:line_end],
             path=list(path),
-            anexo_ref=path[-1] if re.match(r"^ANEXO\b", heading, re.I) else None,
-            anexo_path=[path[-1]] if re.match(r"^ANEXO\b", heading, re.I) else [],
+            anexo_ref=(
+                path[next((index for index, item in enumerate(path) if re.match(r"^ANEXO\b", item, re.I)), len(path) - 1)]
+                if any(re.match(r"^ANEXO\b", item, re.I) for item in path) else None
+            ),
+            anexo_path=(
+                path[next((index for index, item in enumerate(path) if re.match(r"^ANEXO\b", item, re.I)), len(path)) :]
+                if any(re.match(r"^ANEXO\b", item, re.I) for item in path) else []
+            ),
         )
         parent.add_child(node)
         header_nodes[path] = node
@@ -943,11 +964,12 @@ def build_legal_ast(text: str) -> LegalNode:
             path.append(str(ref))
 
         header_path = tuple(path[:-1])
-        parent = (
-            annex_nodes.get(annex_key)
-            if anexo_ref
-            else header_nodes.get(header_path, root)
-        )
+        if anexo_ref:
+            parent = header_nodes.get(header_path)
+            if parent is None or parent.kind == 'anexo':
+                parent = annex_nodes.get(annex_key)
+        else:
+            parent = header_nodes.get(header_path, root)
         if parent is None:
             parent = root
         node = LegalNode(
@@ -1150,11 +1172,11 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         anexo_path = list(unit.get("anexo_path") or [])
         if not children:
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", [])})
             continue
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type")})
+            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", [])})
             caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
@@ -1171,7 +1193,7 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
                     rendered=f"{child_prefix}\n{piece}".strip()
                 if _token_count(rendered,tokenizer)>max_size:
                     raise RuntimeError("Segmento jurídico excede o orçamento de tokens após a divisão.")
-                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"node_id":node_id + "/" + kind + ":" + (_normalize_article_ref(child_ref) or str(child_index)),"parent_id":node_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path})
+                output.append({"text":rendered,"source_text":piece,"retrieval_text":rendered,"full_unit_text":None,"page_content":rendered,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":next_index+local_index,"unit_length":len(unit["text"]),"start":unit["start"]+child_start+relative,"end":unit["start"]+child_start+relative+len(piece),"source_start":unit["start"]+child_start+relative,"source_end":unit["start"]+child_start+relative+len(piece),"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":child_path,"parent_caput":caput,"segment_kind":kind,"segment_ref":child_ref,"child_index":child_index,"prefix_truncated":False,"context_reduced":context_oversize or child_prefix != raw_prefix.split("\n", 1)[0] + "\n" + caput,"context_oversize":context_oversize,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", []),"node_id":node_id + "/" + kind + ":" + (_normalize_article_ref(child_ref) or str(child_index)),"parent_id":node_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path})
             next_index+=len(child_spans)
     output = _attach_device_ids(output)
     _assert_source_spans(full_text, output)
