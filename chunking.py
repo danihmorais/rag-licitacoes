@@ -552,6 +552,22 @@ def _normalize_article_ref(ref):
     return normalized
 
 
+def _reproduced_article_ranges(text):
+    ranges = []
+    for match in re.finditer(r'[“‘"]\s*Art(?:igo)?\.?\s*\d', text, re.I):
+        opener = text[match.start()]
+        closer = {'“': '”', '‘': '’', '"': '"'}.get(opener, '"')
+        close = text.find(closer, match.end())
+        if close < 0:
+            close = len(text) - 1
+        ranges.append((match.start(), close + 1))
+    return ranges
+
+
+def _position_inside_ranges(position, ranges):
+    return any(start <= position < end for start, end in ranges)
+
+
 def _detect_amendment(text, current_ref=None):
     if not text:
         return None
@@ -629,8 +645,12 @@ def _detect_amendment(text, current_ref=None):
         ('substituicao', re.compile(r'(?i)\b(?:substitu[ií]do[as]?|substitui(?:m|-se)?)\b')),
     )
     operation_hits = []
+    reproduced_ranges = _reproduced_article_ranges(text)
     for operation, pattern in amendment_operation_patterns:
-        operation_hits.extend((match.start(), operation) for match in pattern.finditer(text))
+        for operation_match in pattern.finditer(text):
+            if _position_inside_ranges(operation_match.start(), reproduced_ranges):
+                continue
+            operation_hits.append((operation_match.start(), operation))
     amendment_operations = []
     for _position, operation in sorted(operation_hits, key=lambda item: item[0]):
         if operation not in amendment_operations:
