@@ -91,49 +91,84 @@ O projeto usa **Qdrant Server**, não o modo de armazenamento local embutido no 
 
 ---
 
-# 3. Python
+# 3. Python e uv
 
-Use **Python 3.12**.
+O projeto usa **Python 3.12**.
 
-O CI do repositório está configurado nessa versão, e o conjunto pinado de dependências não tem como alvo Python 3.14.
+O método recomendado é instalar o **uv** e deixar o próprio uv gerenciar o Python e o ambiente virtual do projeto. Assim, a instalação não depende do Python global já existente na máquina.
+
+O uv pode instalar uma versão de Python automaticamente quando ela ainda não estiver disponível. citeturn952369search0turn952369search2
+
+## Instalar o uv
+
+### Linux / WSL / macOS
+
+~~~bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+~~~
+
+Reabra o terminal, se necessário, para que `uv` esteja disponível no PATH.
+
+### Windows / PowerShell
+
+~~~powershell
+irm https://astral.sh/uv/install.ps1 | iex
+~~~
+
+Feche e abra o PowerShell novamente, se necessário.
 
 Verifique:
 
 ~~~bash
-python --version
+uv --version
 ~~~
 
-O esperado é:
+Documentação oficial:
 
-~~~text
-Python 3.12.x
-~~~
+https://docs.astral.sh/uv/
 
 ---
 
-# 4. Instalação
+# 4. Instalação do projeto
 
-## Linux / WSL
+## Linux / WSL / macOS
 
 ~~~bash
 git clone https://github.com/danihmorais/rag-licitacoes.git
 cd rag-licitacoes
 
-python3.12 -m venv .venv
-source .venv/bin/activate
+uv venv --python 3.12 .venv
+uv pip install --python .venv -r requirements.txt
 
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-
-python -m playwright install chromium
-
-sudo apt-get update
-sudo apt-get install -y tesseract-ocr tesseract-ocr-por
+uv run python -m playwright install chromium
 
 cp .env.example .env
 ~~~
 
-O Tesseract e o Chromium só precisam estar instalados se você for utilizar OCR ou os coletores que dependem de navegador.
+O comando `uv venv --python 3.12 .venv` cria o ambiente virtual `.venv` usando Python 3.12. Se essa versão ainda não estiver instalada, o uv pode baixá-la e gerenciá-la automaticamente. citeturn952369search0turn952369search2
+
+**Não é necessário instalar Python 3.12 manualmente nem usar o Python global.**
+
+### Ativar o ambiente — opcional
+
+Você pode trabalhar sem ativar o ambiente e executar os comandos com `uv run`.
+
+Caso prefira ativá-lo:
+
+~~~bash
+source .venv/bin/activate
+~~~
+
+Depois da ativação, `python` e `pip` apontam para o ambiente do projeto.
+
+### OCR no Linux
+
+Para utilizar OCR em PDFs:
+
+~~~bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-por
+~~~
 
 ## Windows / PowerShell
 
@@ -141,18 +176,25 @@ O Tesseract e o Chromium só precisam estar instalados se você for utilizar OCR
 git clone https://github.com/danihmorais/rag-licitacoes.git
 cd rag-licitacoes
 
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
+uv venv --python 3.12 .venv
+uv pip install --python .venv -r requirements.txt
 
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-
-python -m playwright install chromium
+uv run python -m playwright install chromium
 
 Copy-Item .env.example .env
 ~~~
 
-No Windows, o Tesseract precisa ser instalado separadamente.
+Também no Windows, não é necessário instalar Python 3.12 globalmente: o uv gerencia a versão usada pelo ambiente do projeto. citeturn952369search0
+
+### Ativar o ambiente — opcional
+
+~~~powershell
+.venv\Scripts\Activate.ps1
+~~~
+
+No Windows, o Tesseract precisa ser instalado separadamente caso OCR seja utilizado.
+
+> **Regra prática:** para não depender de qual Python está instalado na máquina, prefira executar o projeto com `uv run ...`. O uv detecta o ambiente virtual do projeto e executa nele. citeturn952369search1turn952369search3
 
 ---
 
@@ -190,7 +232,7 @@ https://qdrant.tech/documentation/
 Com o Qdrant em execução:
 
 ~~~bash
-python -c "from qdrant_client import QdrantClient; c=QdrantClient(url='http://127.0.0.1:6333'); print(c.get_collections())"
+uv run python -c "from qdrant_client import QdrantClient; c=QdrantClient(url='http://127.0.0.1:6333'); print(c.get_collections())"
 ~~~
 
 Se essa chamada não conectar, corrija primeiro o Qdrant ou RAG_QDRANT_URL.
@@ -296,25 +338,25 @@ Depois de instalar as dependências e iniciar o Qdrant:
 ### 8.1 Verificar sintaxe
 
 ~~~bash
-python -m compileall -q .
+uv run python -m compileall -q .
 ~~~
 
 ### 8.2 Rodar testes
 
 ~~~bash
-python -m pytest -q
+uv run python -m pytest -q
 ~~~
 
 ### 8.3 Verificar fontes obrigatórias
 
 ~~~bash
-python scripts/sync_sources.py --check --required-only
+uv run python scripts/sync_sources.py --check --required-only
 ~~~
 
 ### 8.4 Construir / atualizar o índice
 
 ~~~bash
-python ingest.py
+uv run python ingest.py
 ~~~
 
 A partir daí o índice está disponível para consulta.
@@ -343,7 +385,7 @@ O comando principal de ingestão executa, conforme a configuração:
 Para indexar sem sincronizar novamente:
 
 ~~~bash
-python ingest.py --no-sync
+uv run python ingest.py --no-sync
 ~~~
 
 Isso é útil quando o conteúdo já está disponível no cache e você quer reconstruir o índice sem disparar nova coleta.
@@ -437,19 +479,19 @@ PDFs públicos apontados por essas fontes podem ser tratados como documentos de 
 ### Testar somente a coleta web
 
 ~~~bash
-python scripts/sync_sources.py --web-only --strict
+uv run python scripts/sync_sources.py --web-only --strict
 ~~~
 
 ### Teste com quantidade reduzida
 
 ~~~bash
-python scripts/sync_sources.py --web-only --max-web-documents 5
+uv run python scripts/sync_sources.py --web-only --max-web-documents 5
 ~~~
 
 ### Limitar páginas de descoberta
 
 ~~~bash
-python scripts/sync_sources.py --web-only --max-web-discovery-pages 25
+uv run python scripts/sync_sources.py --web-only --max-web-discovery-pages 25
 ~~~
 
 ---
@@ -465,37 +507,37 @@ scripts/sync_sources.py
 ### Normal
 
 ~~~bash
-python scripts/sync_sources.py
+uv run python scripts/sync_sources.py
 ~~~
 
 ### Estrito
 
 ~~~bash
-python scripts/sync_sources.py --strict
+uv run python scripts/sync_sources.py --strict
 ~~~
 
 ### Verificar fontes obrigatórias sem ingestão
 
 ~~~bash
-python scripts/sync_sources.py --check --required-only
+uv run python scripts/sync_sources.py --check --required-only
 ~~~
 
 ### Somente legislação
 
 ~~~bash
-python scripts/sync_sources.py --legislation-only
+uv run python scripts/sync_sources.py --legislation-only
 ~~~
 
 ### Somente web
 
 ~~~bash
-python scripts/sync_sources.py --web-only
+uv run python scripts/sync_sources.py --web-only
 ~~~
 
 ### Não seguir links de descoberta
 
 ~~~bash
-python scripts/sync_sources.py --no-follow-links
+uv run python scripts/sync_sources.py --no-follow-links
 ~~~
 
 O cache das fontes fica em:
@@ -561,25 +603,25 @@ O identificador estável do registro permite deduplicação e controle de versã
 Consulta única:
 
 ~~~bash
-python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50
+uv run python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50
 ~~~
 
 Com detalhamento:
 
 ~~~bash
-python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50 --detail
+uv run python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50 --detail
 ~~~
 
 Tentando obter também o inteiro teor:
 
 ~~~bash
-python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50 --with-content
+uv run python -m jurisprudencia.collector --query "licitação contrato administrativo" --limit 50 --with-content
 ~~~
 
 Selecionando tribunais:
 
 ~~~bash
-python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tjsp --query "licitação" --limit 50
+uv run python -m jurisprudencia.collector --tribunais tcu,tcesp,stj,stf,tjsp --query "licitação" --limit 50
 ~~~
 
 ---
@@ -619,19 +661,19 @@ São Paulo
 Execução padrão:
 
 ~~~bash
-python -m jurisprudencia.batch --strict
+uv run python -m jurisprudencia.batch --strict
 ~~~
 
 Exemplo com limite e mínimo por tribunal:
 
 ~~~bash
-python -m jurisprudencia.batch --limit 200 --min-records-per-tribunal 150 --strict
+uv run python -m jurisprudencia.batch --limit 200 --min-records-per-tribunal 150 --strict
 ~~~
 
 Consultas personalizadas podem ser repetidas com:
 
 ~~~bash
-python -m jurisprudencia.batch --query "Lei 14.133 licitação contrato" --query "contratação direta dispensa inexigibilidade" --limit 100
+uv run python -m jurisprudencia.batch --query "Lei 14.133 licitação contrato" --query "contratação direta dispensa inexigibilidade" --limit 100
 ~~~
 
 ### Súmulas
@@ -641,19 +683,19 @@ Por padrão, a coleta em lote inclui as súmulas.
 Para coletar explicitamente:
 
 ~~~bash
-python -m jurisprudencia.batch --with-sumulas
+uv run python -m jurisprudencia.batch --with-sumulas
 ~~~
 
 Para uma execução sem súmulas:
 
 ~~~bash
-python -m jurisprudencia.batch --without-sumulas
+uv run python -m jurisprudencia.batch --without-sumulas
 ~~~
 
 Para executar a coleta de súmulas diretamente:
 
 ~~~bash
-python -m jurisprudencia.sumulas --strict
+uv run python -m jurisprudencia.sumulas --strict
 ~~~
 
 As súmulas são registros próprios e não entram na contagem de acórdãos por tribunal.
@@ -932,19 +974,19 @@ Normas históricas permanecem disponíveis com metadados próprios, sem serem ap
 Consulta interativa:
 
 ~~~bash
-python query.py
+uv run python query.py
 ~~~
 
 Consulta única:
 
 ~~~bash
-python query.py --query "Quais são os requisitos do estudo técnico preliminar?"
+uv run python query.py --query "Quais são os requisitos do estudo técnico preliminar?"
 ~~~
 
 Saída JSON:
 
 ~~~bash
-python query.py --query "Quais são os requisitos do ETP?" --json
+uv run python query.py --query "Quais são os requisitos do ETP?" --json
 ~~~
 
 O modo JSON exige uma consulta única com --query.
@@ -987,7 +1029,7 @@ Também há comparadores numéricos:
 Exemplo:
 
 ~~~bash
-python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP"
+uv run python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP"
 ~~~
 
 Filtros desconhecidos são rejeitados em vez de serem silenciosamente ignorados.
@@ -1075,25 +1117,25 @@ evaluation/dataset.json
 ### Avaliação padrão
 
 ~~~bash
-python evaluation.py
+uv run python evaluation.py
 ~~~
 
 ### Escolher k
 
 ~~~bash
-python evaluation.py --k 1 3 5 10
+uv run python evaluation.py --k 1 3 5 10
 ~~~
 
 ### Somente evidence gate
 
 ~~~bash
-python evaluation.py --gate-only
+uv run python evaluation.py --gate-only
 ~~~
 
 ### Modo estrito
 
 ~~~bash
-python evaluation.py --k 1 3 5 10 --strict --min-recall 0.80 --min-ndcg 0.60 --min-gate-rejection 0.80
+uv run python evaluation.py --k 1 3 5 10 --strict --min-recall 0.80 --min-ndcg 0.60 --min-gate-rejection 0.80
 ~~~
 
 As métricas de recuperação incluem:
@@ -1165,19 +1207,19 @@ Quando habilitada, fontes que deixaram de fazer parte do corpus atual podem ser 
 Verificação de sintaxe:
 
 ~~~bash
-python -m compileall -q .
+uv run python -m compileall -q .
 ~~~
 
 Suíte principal:
 
 ~~~bash
-python -m pytest -q
+uv run python -m pytest -q
 ~~~
 
 Verificação das fontes obrigatórias:
 
 ~~~bash
-python scripts/sync_sources.py --check --required-only
+uv run python scripts/sync_sources.py --check --required-only
 ~~~
 
 ---
@@ -1370,8 +1412,8 @@ Ausência de resultado também não prova inexistência do entendimento.
 ### Instalação
 
 ~~~bash
-python -m pip install -r requirements.txt
-python -m playwright install chromium
+uv run python -m pip install -r requirements.txt
+uv run python -m playwright install chromium
 ~~~
 
 ### Configuração
@@ -1383,63 +1425,63 @@ python -m playwright install chromium
 ### Verificação
 
 ~~~bash
-python -m compileall -q .
-python -m pytest -q
-python scripts/sync_sources.py --check --required-only
+uv run python -m compileall -q .
+uv run python -m pytest -q
+uv run python scripts/sync_sources.py --check --required-only
 ~~~
 
 ### Indexação
 
 ~~~bash
-python ingest.py
+uv run python ingest.py
 ~~~
 
 ### Indexação sem sincronização
 
 ~~~bash
-python ingest.py --no-sync
+uv run python ingest.py --no-sync
 ~~~
 
 ### Consulta
 
 ~~~bash
-python query.py
+uv run python query.py
 ~~~
 
 ### Consulta única
 
 ~~~bash
-python query.py --query "pergunta"
+uv run python query.py --query "pergunta"
 ~~~
 
 ### JSON
 
 ~~~bash
-python query.py --query "pergunta" --json
+uv run python query.py --query "pergunta" --json
 ~~~
 
 ### Web
 
 ~~~bash
-python scripts/sync_sources.py --web-only --strict
+uv run python scripts/sync_sources.py --web-only --strict
 ~~~
 
 ### Jurisprudência
 
 ~~~bash
-python -m jurisprudencia.batch --strict
+uv run python -m jurisprudencia.batch --strict
 ~~~
 
 ### Súmulas
 
 ~~~bash
-python -m jurisprudencia.sumulas --strict
+uv run python -m jurisprudencia.sumulas --strict
 ~~~
 
 ### Avaliação
 
 ~~~bash
-python evaluation.py
+uv run python evaluation.py
 ~~~
 
 ---
