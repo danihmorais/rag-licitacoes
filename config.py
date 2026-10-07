@@ -133,10 +133,59 @@ def validate_config() -> None:
         raise ValueError('Configuração inválida: ' + ' '.join(errors))
 
 
+def _preload_nvidia_cuda_libraries() -> None:
+    """Carrega as bibliotecas CUDA empacotadas pelo pip antes da sessão ONNX."""
+    if os.name != 'posix':
+        return
+
+    import ctypes
+    import sysconfig
+
+    site_packages = Path(sysconfig.get_path('purelib'))
+    nvidia_root = site_packages / 'nvidia'
+    if not nvidia_root.is_dir():
+        return
+
+    lib_dirs = sorted(path for path in nvidia_root.glob('*/lib') if path.is_dir())
+    if lib_dirs:
+        current = [item for item in os.environ.get('LD_LIBRARY_PATH', '').split(':') if item]
+        merged = []
+        for path in lib_dirs:
+            value = str(path)
+            if value not in merged:
+                merged.append(value)
+        for value in current:
+            if value not in merged:
+                merged.append(value)
+        os.environ['LD_LIBRARY_PATH'] = ':'.join(merged)
+
+    packages_and_patterns = (
+        ('cuda_runtime', 'libcudart.so.*'),
+        ('nvjitlink', 'libnvJitLink.so.*'),
+        ('cublas', 'libcublasLt.so.*'),
+        ('cublas', 'libcublas.so.*'),
+        ('cuda_nvrtc', 'libnvrtc.so.*'),
+        ('curand', 'libcurand.so.*'),
+        ('cufft', 'libcufft.so.*'),
+        ('cudnn', 'libcudnn.so.*'),
+    )
+    for package, pattern in packages_and_patterns:
+        candidates = sorted((nvidia_root / package / 'lib').glob(pattern))
+        if not candidates:
+            continue
+        try:
+            ctypes.CDLL(str(candidates[-1]), mode=ctypes.RTLD_GLOBAL)
+        except OSError as exc:
+            raise RuntimeError(
+                f'Não foi possível carregar a biblioteca CUDA {candidates[-1].name}: {exc}'
+            ) from exc
+
+
 def validate_gpu_runtime() -> None:
     if not FASTEMBED_REQUIRE_CUDA:
         return
     try:
+        _preload_nvidia_cuda_libraries()
         import onnxruntime as ort
     except ImportError as exc:
         raise RuntimeError('Execução GPU obrigatória: onnxruntime-gpu não está instalado.') from exc

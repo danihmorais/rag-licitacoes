@@ -12,6 +12,9 @@ def test_gpu_requirements_are_canonical():
     assert "nvidia-cublas-cu12==12.9.2.10" in lines
     assert "nvidia-cudnn-cu12==9.27.0.42" in lines
     assert "nvidia-cufft-cu12==11.4.1.4" in lines
+    assert "nvidia-cuda-nvrtc-cu12==12.9.86" in lines
+    assert "nvidia-curand-cu12==10.3.10.19" in lines
+    assert "nvidia-nvjitlink-cu12==12.9.86" in lines
     assert "PyMuPDF==1.28.2" in lines
     assert "pytesseract==0.3.13" in lines
     assert any(line.startswith("Pillow") for line in lines)
@@ -45,6 +48,7 @@ def test_gpu_runtime_validation_preloads_cuda_dlls(monkeypatch):
             cls.called = True
             assert directory == ""
 
+    monkeypatch.setattr(config, "_preload_nvidia_cuda_libraries", lambda: None)
     monkeypatch.setitem(__import__("sys").modules, "onnxruntime", FakeOrt)
     config.validate_gpu_runtime()
     assert FakeOrt.called
