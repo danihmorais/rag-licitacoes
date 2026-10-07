@@ -455,6 +455,8 @@ def qfilter(filters=None, query=None, temporal_context=None):
         conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=_coerce_filter_value(key, value))))
     if temporal_context is None and query:
         temporal_context = parse_query_temporal_context(query)
+    if temporal_context is None:
+        temporal_context = QueryTemporalContext()
 
     if temporal_context.has_filter:
         if temporal_context.effective_on is not None:
