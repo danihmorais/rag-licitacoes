@@ -443,6 +443,12 @@ O código preserva primeiro a evidência principal. As fontes-base são marcadas
 
 A resposta não é considerada fundamentada apenas porque uma fonte-base existe no índice. O conteúdo precisa sustentar a afirmação feita e passar pelo evidence gate.
 
+Saída JSON:
+
+~~~bash
+python query.py --query "@jurisdicao=estadual_sp @ano=2026 regra do ETP" --json
+~~~
+
 ### Filtros
 
 São aceitos filtros como:
@@ -604,7 +610,7 @@ retrieved_at
 
 Consultas com intenção histórica agora são classificadas e, quando contêm uma referência temporal única, essa referência é transformada em filtro real no Qdrant. São reconhecidos pelo menos anos, mês/ano, datas exatas e limites relativos como antes de e depois de. A regra usada no índice é de sobreposição de vigência: effective_from <= data e effective_to >= data; para intervalos, a janela consultada e a janela documental precisam se sobrepor.
 
-Os campos auxiliares effective_from_day e effective_to_day armazenam as datas como inteiros AAAAMMDD. Quando um limite não está informado no metadata, o projeto o representa como limite aberto (0000-00-00 / 9999-12-31) para permitir a consulta por intervalo de forma determinística.
+Os campos auxiliares effective_from_day e effective_to_day armazenam as datas como inteiros AAAAMMDD. Quando um limite não está informado no metadata, o projeto o representa como limite aberto (0 / 99991231) para permitir a consulta por intervalo de forma determinística.
 
 Consultas comparativas com mais de uma data não são reduzidas artificialmente a uma única data: a intenção comparativa é preservada e o filtro temporal fica sem data única, evitando recuperar um único regime como se representasse todas as fases da comparação.
 
