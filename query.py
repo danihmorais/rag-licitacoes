@@ -1,9 +1,12 @@
 import argparse
+import calendar
 import json
 import math
 import re
 import sys
 import unicodedata
+from dataclasses import dataclass
+from datetime import date, timedelta
 
 from fastembed import SparseTextEmbedding, TextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
@@ -45,7 +48,156 @@ FORMATO:
 Contexto recuperado:
 {context}'''
 
-MANDATORY_CONTEXT_SOURCE_IDS = ('lei14133', 'tcu-manual-licitacoes')
+BASE_CONTEXT_SOURCE_IDS = ('lei14133', 'tcu-manual-licitacoes')
+MANDATORY_CONTEXT_SOURCE_IDS = BASE_CONTEXT_SOURCE_IDS
+
+
+@dataclass(frozen=True)
+class QueryTemporalContext:
+    mode: str = 'current'
+    effective_on: date | None = None
+    effective_from: date | None = None
+    effective_to: date | None = None
+    raw_fragment: str | None = None
+
+    @property
+    def has_filter(self):
+        return any(value is not None for value in (
+            self.effective_on, self.effective_from, self.effective_to,
+        ))
+
+    @property
+    def is_historicalish(self):
+        return self.mode in {'historical', 'comparative'} or self.has_filter
+
+    def to_dict(self):
+        return {
+            'mode': self.mode,
+            'effective_on': self.effective_on.isoformat() if self.effective_on else None,
+            'effective_from': self.effective_from.isoformat() if self.effective_from else None,
+            'effective_to': self.effective_to.isoformat() if self.effective_to else None,
+            'raw_fragment': self.raw_fragment,
+        }
+
+
+_MONTHS_PT = {
+    'janeiro': 1, 'fevereiro': 2, 'marco': 3, 'abril': 4,
+    'maio': 5, 'junho': 6, 'julho': 7, 'agosto': 8,
+    'setembro': 9, 'outubro': 10, 'novembro': 11, 'dezembro': 12,
+}
+_TEMPORAL_EXACT_ISO_RE = re.compile(r'20\d{2}-\d{1,2}-\d{1,2}')
+_TEMPORAL_EXACT_BR_RE = re.compile(r'\b\d{1,2}/\d{1,2}/20\d{2}\b')
+_TEMPORAL_MONTH_RE = re.compile(
+    r'(?:(?:em|no|na|durante)\s+)?'
+    r'(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)'
+    r'\s+de\s+(20\d{2})\b'
+)
+_TEMPORAL_YEAR_RE = re.compile(
+    r'(?:\b(?:em|no|na|durante|ano\s+de|no\s+ano\s+de)\s+)(20\d{2})\b'
+)
+_TEMPORAL_BEFORE_AFTER_RE = re.compile(
+    r'\b(antes|depois)\s+de\s+'
+    r'((?:20\d{2}-\d{1,2}-\d{1,2})|(?:\d{1,2}/\d{1,2}/20\d{2})|'
+    r'(?:janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+20\d{2}|'
+    r'(?:20\d{2}))\b'
+)
+
+
+def _month_window(year, month):
+    return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+
+
+def _parse_temporal_literal(value):
+    value = str(value).strip()
+    if _TEMPORAL_EXACT_ISO_RE.fullmatch(value):
+        try:
+            target = date.fromisoformat(value)
+        except ValueError:
+            return None
+        return target, target, target
+    if _TEMPORAL_EXACT_BR_RE.fullmatch(value):
+        day, month, year = (int(item) for item in value.split('/'))
+        try:
+            target = date(year, month, day)
+        except ValueError:
+            return None
+        return target, target, target
+    month_match = re.fullmatch(
+        r'(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(20\d{2})',
+        value,
+    )
+    if month_match:
+        return (lambda y,m: (None, *(_month_window(y,m))))(int(month_match.group(2)), _MONTHS_PT[month_match.group(1)])
+    if re.fullmatch(r'20\d{2}', value):
+        year = int(value)
+        return None, date(year, 1, 1), date(year, 12, 31)
+    return None
+
+
+def _temporal_windows(query):
+    normalized = _normalize_query_text(query)
+    windows = []
+    before_after_matches = list(_TEMPORAL_BEFORE_AFTER_RE.finditer(normalized))
+    occupied = [(match.start(), match.end()) for match in before_after_matches]
+    for match in before_after_matches:
+        direction, literal = match.group(1), match.group(2)
+        parsed = _parse_temporal_literal(literal)
+        if not parsed:
+            continue
+        exact, start, end = parsed
+        base = exact or (start if direction == 'depois' else end)
+        target = base + (timedelta(days=1) if direction == 'depois' else timedelta(days=-1))
+        windows.append((target, None, None, match.group(0)))
+    for pattern in (_TEMPORAL_EXACT_ISO_RE, _TEMPORAL_EXACT_BR_RE):
+        for match in pattern.finditer(normalized):
+            if any(start <= match.start() < end for start, end in occupied):
+                continue
+            parsed = _parse_temporal_literal(match.group(0))
+            if parsed:
+                exact, _start, _end = parsed
+                windows.append((exact, None, None, match.group(0)))
+    for match in _TEMPORAL_MONTH_RE.finditer(normalized):
+        if any(start <= match.start() < end for start, end in occupied):
+            continue
+        literal = re.sub(r'^(?:em|no|na|durante)\s+', '', match.group(0))
+        parsed = _parse_temporal_literal(literal)
+        if parsed:
+            _exact, start, end = parsed
+            windows.append((None, start, end, match.group(0)))
+    for match in _TEMPORAL_YEAR_RE.finditer(normalized):
+        if any(start <= match.start() < end for start, end in occupied):
+            continue
+        year = int(match.group(1))
+        windows.append((None, date(year, 1, 1), date(year, 12, 31), match.group(0)))
+    dedup, seen = [], set()
+    for item in windows:
+        key = (item[0], item[1], item[2])
+        if key not in seen:
+            seen.add(key)
+            dedup.append(item)
+    return dedup
+
+
+def parse_query_temporal_context(query):
+    query = str(query or '').strip()
+    comparative = _is_comparative_query(query)
+    historical = _is_historical_query(query)
+    windows = _temporal_windows(query)
+    mode = 'comparative' if comparative else 'historical' if (historical or windows) else 'current'
+    if len(windows) > 1 and comparative:
+        return QueryTemporalContext(mode=mode, raw_fragment='; '.join(item[3] for item in windows))
+    if not windows:
+        fragment = 'na época' if historical and 'na epoca' in _normalize_query_text(query) else None
+        return QueryTemporalContext(mode=mode, raw_fragment=fragment)
+    exact, start, end, fragment = windows[0]
+    return QueryTemporalContext(
+        mode=mode,
+        effective_on=exact,
+        effective_from=start,
+        effective_to=end,
+        raw_fragment=fragment,
+    )
+
 
 FILTER_RE = re.compile(r'@(\w+)(>=|<=|=|>|<)([^\s@]+)')
 ALLOWED_FILTERS = {
@@ -149,7 +301,7 @@ def _is_historical_query(query):
     return any(term in normalized for term in (
         'historico', 'historica', 'a epoca', 'naquela epoca',
         'era aplicavel', 'era aplicavel em', 'estava vigente',
-        'estava em vigor', 'quando era aplicavel', 'antes de',
+        'estava em vigor', 'quando era aplicavel', 'antes de', 'depois de',
     ))
 
 
@@ -256,7 +408,7 @@ def _infer_query_filters(query):
     return inferred
 
 
-def qfilter(filters=None, query=None):
+def qfilter(filters=None, query=None, temporal_context=None):
     filters = dict(filters or {})
     if not filters and not query:
         return None
@@ -301,7 +453,37 @@ def qfilter(filters=None, query=None):
                 conditions.append(models.FieldCondition(key=key, match=models.MatchAny(any=normalized)))
             continue
         conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=_coerce_filter_value(key, value))))
-    if explicit_regime is None and query and not _is_transition_query(query):
+    if temporal_context is None and query:
+        temporal_context = parse_query_temporal_context(query)
+
+    if temporal_context.has_filter:
+        if temporal_context.effective_on is not None:
+            target_day = int(temporal_context.effective_on.strftime('%Y%m%d'))
+            conditions.extend([
+                models.FieldCondition(
+                    key='effective_from_day',
+                    range=models.Range(lte=target_day),
+                ),
+                models.FieldCondition(
+                    key='effective_to_day',
+                    range=models.Range(gte=target_day),
+                ),
+            ])
+        else:
+            start_day = int(temporal_context.effective_from.strftime('%Y%m%d')) if temporal_context.effective_from else None
+            end_day = int(temporal_context.effective_to.strftime('%Y%m%d')) if temporal_context.effective_to else None
+            if end_day is not None:
+                conditions.append(models.FieldCondition(
+                    key='effective_from_day',
+                    range=models.Range(lte=end_day),
+                ))
+            if start_day is not None:
+                conditions.append(models.FieldCondition(
+                    key='effective_to_day',
+                    range=models.Range(gte=start_day),
+                ))
+
+    if explicit_regime is None and query and not _is_transition_query(query) and not temporal_context.is_historicalish:
         target_regimes = _query_regimes(query)
         if len(target_regimes) > 1:
             conditions.append(
@@ -336,7 +518,12 @@ def build_retrieval_plan(query, filters=None):
     filter_values = dict(filters or {})
     if parsed_filters:
         filter_values = {**parsed_filters, **filter_values}
-    qdrant_filter = qfilter(filter_values, normalized_query) if (filter_values or normalized_query) else None
+    temporal_context = parse_query_temporal_context(normalized_query)
+    qdrant_filter = qfilter(
+        filter_values,
+        normalized_query,
+        temporal_context=temporal_context,
+    ) if (filter_values or normalized_query) else None
     is_transition = _is_transition_query(normalized_query)
     is_historical = _is_historical_query(normalized_query)
     regime_hint = _query_regime(normalized_query)
@@ -348,8 +535,11 @@ def build_retrieval_plan(query, filters=None):
         'is_transition': is_transition,
         'is_historical': is_historical,
         'regime_hint': regime_hint,
-        'mandatory_sources': list(MANDATORY_CONTEXT_SOURCE_IDS),
-        'filtered_for_current_only': (not is_transition and regime_hint is not None) or (not is_transition and not regime_hint),
+        'temporal_context': temporal_context,
+        'temporal_context_dict': temporal_context.to_dict(),
+        'base_context_sources': list(BASE_CONTEXT_SOURCE_IDS),
+        'mandatory_sources': [],
+        'filtered_for_current_only': not temporal_context.is_historicalish,
     }
 
 
@@ -378,7 +568,7 @@ def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
     ).points
 
 
-def mandatory_context_points(client, dense, query, *, dense_vector=None):
+def auxiliary_context_points(client, dense, query, *, dense_vector=None):
     if dense_vector is None:
         query_embedding_text = 'query: ' + query
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
@@ -407,19 +597,14 @@ def mandatory_context_points(client, dense, query, *, dense_vector=None):
             continue
         point = points[0]
         point.payload['_mandatory_context'] = True
-        point.payload['_context_only'] = False
+        point.payload['_context_only'] = True
         selected.append(point)
-    if missing:
-        labels = {
-            'lei14133': 'Lei nº 14.133/2021',
-            'tcu-manual-licitacoes': 'Manual de Licitações e Contratos do TCU',
-        }
-        missing_labels = ', '.join(labels[item] for item in missing)
-        raise RuntimeError(
-            'Fontes obrigatórias não estão indexadas: ' + missing_labels +
-            '. Execute a sincronização das fontes e o ingest antes de consultar.'
-        )
+    # Fontes-base são auxiliares; ausência ou falta de espaço não invalida a
+    # evidência principal da pergunta.
     return selected
+
+
+mandatory_context_points = auxiliary_context_points
 
 
 def evidence_score(raw_score, mode=None):
@@ -868,31 +1053,31 @@ def context(points):
 
 
 def retrieve_context(client, dense, sparse, reranker, raw):
-    query, filters = parse_filters(raw)
+    plan = build_retrieval_plan(raw)
+    query = plan['query']
     if not query:
         return '', [], []
-    query_embedding_text = 'query: ' + _retrieval_query(query)
+    query_embedding_text = 'query: ' + plan['retrieval_query']
     validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
     dense_vector = list(dense.embed([query_embedding_text]))[0]
     points = rerank(
         reranker,
         query,
-        hybrid(client, dense, sparse, query, qfilter(filters), dense_vector=dense_vector),
-        filters,
+        hybrid(client, dense, sparse, query, plan['qdrant_filter'], dense_vector=dense_vector),
+        plan['filters'],
     )
-    mandatory = mandatory_context_points(client, dense, query, dense_vector=dense_vector)
-    context_points = expand_context(client, points) if points else []
+    if not points:
+        # O contexto-base auxiliar jamais pode substituir a evidência principal.
+        return query, [], []
+    base_context = auxiliary_context_points(client, dense, query, dense_vector=dense_vector)
+    context_points = expand_context(client, points)
     primary_ids = {point.id for point in context_points}
-    for point in mandatory:
+    for point in base_context:
         if point.id not in primary_ids:
             point.payload['_context_only'] = True
             point.payload['_mandatory_context'] = True
-
-    # A evidência recuperada tem precedência. Fontes obrigatórias entram
-    # somente depois e podem ser descartadas pelo limite de contexto sem
-    # expulsar a prova principal.
     ordered = list(context_points)
-    ordered.extend(point for point in mandatory if point.id not in primary_ids)
+    ordered.extend(point for point in base_context if point.id not in primary_ids)
     context_text, context_sources = context_with_sources(ordered)
     if not context_sources:
         return query, [], []
