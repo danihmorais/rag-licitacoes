@@ -82,7 +82,18 @@ def test_annex_ast_uses_immediate_internal_structural_parent():
         'Art. 1º Regra do anexo.\n'
     )
     root = build_legal_ast(text)
-    annex = next(node for node in root.children if node.kind == 'anexo')
+    norma = next(node for node in root.children if node.kind == 'norma')
+
+    def find(node, kind):
+        for child in node.children:
+            if child.kind == kind:
+                return child
+            found = find(child, kind)
+            if found is not None:
+                return found
+        return None
+
+    annex = find(norma, 'anexo')
     chapter = next(node for node in annex.children if node.kind == 'capitulo')
     section = next(node for node in chapter.children if node.kind == 'secao')
     article = next(node for node in section.children if node.kind == 'artigo')
