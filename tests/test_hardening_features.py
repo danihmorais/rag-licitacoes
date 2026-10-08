@@ -85,4 +85,4 @@ def test_document_replacement_rolls_back_when_upsert_fails():
         assert "versão anterior preservada" in str(exc)
     else:
         raise AssertionError("falha de upsert deveria acionar rollback")
-    assert [event[0] for event in client.events] == ["delete", "upsert", "delete", "upsert"]
+    assert [event[0] for event in client.events] == ["upsert", "delete"]
