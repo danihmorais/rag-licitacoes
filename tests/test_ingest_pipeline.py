@@ -9,7 +9,8 @@ def test_ingest_uses_structural_chunking_without_llm_preprocessing():
     assert "precomputed_chunks" not in source
     assert "AI_CHUNKING" not in source
     assert "Carregando modelos de embeddings/reranker na GPU." in source
-    assert "CACHE_VERSION = 1" in source
+    assert "CACHE_VERSION = 2" in source
+    assert "'--rebuild-unmanifested'" in source
 
     assert "fastembed_kwargs = embedding_kwargs()" in source
     assert "from dense_embeddings import create_dense_embedding" in source
