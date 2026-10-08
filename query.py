@@ -568,7 +568,8 @@ def build_retrieval_plan(query, filters=None):
 
 
 def embedding_kwargs():
-    config.validate_gpu_runtime()
+    if config.FASTEMBED_REQUIRE_CUDA:
+        config.validate_gpu_runtime()
     return {'providers': list(config.FASTEMBED_PROVIDERS)}
 
 
@@ -577,13 +578,16 @@ def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
         query_embedding_text = 'query: ' + _retrieval_query(query)
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
         dense_vector = list(dense.embed([query_embedding_text]))[0]
-    sparse_vector = list(sparse.embed([query]))[0]
+    sparse_query_vector = list(sparse.embed([query]))[0]
     return client.query_points(
         collection_name=config.COLLECTION_NAME,
         prefetch=[
             models.Prefetch(query=dense_vector.tolist(), using='dense', limit=config.CANDIDATES_K, filter=query_filter),
             models.Prefetch(
-                query=models.SparseVector(indices=sparse_vector.indices.tolist(), values=sparse_vector.values.tolist()),
+                query=models.SparseVector(
+                    indices=sparse_query_vector.indices.tolist(),
+                    values=sparse_query_vector.values.tolist(),
+                ),
                 using='sparse', limit=config.CANDIDATES_K, filter=query_filter,
             ),
         ],
@@ -597,38 +601,44 @@ def auxiliary_context_points(client, dense, query, *, dense_vector=None):
         query_embedding_text = 'query: ' + query
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
         dense_vector = list(dense.embed([query_embedding_text]))[0]
-    selected = []
-    missing = []
-    for source_id in MANDATORY_CONTEXT_SOURCE_IDS:
+    requests = []
+    source_ids = list(MANDATORY_CONTEXT_SOURCE_IDS)
+    for source_id in source_ids:
         query_filter = models.Filter(
             must=[models.FieldCondition(
                 key='source_id',
                 match=models.MatchValue(value=source_id),
             )]
         )
-        result = client.query_points(
-            collection_name=config.COLLECTION_NAME,
-            query=dense_vector.tolist(),
-            using='dense',
-            query_filter=query_filter,
-            limit=1,
-            with_payload=True,
-            with_vectors=False,
+        requests.append(
+            models.QueryRequest(
+                query=dense_vector.tolist(),
+                using='dense',
+                filter=query_filter,
+                limit=1,
+                with_payload=True,
+                with_vector=False,
+            )
         )
-        points = list(result.points or [])
+
+    responses = client.query_batch_points(
+        collection_name=config.COLLECTION_NAME,
+        requests=requests,
+    )
+    selected = []
+    for source_id, response in zip(source_ids, responses):
+        points = list(getattr(response, 'points', None) or [])
         if not points:
-            missing.append(source_id)
             continue
         point = points[0]
         point.payload['_mandatory_context'] = True
         point.payload['_context_only'] = True
         selected.append(point)
-    # Fontes-base são auxiliares; ausência ou falta de espaço não invalida a
-    # evidência principal da pergunta.
     return selected
 
 
 mandatory_context_points = auxiliary_context_points
+
 
 
 def evidence_score(raw_score, mode=None):
@@ -945,11 +955,7 @@ def rerank(reranker, query, points, filters=None, limit=None):
 
 
 def expand_context(client, points):
-    """Expande evidências pelos chunks vizinhos da mesma unidade jurídica.
-
-    Para artigos, o primeiro chunk (caput, chunk_index=0) é sempre trazido,
-    mesmo quando a evidência recuperada está distante dele.
-    """
+    """Expande evidências pelos chunks vizinhos usando filtro de faixa no servidor."""
     if not points:
         return points
     groups = {}
@@ -962,16 +968,42 @@ def expand_context(client, points):
         payload['_context_priority'] = float(payload.get('_evidence_score', 0.0))
         selected[point.id] = point
 
+    payload_fields = [
+        'source', 'title', 'page', 'page_end', 'page_uncertain',
+        'unit_ref', 'unit_kind', 'unit_id', 'chunk_index',
+        'source_role', 'authority_level', 'status', 'jurisdicao',
+        'effective_from', 'effective_to', 'data_vigencia',
+        'retrieved_at', 'version_sha256', 'metadata_ambiguous',
+        'text_origin', 'extraction_confidence', 'fonte_oficial',
+        'page_content',
+    ]
+
     for (source, unit_id), group_points in groups.items():
         if not source or not unit_id:
             continue
         is_article = any(point.payload.get('unit_kind') == 'artigo' for point in group_points)
+        ranges = []
+        for point in group_points:
+            center = int(point.payload.get('chunk_index', 0))
+            ranges.append((max(0, center - config.CONTEXT_NEIGHBORS), center + config.CONTEXT_NEIGHBORS))
+        if is_article:
+            ranges.append((0, 0))
+
+        should_ranges = [
+            models.FieldCondition(
+                key='chunk_index',
+                range=models.Range(gte=start, lte=end),
+            )
+            for start, end in ranges
+        ]
         query_filter = models.Filter(
             must=[
                 models.FieldCondition(key='source', match=models.MatchValue(value=source)),
                 models.FieldCondition(key='unit_id', match=models.MatchValue(value=unit_id)),
-            ]
+            ],
+            should=should_ranges,
         )
+
         offset = None
         while True:
             neighbors, offset = client.scroll(
@@ -979,7 +1011,7 @@ def expand_context(client, points):
                 scroll_filter=query_filter,
                 limit=256,
                 offset=offset,
-                with_payload=True,
+                with_payload=payload_fields,
                 with_vectors=False,
             )
             for neighbor in neighbors:
@@ -988,27 +1020,17 @@ def expand_context(client, points):
                     abs(index - int(point.payload.get('chunk_index', 0)))
                     for point in group_points
                 ]
-                related_indexes = [
-                    idx for idx, distance in enumerate(distances)
-                    if distance <= config.CONTEXT_NEIGHBORS
-                ]
                 is_forced_article_caput = is_article and index == 0
-                if not related_indexes and not is_forced_article_caput:
+                if not any(distance <= config.CONTEXT_NEIGHBORS for distance in distances) and not is_forced_article_caput:
                     continue
-
-                related_points = (
-                    [group_points[idx] for idx in related_indexes]
-                    if related_indexes
-                    else group_points
-                )
                 priority = max(
                     float(point.payload.get('_evidence_score', 0.0))
-                    for point in related_points
+                    for point in group_points
+                    if abs(index - int(point.payload.get('chunk_index', 0))) <= config.CONTEXT_NEIGHBORS
+                ) if any(distance <= config.CONTEXT_NEIGHBORS for distance in distances) else max(
+                    float(point.payload.get('_evidence_score', 0.0)) for point in group_points
                 )
-                distance = min(
-                    distances[idx] for idx in related_indexes
-                ) if related_indexes else min(distances)
-
+                distance = min(distances)
                 existing = selected.get(neighbor.id)
                 if existing is not None:
                     existing.payload['_context_priority'] = max(
@@ -1016,7 +1038,6 @@ def expand_context(client, points):
                         priority,
                     )
                     continue
-
                 neighbor.payload['_context_only'] = True
                 neighbor.payload['_context_priority'] = priority
                 neighbor.payload['_context_distance'] = distance
@@ -1125,6 +1146,7 @@ Resposta a corrigir:
     return llm.generate(
         system_prompt=SYSTEM_PROMPT.format(context=context_text),
         user_prompt=repair_prompt,
+        max_tokens=config.EVIDENCE_REPAIR_MAX_TOKENS,
     )
 
 
