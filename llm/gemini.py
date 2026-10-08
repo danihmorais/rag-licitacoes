@@ -12,11 +12,13 @@ class GeminiProvider(LLMProvider):
         model: str,
         temperature: float,
         timeout: int,
+        max_tokens: int = 1024,
     ):
         super().__init__(model, temperature, timeout)
         self.api_key = api_key
+        self.max_tokens = int(max_tokens)
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         if not self.api_key:
             raise LLMProviderError("GEMINI_API_KEY não está configurada para o provedor Gemini.")
 
@@ -28,7 +30,10 @@ class GeminiProvider(LLMProvider):
         payload = {
             "systemInstruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {"temperature": self.temperature},
+            "generationConfig": {
+                "temperature": self.temperature,
+                "maxOutputTokens": self.max_tokens if max_tokens is None else int(max_tokens),
+            },
         }
 
         response = None
