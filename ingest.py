@@ -588,7 +588,7 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
         page_content = compose_page_content(hierarchy)
         # Títulos de capítulo/seção enriquecem a busca, mas o embedding trunca em silêncio acima de
         # DENSE_MAX_TOKENS: descarta primeiro o nível mais genérico (título da norma) até caber.
-        while len(hierarchy) > 1 and token_count('passage: ' + page_content) > config.DENSE_MAX_TOKENS:
+        while len(hierarchy) > 1 and token_count(config.DENSE_DOCUMENT_PREFIX + page_content) > config.DENSE_MAX_TOKENS:
             hierarchy = hierarchy[1:]
             page_content = compose_page_content(hierarchy)
         embedding_text = config.DENSE_DOCUMENT_PREFIX + page_content
