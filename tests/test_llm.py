@@ -48,9 +48,11 @@ def test_ollama_sends_configured_context_window(monkeypatch):
         return FakeOllamaResponse()
 
     monkeypatch.setattr("llm.ollama.requests.post", fake_post)
-    provider = OllamaProvider("http://example.test", "model", 0.1, 30, num_ctx=16384)
+    provider = OllamaProvider("http://example.test", "model", 0.1, 30, num_ctx=16384, max_tokens=256)
     assert provider.generate("system", "user") == "ok"
     assert captured["json"]["options"]["num_ctx"] == 16384
+    assert captured["json"]["options"]["num_predict"] == 256
+    assert captured["json"]["keep_alive"] == "10m"
 
 
 def test_openai_compatible_maps_timeout(monkeypatch):
