@@ -643,13 +643,29 @@ def validate_model_cuda(model, *, label):
 
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
-        client.create_collection(
-            collection_name=config.COLLECTION_NAME,
-            vectors_config={
-                'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)
+        vectors = {
+            'dense': models.VectorParams(
+                size=config.DENSE_DIM,
+                distance=models.Distance.COSINE,
+                on_disk=config.QDRANT_DENSE_ON_DISK,
+            )
+        }
+        create_kwargs = {
+            'collection_name': config.COLLECTION_NAME,
+            'vectors_config': vectors,
+            'sparse_vectors_config': {
+                'sparse': models.SparseVectorParams(modifier=models.Modifier.IDF),
             },
-            sparse_vectors_config={'sparse': models.SparseVectorParams()},
-        )
+        }
+        if config.QDRANT_DENSE_QUANTIZATION == 'int8':
+            create_kwargs['quantization_config'] = models.ScalarQuantization(
+                scalar=models.ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                )
+            )
+        client.create_collection(**create_kwargs)
     for field_name, field_type in config.QDRANT_PAYLOAD_INDEXES.items():
         try:
             field_schema = PAYLOAD_INDEX_TYPES[field_type]
@@ -726,11 +742,15 @@ def delete_point_ids(client, point_ids):
 
 def upsert_points(client, points):
     points = list(points)
-    for start in range(0, len(points), config.QDRANT_UPSERT_BATCH_SIZE):
+    batches = [
+        points[start:start + config.QDRANT_UPSERT_BATCH_SIZE]
+        for start in range(0, len(points), config.QDRANT_UPSERT_BATCH_SIZE)
+    ]
+    for index, batch in enumerate(batches):
         client.upsert(
             collection_name=config.COLLECTION_NAME,
-            points=points[start:start + config.QDRANT_UPSERT_BATCH_SIZE],
-            wait=True,
+            points=batch,
+            wait=index == len(batches) - 1,
         )
 
 
@@ -738,26 +758,16 @@ def delete_doc(client, doc_id, legacy_source=None):
     delete_point_ids(client, source_point_ids(client, doc_id, legacy_source=legacy_source))
 
 
-def _restore_points(client, points):
-    if not points:
-        return
-    restored = [
-        models.PointStruct(id=point.id, vector=point.vector, payload=point.payload or {})
-        for point in points
-    ]
-    upsert_points(client, restored)
-
-
 def replace_document_points(client, doc_id, new_points, legacy_source=None):
     if not new_points:
         raise ValueError(f'Nenhum chunk produzido para {doc_id}.')
-    old_points = []
-    seen_ids = set()
+    old_ids = set()
     filters = [_filter_for_doc_id(doc_id)]
     if legacy_source and str(legacy_source) != str(doc_id):
         filters.append(models.Filter(
             must=[models.FieldCondition(key='source', match=models.MatchValue(value=str(legacy_source)))]
         ))
+    seen_ids = set()
     for point_filter in filters:
         offset = None
         while True:
@@ -766,29 +776,50 @@ def replace_document_points(client, doc_id, new_points, legacy_source=None):
                 scroll_filter=point_filter,
                 limit=256,
                 offset=offset,
-                with_payload=True,
-                with_vectors=True,
+                with_payload=False,
+                with_vectors=False,
             )
             for point in points:
                 if point.id not in seen_ids:
                     seen_ids.add(point.id)
-                    old_points.append(point)
+                    old_ids.add(point.id)
             if offset is None:
                 break
-    old_ids = {point.id for point in old_points}
+    new_ids = {point.id for point in new_points}
     try:
-        delete_point_ids(client, old_ids)
+        # Nova versão primeiro: uma falha de upsert não destrói a versão antiga.
         upsert_points(client, new_points)
+        delete_point_ids(client, old_ids - new_ids)
     except Exception as exc:
         try:
-            delete_point_ids(client, {point.id for point in new_points})
-            _restore_points(client, old_points)
+            delete_point_ids(client, new_ids - old_ids)
         except Exception as rollback_exc:
             raise RuntimeError(
-                f'Falha na substituição de {doc_id} e rollback também falhou: {rollback_exc}'
+                f'Falha na substituição de {doc_id}; limpeza parcial também falhou: {rollback_exc}'
             ) from exc
-        raise RuntimeError(f'Falha na substituição de {doc_id}; versão anterior restaurada.') from exc
+        raise RuntimeError(
+            f'Falha na substituição de {doc_id}; versão anterior preservada quando possível.'
+        ) from exc
     return old_ids
+
+
+def _facet_payload_counts(client, field_name):
+    response = client.facet(
+        collection_name=config.COLLECTION_NAME,
+        key=field_name,
+        limit=100000,
+        exact=True,
+    )
+    counts = {}
+    for hit in getattr(response, 'hits', []) or []:
+        value = getattr(hit, 'value', None)
+        count = getattr(hit, 'count', None)
+        if value is None and isinstance(hit, dict):
+            value = hit.get('value')
+            count = hit.get('count')
+        if value is not None:
+            counts[str(value)] = int(count or 0)
+    return counts
 
 
 def prune_stale_documents(client, active_names, *, delete=True, return_ids=False):
@@ -796,27 +827,15 @@ def prune_stale_documents(client, active_names, *, delete=True, return_ids=False
         return [] if return_ids else 0
     if not client.collection_exists(config.COLLECTION_NAME):
         return [] if return_ids else 0
-    indexed_ids = set()
-    offset = None
-    while True:
-        points, offset = client.scroll(
-            collection_name=config.COLLECTION_NAME,
-            limit=256,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
-        for point in points:
-            payload = point.payload or {}
-            doc_id = payload.get('doc_id') or payload.get('source')
-            if doc_id:
-                indexed_ids.add(str(doc_id))
-        if offset is None:
-            break
+    indexed_ids = set(_facet_payload_counts(client, 'doc_id'))
     stale = sorted(indexed_ids - {str(item) for item in active_names})
     if delete:
         for doc_id in stale:
-            delete_doc(client, doc_id)
+            client.delete(
+                collection_name=config.COLLECTION_NAME,
+                points_selector=_filter_for_doc_id(doc_id),
+                wait=True,
+            )
     return stale if return_ids else len(stale)
 
 
@@ -893,15 +912,18 @@ def main():
     document_manifest = {}
     revocations = []
 
-    print('Carregando modelos de embeddings/reranker na GPU.')
-    config.validate_gpu_runtime()
-    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, cuda=True)
+    print('Carregando modelos de embeddings/reranker.')
+    fastembed_kwargs = embedding_kwargs()
+    dense = TextEmbedding(
+        model_name=config.DENSE_MODEL,
+        max_length=config.DENSE_MAX_TOKENS,
+        **fastembed_kwargs,
+    )
     validate_model_cuda(dense, label='Embedding denso')
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
-    sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
-    ensure_collection(client)
+    sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **fastembed_kwargs)
     cache, errors, skipped = read_cache(), [], 0
     document_manifest = {}
     revocations = []
