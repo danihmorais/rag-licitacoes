@@ -19,6 +19,7 @@ on:
       - 'embedding_utils.py'
       - 'evaluation/**'
       - 'tests/**'
+      - 'requirements-ci.txt'
       - 'requirements.txt'
   push:
     branches:
