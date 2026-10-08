@@ -532,6 +532,8 @@ def sync_web_articles(session, source, check=False):
                 _article_cache_text(source, article),
                 document_id,
                 article["title"],
+                requested_url=article.get('url'),
+                response_headers=getattr(session, '_rag_response_headers', {}),
                 extra_meta={
                     "data_publicacao": article["date_publicacao"].isoformat(),
                     "ano": article["date_publicacao"].year,
