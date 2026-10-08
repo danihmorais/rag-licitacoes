@@ -105,3 +105,15 @@ def test_gpu_runtime_validation_preloads_cuda_dlls(monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "onnxruntime", FakeOrt)
     config.validate_gpu_runtime()
     assert FakeOrt.called
+
+
+def test_ci_requirements_use_cpu_fastembed_stack():
+    from pathlib import Path
+
+    path = Path(__file__).parents[1] / "requirements-ci.txt"
+    lines = {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.lstrip().startswith("#")}
+    assert "fastembed==0.8.0" in lines
+    assert "fastembed-gpu==0.8.0" not in lines
+    assert "onnxruntime==1.23.2" in lines
+    assert not any(line.startswith("onnxruntime-gpu==") for line in lines)
+    assert not any(line.startswith("nvidia-") for line in lines)
