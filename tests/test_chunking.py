@@ -331,6 +331,7 @@ def test_remote_embedding_does_not_try_fastembed_for_tokenizer(monkeypatch, caps
     import fastembed
 
     monkeypatch.setattr(chunking.config, "DENSE_BACKEND", "unsloth_openai")
+    monkeypatch.setattr(chunking, "_cached_remote_tokenizer", lambda: None)
 
     def fail_if_called(**_kwargs):
         raise AssertionError("FastEmbed must not load a remote embedding model")
