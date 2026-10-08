@@ -98,6 +98,10 @@ class _FastEmbedDense:
             providers=list(config.FASTEMBED_PROVIDERS),
         )
 
+    @property
+    def tokenizer(self):
+        return getattr(getattr(self.model, 'model', None), 'tokenizer', None)
+
     def embed(self, texts):
         return np.asarray(list(self.model.embed(texts)), dtype=np.float32)
 
