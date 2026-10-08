@@ -729,6 +729,11 @@ def _restore_abbreviation_dots(text):
     return text.replace(ABBREVIATION_DOT_SENTINEL, ".")
 @lru_cache(maxsize=2)
 def _default_tokenizer(providers=None):
+    # Um modelo remoto servido pelo Studio não precisa ser carregado pelo FastEmbed
+    # só para obter o tokenizer. Além de falhar para modelos não suportados, isso
+    # emite avisos enganosos. O chunker usa fallback conservador por caracteres.
+    if config.DENSE_BACKEND != "fastembed":
+        return None
     try:
         from fastembed import TextEmbedding
         selected_providers = tuple(providers) if providers is not None else tuple(config.FASTEMBED_PROVIDERS)
