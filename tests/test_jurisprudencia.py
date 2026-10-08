@@ -316,6 +316,7 @@ def test_tjsp_adapter_uses_current_cjsg_post_then_page_contract():
     ])).search("licitação contrato administrativo", 1, detail=True)
     assert len(records) == 1
     assert records[0].numero_processo == "1017109-50.2020.8.26.0053"
+    assert records[0].numero_decisao == "15096525"
     assert records[0].relator == "Des. Exemplo"
     assert records[0].data_publicacao == "12/12/2023"
     assert records[0].url_oficial.endswith("cdForo=0")
@@ -492,3 +493,16 @@ def test_tcesp_search_does_not_send_blank_document_type():
     with pytest.raises(RuntimeError):
         TCESPAdapter(CaptureSession([FakeResponse(html, content_type='text/html', url='https://www.tce.sp.gov.br/jurisprudencia/pesquisar')])).search('licitação', 1)
         raise AssertionError("a página sintética não deveria gerar registro")
+
+
+def test_tjsp_distinct_acordao_numbers_have_distinct_document_keys():
+    common = dict(
+        tribunal="TJSP",
+        numero_processo="1017109-50.2020.8.26.0053",
+        tipo_decisao="Acórdão",
+        ementa="Licitação e contrato administrativo.",
+        url_oficial="https://esaj.tjsp.jus.br/cjsg/getArquivo.do?cdForo=0",
+    )
+    first = JurisprudenciaRecord(numero_decisao="15096525", **common)
+    second = JurisprudenciaRecord(numero_decisao="15096526", **common)
+    assert first.document_key != second.document_key
