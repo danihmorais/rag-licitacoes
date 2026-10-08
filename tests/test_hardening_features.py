@@ -82,7 +82,7 @@ def test_document_replacement_rolls_back_when_upsert_fails():
     try:
         ingest.replace_document_points(client, "doc-1", [new])
     except RuntimeError as exc:
-        assert "versão anterior restaurada" in str(exc)
+        assert "versão anterior preservada" in str(exc)
     else:
         raise AssertionError("falha de upsert deveria acionar rollback")
-    assert [event[0] for event in client.events] == ["delete", "upsert", "delete", "upsert"]
+    assert [event[0] for event in client.events] == ["upsert", "delete"]

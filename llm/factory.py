@@ -23,6 +23,7 @@ def get_llm_provider(purpose: str = 'answer') -> LLMProvider:
             temperature=temperature,
             timeout=timeout,
             num_ctx=config.OLLAMA_NUM_CTX,
+            max_tokens=max_tokens,
         )
 
     if provider in {'openai_compatible', 'openai-compatible', 'openrouter'}:
@@ -41,6 +42,7 @@ def get_llm_provider(purpose: str = 'answer') -> LLMProvider:
             model=model,
             temperature=temperature,
             timeout=timeout,
+            max_tokens=max_tokens,
         )
 
     raise ValueError(

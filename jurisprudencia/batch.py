@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
-from .collector import TRIBUNALS, collect, save_record
+from .collector import TRIBUNALS, adapters, collect, make_session, save_record
 from .sumulas import collect_sumulas
 from .queries import DEFAULT_QUERIES, parse_queries
 
@@ -53,10 +53,12 @@ def collect_batch(
     include_sumulas=True,
 ):
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
+    dlq_path = dlq_path or (Path(output_dir) / 'jurisprudencia_dlq.jsonl')
     output = []
     seen = set()
     counts = {tribunal: 0 for tribunal in tribunals}
     failures = set()
+    source_adapters = adapters(make_session())
 
     if limit < 1:
         raise ValueError('limit deve ser >= 1')
@@ -85,6 +87,7 @@ def collect_batch(
                     with_content=with_content,
                     output_dir=output_dir,
                     persist=False,
+                    source_adapters=source_adapters,
                 )
             except Exception as exc:
                 failures.add(tribunal)

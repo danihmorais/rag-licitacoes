@@ -18,7 +18,7 @@ from qdrant_client import models
 import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
-from chunking import build_structural_chunks
+from chunking import CHUNKING_VERSION, build_structural_chunks
 from embedding_utils import validate_embedding_inputs
 
 PAYLOAD_INDEX_TYPES = {
@@ -103,14 +103,13 @@ def file_hash(path):
     return digest.hexdigest()
 
 
-def metadata_fingerprint(document):
+def _metadata_fingerprint_base():
     digest = hashlib.sha256()
     metadata_path = Path(__file__).with_name('metadata.py')
     digest.update(b'metadata.py\0')
     digest.update(metadata_path.read_bytes())
-    chunking_path = Path(__file__).with_name('chunking.py')
-    digest.update(b'chunking.py\0')
-    digest.update(chunking_path.read_bytes())
+    digest.update(b'chunking_version\0')
+    digest.update(str(CHUNKING_VERSION).encode('ascii'))
     config_values = (
         config.OCR_ENABLED,
         config.OCR_REQUIRED,
@@ -118,10 +117,15 @@ def metadata_fingerprint(document):
         config.OCR_MIN_NATIVE_CONFIDENCE,
         config.OCR_DPI,
         config.OCR_LANGUAGE,
-        config.LLM_PROVIDER,
-        config.LLM_MODEL,
     )
-    digest.update(json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    digest.update(
+        json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    )
+    return digest
+
+
+def metadata_fingerprint(document, *, base=None):
+    digest = (base or _metadata_fingerprint_base()).copy()
     sidecar = document.with_suffix('.json')
     if sidecar.exists():
         digest.update(b'sidecar.json\0')
@@ -624,7 +628,7 @@ def embedding_kwargs():
 
 
 def validate_model_cuda(model, *, label):
-    """Impede que o FastEmbed silenciosamente caia para CPU no modelo denso."""
+    """Valida se a sessão ONNX do embedding está efetivamente em CUDA."""
     onnx_model = getattr(model, 'model', None)
     session = getattr(onnx_model, 'model', None)
     if session is None:
@@ -639,13 +643,29 @@ def validate_model_cuda(model, *, label):
 
 def ensure_collection(client):
     if not client.collection_exists(config.COLLECTION_NAME):
-        client.create_collection(
-            collection_name=config.COLLECTION_NAME,
-            vectors_config={
-                'dense': models.VectorParams(size=config.DENSE_DIM, distance=models.Distance.COSINE)
+        vectors = {
+            'dense': models.VectorParams(
+                size=config.DENSE_DIM,
+                distance=models.Distance.COSINE,
+                on_disk=config.QDRANT_DENSE_ON_DISK,
+            )
+        }
+        create_kwargs = {
+            'collection_name': config.COLLECTION_NAME,
+            'vectors_config': vectors,
+            'sparse_vectors_config': {
+                'sparse': models.SparseVectorParams(modifier=models.Modifier.IDF),
             },
-            sparse_vectors_config={'sparse': models.SparseVectorParams()},
-        )
+        }
+        if config.QDRANT_DENSE_QUANTIZATION == 'int8':
+            create_kwargs['quantization_config'] = models.ScalarQuantization(
+                scalar=models.ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                )
+            )
+        client.create_collection(**create_kwargs)
     for field_name, field_type in config.QDRANT_PAYLOAD_INDEXES.items():
         try:
             field_schema = PAYLOAD_INDEX_TYPES[field_type]
@@ -722,11 +742,15 @@ def delete_point_ids(client, point_ids):
 
 def upsert_points(client, points):
     points = list(points)
-    for start in range(0, len(points), config.QDRANT_UPSERT_BATCH_SIZE):
+    batches = [
+        points[start:start + config.QDRANT_UPSERT_BATCH_SIZE]
+        for start in range(0, len(points), config.QDRANT_UPSERT_BATCH_SIZE)
+    ]
+    for index, batch in enumerate(batches):
         client.upsert(
             collection_name=config.COLLECTION_NAME,
-            points=points[start:start + config.QDRANT_UPSERT_BATCH_SIZE],
-            wait=True,
+            points=batch,
+            wait=index == len(batches) - 1,
         )
 
 
@@ -734,26 +758,16 @@ def delete_doc(client, doc_id, legacy_source=None):
     delete_point_ids(client, source_point_ids(client, doc_id, legacy_source=legacy_source))
 
 
-def _restore_points(client, points):
-    if not points:
-        return
-    restored = [
-        models.PointStruct(id=point.id, vector=point.vector, payload=point.payload or {})
-        for point in points
-    ]
-    upsert_points(client, restored)
-
-
 def replace_document_points(client, doc_id, new_points, legacy_source=None):
     if not new_points:
         raise ValueError(f'Nenhum chunk produzido para {doc_id}.')
-    old_points = []
-    seen_ids = set()
+    old_ids = set()
     filters = [_filter_for_doc_id(doc_id)]
     if legacy_source and str(legacy_source) != str(doc_id):
         filters.append(models.Filter(
             must=[models.FieldCondition(key='source', match=models.MatchValue(value=str(legacy_source)))]
         ))
+    seen_ids = set()
     for point_filter in filters:
         offset = None
         while True:
@@ -762,29 +776,50 @@ def replace_document_points(client, doc_id, new_points, legacy_source=None):
                 scroll_filter=point_filter,
                 limit=256,
                 offset=offset,
-                with_payload=True,
-                with_vectors=True,
+                with_payload=False,
+                with_vectors=False,
             )
             for point in points:
                 if point.id not in seen_ids:
                     seen_ids.add(point.id)
-                    old_points.append(point)
+                    old_ids.add(point.id)
             if offset is None:
                 break
-    old_ids = {point.id for point in old_points}
+    new_ids = {point.id for point in new_points}
     try:
-        delete_point_ids(client, old_ids)
+        # Nova versão primeiro: uma falha de upsert não destrói a versão antiga.
         upsert_points(client, new_points)
+        delete_point_ids(client, old_ids - new_ids)
     except Exception as exc:
         try:
-            delete_point_ids(client, {point.id for point in new_points})
-            _restore_points(client, old_points)
+            delete_point_ids(client, new_ids - old_ids)
         except Exception as rollback_exc:
             raise RuntimeError(
-                f'Falha na substituição de {doc_id} e rollback também falhou: {rollback_exc}'
+                f'Falha na substituição de {doc_id}; limpeza parcial também falhou: {rollback_exc}'
             ) from exc
-        raise RuntimeError(f'Falha na substituição de {doc_id}; versão anterior restaurada.') from exc
+        raise RuntimeError(
+            f'Falha na substituição de {doc_id}; versão anterior preservada quando possível.'
+        ) from exc
     return old_ids
+
+
+def _facet_payload_counts(client, field_name):
+    response = client.facet(
+        collection_name=config.COLLECTION_NAME,
+        key=field_name,
+        limit=100000,
+        exact=True,
+    )
+    counts = {}
+    for hit in getattr(response, 'hits', []) or []:
+        value = getattr(hit, 'value', None)
+        count = getattr(hit, 'count', None)
+        if value is None and isinstance(hit, dict):
+            value = hit.get('value')
+            count = hit.get('count')
+        if value is not None:
+            counts[str(value)] = int(count or 0)
+    return counts
 
 
 def prune_stale_documents(client, active_names, *, delete=True, return_ids=False):
@@ -792,27 +827,34 @@ def prune_stale_documents(client, active_names, *, delete=True, return_ids=False
         return [] if return_ids else 0
     if not client.collection_exists(config.COLLECTION_NAME):
         return [] if return_ids else 0
-    indexed_ids = set()
-    offset = None
-    while True:
-        points, offset = client.scroll(
-            collection_name=config.COLLECTION_NAME,
-            limit=256,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
-        for point in points:
-            payload = point.payload or {}
-            doc_id = payload.get('doc_id') or payload.get('source')
-            if doc_id:
-                indexed_ids.add(str(doc_id))
-        if offset is None:
-            break
+    if hasattr(client, 'facet'):
+        indexed_ids = set(_facet_payload_counts(client, 'doc_id'))
+    else:
+        indexed_ids = set()
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=config.COLLECTION_NAME,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                doc_id = payload.get('doc_id') or payload.get('source')
+                if doc_id:
+                    indexed_ids.add(str(doc_id))
+            if offset is None:
+                break
     stale = sorted(indexed_ids - {str(item) for item in active_names})
     if delete:
         for doc_id in stale:
-            delete_doc(client, doc_id)
+            client.delete(
+                collection_name=config.COLLECTION_NAME,
+                points_selector=_filter_for_doc_id(doc_id),
+                wait=True,
+            )
     return stale if return_ids else len(stale)
 
 
@@ -888,32 +930,32 @@ def main():
     cache, errors, skipped = read_cache(), [], 0
     document_manifest = {}
     revocations = []
+    fingerprint_base = _metadata_fingerprint_base()
+    indexed_counts = _facet_payload_counts(client, 'doc_id') if client.collection_exists(config.COLLECTION_NAME) else {}
+    cached_since_flush = 0
 
-    print('Carregando modelos de embeddings/reranker na GPU.')
-    config.validate_gpu_runtime()
-    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, cuda=True)
-    validate_model_cuda(dense, label='Embedding denso')
+    print('Carregando modelos de embeddings/reranker na GPU.' if config.FASTEMBED_REQUIRE_CUDA else 'Carregando modelos de embeddings/reranker.')
+    fastembed_kwargs = embedding_kwargs()
+    dense = TextEmbedding(
+        model_name=config.DENSE_MODEL,
+        max_length=config.DENSE_MAX_TOKENS,
+        **fastembed_kwargs,
+    )
+    if config.FASTEMBED_REQUIRE_CUDA:
+        validate_model_cuda(dense, label='Embedding denso')
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
-    sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
-    ensure_collection(client)
-    cache, errors, skipped = read_cache(), [], 0
-    document_manifest = {}
-    revocations = []
+    sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **fastembed_kwargs)
 
     for document in target_files:
         digest = file_hash(document)
-        metadata_digest = metadata_fingerprint(document)
+        metadata_digest = metadata_fingerprint(document, base=fingerprint_base)
         document_meta = extract_metadata('', document)
         doc_id = document_id_for(document, document_meta)
         count_filter = _filter_for_doc_id(doc_id)
         entry = cache.get(document.name)
-        indexed_count = client.count(
-            config.COLLECTION_NAME,
-            count_filter=count_filter,
-            exact=True,
-        ).count
+        indexed_count = int(indexed_counts.get(doc_id, 0))
 
         if cache_entry_is_valid(
             entry,
@@ -965,6 +1007,9 @@ def main():
                         f"{doc_id}|{item['unit_id']}|{item['chunk_index']}|{item['page_content']}",
                     )
                 )
+                payload = dict(item)
+                for redundant_key in ('text', 'source_text', 'retrieval_text', 'embedding_text', 'full_unit_text'):
+                    payload.pop(redundant_key, None)
                 points.append(
                     models.PointStruct(
                         id=point_id,
@@ -975,11 +1020,13 @@ def main():
                                 values=sparse_vectors[index].values.tolist(),
                             ),
                         },
-                        payload=item,
+                        payload=payload,
                     )
                 )
             replace_document_points(client, doc_id, points, legacy_source=document.name)
             cache[document.name] = {'sha256': digest, 'metadata_fingerprint': metadata_digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
+            indexed_counts[doc_id] = len(points)
+            cached_since_flush += 1
             document_manifest[doc_id] = {
                 'sha256': digest,
                 'chunks': len(points),
@@ -991,7 +1038,9 @@ def main():
             }
             if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
                 revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
-            write_cache(cache)
+            if cached_since_flush >= 50:
+                write_cache(cache)
+                cached_since_flush = 0
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
             print(f'ERRO ao indexar {document.name}: {exc}. A versão anterior permanece disponível quando o upsert falhar.')

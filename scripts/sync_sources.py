@@ -33,6 +33,7 @@ for item in SOURCES:
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / 'db' / 'source_cache'
+_HTTP_CACHE_INDEX = None
 HEADERS = {
     'User-Agent': 'rag-licitacoes-source-sync/3.0 (+https://github.com/danihmorais/rag-licitacoes)',
     'Accept': 'text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.8',
@@ -155,11 +156,74 @@ def _fetch_with_wget(url, timeout=None):
     return _decode_response(raw, final)
 
 
+def _load_http_cache_index():
+    global _HTTP_CACHE_INDEX
+    if _HTTP_CACHE_INDEX is not None:
+        return _HTTP_CACHE_INDEX
+    index = {}
+    if CACHE.exists():
+        for sidecar in CACHE.glob('*.json'):
+            try:
+                meta = json.loads(sidecar.read_text(encoding='utf-8'))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            urls = {str(meta.get('fonte_url') or '').strip(), str(meta.get('requested_url') or '').strip()}
+            urls.discard('')
+            raw_path = sidecar.with_suffix('.bin')
+            text_path = sidecar.with_suffix('.txt')
+            if raw_path.exists() and text_path.exists():
+                entry = {'meta': meta, 'sidecar': sidecar, 'raw_path': raw_path, 'text_path': text_path}
+                for cached_url in urls:
+                    index[cached_url] = entry
+    _HTTP_CACHE_INDEX = index
+    return index
+
+
+def _invalidate_http_cache_index():
+    global _HTTP_CACHE_INDEX
+    _HTTP_CACHE_INDEX = None
+
+
 def fetch(session, url, *, timeout=None):
+    try:
+        session._rag_response_headers = {}
+    except Exception:
+        pass
+    cached = _load_http_cache_index().get(str(url).strip())
+    conditional_headers = {}
+    if cached:
+        meta = cached['meta']
+        if meta.get('etag'):
+            conditional_headers['If-None-Match'] = str(meta['etag'])
+        if meta.get('last_modified'):
+            conditional_headers['If-Modified-Since'] = str(meta['last_modified'])
     try:
         is_pdf = urlparse(url).path.lower().split('?', 1)[0].endswith('.pdf')
         response_timeout = timeout or ((8, 120) if is_pdf else (8, 20))
-        response = session.get(url, timeout=response_timeout, allow_redirects=True)
+        response = session.get(
+            url,
+            timeout=response_timeout,
+            allow_redirects=True,
+            headers=conditional_headers or None,
+        )
+        try:
+            session._rag_response_headers = dict(response.headers)
+        except Exception:
+            pass
+        if response.status_code == 304 and cached:
+            meta = cached['meta']
+            try:
+                session._rag_response_headers = {
+                    'etag': meta.get('etag'),
+                    'last-modified': meta.get('last_modified'),
+                    'content-type': meta.get('content_type'),
+                }
+            except Exception:
+                pass
+            raw = cached['raw_path'].read_bytes()
+            text = cached['text_path'].read_text(encoding='utf-8')
+            final = str(meta.get('fonte_url') or url)
+            return str(meta.get('source_kind') or ('pdf' if is_pdf else 'html')), final, raw, text
         response.raise_for_status()
         return _decode_response(
             response.content,
@@ -297,10 +361,11 @@ def _atomic_write_json(path, value):
     _atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
 
-def write_cache(source, final, kind, raw, text, document_id, title, extra_meta=None):
+def write_cache(source, final, kind, raw, text, document_id, title, extra_meta=None, *, requested_url=None, response_headers=None):
     CACHE.mkdir(parents=True, exist_ok=True)
     base = slug(document_id)
-    _atomic_write_text(CACHE / f'{base}.txt', text.strip() + '\n')
+    raw_hash = hashlib.sha256(raw).hexdigest()
+    response_headers = response_headers or {}
     meta = {
         'source_id': source['id'],
         'document_id': base,
@@ -324,15 +389,52 @@ def write_cache(source, final, kind, raw, text, document_id, title, extra_meta=N
         'norma_alteradora': source.get('norma_alteradora'),
         'fonte_oficial': final if source.get('is_official', True) else None,
         'fonte_url': final,
+        'requested_url': requested_url or final,
+        'etag': response_headers.get('etag'),
+        'last_modified': response_headers.get('last-modified'),
+        'content_type': response_headers.get('content-type'),
         'fonte_host': urlparse(final).netloc,
         'retrieved_at': datetime.now(timezone.utc).isoformat(),
         'data_versao': source.get('data_versao'),
         'source_kind': kind,
-        'sha256': hashlib.sha256(raw).hexdigest(),
+        'sha256': raw_hash,
     }
     if extra_meta:
         meta.update({key: value for key, value in extra_meta.items() if value not in (None, '')})
-    _atomic_write_json(CACHE / f'{base}.json', meta)
+
+    sidecar = CACHE / f'{base}.json'
+    text_path = CACHE / f'{base}.txt'
+    raw_path = CACHE / f'{base}.bin'
+    previous = None
+    if sidecar.exists():
+        try:
+            previous = json.loads(sidecar.read_text(encoding='utf-8'))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            previous = None
+
+    def comparable(value):
+        data = dict(value or {})
+        data.pop('retrieved_at', None)
+        return data
+
+    if previous and text_path.exists() and raw_path.exists() and comparable(previous) == comparable(meta):
+        _invalidate_http_cache_index()
+        return False
+
+    _atomic_write_text(text_path, text.strip() + '\n')
+    raw_fd, raw_temp = tempfile.mkstemp(prefix=f'.{raw_path.name}.', suffix='.tmp', dir=CACHE)
+    try:
+        with os.fdopen(raw_fd, 'wb') as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(raw_temp, raw_path)
+    finally:
+        if os.path.exists(raw_temp):
+            os.unlink(raw_temp)
+    _atomic_write_json(sidecar, meta)
+    _invalidate_http_cache_index()
+    return True
 
 
 def cleanup_source_cache(source_id, keep_document_ids):
@@ -349,6 +451,8 @@ def cleanup_source_cache(source_id, keep_document_ids):
             continue
         sidecar.unlink(missing_ok=True)
         sidecar.with_suffix('.txt').unlink(missing_ok=True)
+        sidecar.with_suffix('.bin').unlink(missing_ok=True)
+        _invalidate_http_cache_index()
         removed += 1
     return removed
 
@@ -362,7 +466,7 @@ def sync_one(session, source, check=False, follow_links=True):
             validate(source, text, linked=False, final_url=final)
             seen_ids = {slug(source['id'])}
             if not check and not source.get('index_only'):
-                write_cache(source, final, kind, raw, text, source['id'], source['title'])
+                write_cache(source, final, kind, raw, text, source['id'], source['title'], response_headers=getattr(session, '_rag_response_headers', {}))
             linked_ok = linked_total = 0
             link_failures = False
             if follow_links and source.get('follow_links') and kind == 'html':
@@ -377,7 +481,7 @@ def sync_one(session, source, check=False, follow_links=True):
                         )
                         seen_ids.add(slug(document_id))
                         if not check:
-                            write_cache(source, linked_final, linked_kind, linked_raw, linked_text, document_id, link_title)
+                            write_cache(source, linked_final, linked_kind, linked_raw, linked_text, document_id, link_title, response_headers=getattr(session, '_rag_response_headers', {}), requested_url=link_url)
                     except Exception as exc:
                         link_failures = True
                         print(f'  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}; cache anterior preservado')

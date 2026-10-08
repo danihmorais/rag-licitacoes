@@ -25,7 +25,7 @@ RERANK_AUTHORITY_WEIGHT = float(os.getenv('RAG_RERANK_AUTHORITY_WEIGHT', '0.20')
 RERANK_JURISDICTION_WEIGHT = float(os.getenv('RAG_RERANK_JURISDICTION_WEIGHT', '0.12'))
 CHUNK_SIZE = int(os.getenv('RAG_CHUNK_SIZE', '1000'))
 CHUNK_OVERLAP = int(os.getenv('RAG_CHUNK_OVERLAP', '150'))
-CANDIDATES_K = int(os.getenv('RAG_CANDIDATES_K', '60'))
+CANDIDATES_K = int(os.getenv('RAG_CANDIDATES_K', '40'))
 FINAL_K = int(os.getenv('RAG_FINAL_K', '6'))
 CONTEXT_NEIGHBORS = int(os.getenv('RAG_CONTEXT_NEIGHBORS', '1'))
 MAX_CONTEXT_CHARS = int(os.getenv('RAG_MAX_CONTEXT_CHARS', '16000'))
@@ -33,7 +33,7 @@ QDRANT_URL = os.getenv('RAG_QDRANT_URL', 'http://127.0.0.1:6333').strip().rstrip
 QDRANT_API_KEY = os.getenv('RAG_QDRANT_API_KEY', '').strip()
 QDRANT_PREFER_GRPC = os.getenv('RAG_QDRANT_PREFER_GRPC', '1').strip().lower() not in {'0', 'false', 'no', 'off'}
 QDRANT_TIMEOUT = float(os.getenv('RAG_QDRANT_TIMEOUT', '30'))
-QDRANT_UPSERT_BATCH_SIZE = int(os.getenv('RAG_QDRANT_UPSERT_BATCH_SIZE', '100'))
+QDRANT_UPSERT_BATCH_SIZE = int(os.getenv('RAG_QDRANT_UPSERT_BATCH_SIZE', '256'))
 QDRANT_PAYLOAD_INDEXES = {
     'doc_id': 'keyword', 'source_id': 'keyword', 'source': 'keyword', 'unit_id': 'keyword',
     'jurisdicao': 'keyword', 'esfera': 'keyword', 'orgao': 'keyword', 'tribunal': 'keyword',
@@ -43,7 +43,7 @@ QDRANT_PAYLOAD_INDEXES = {
     'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
     'revogado': 'bool', 'chunking_method': 'keyword',
     'effective_from_day': 'integer', 'effective_to_day': 'integer', 'effective_range_status': 'keyword',
-    'amendment_operations': 'keyword',
+    'amendment_operations': 'keyword', 'chunk_index': 'integer',
 }
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
@@ -71,12 +71,16 @@ LLM_PROVIDER = os.getenv('RAG_LLM_PROVIDER', 'openai_compatible')
 LLM_MODEL = os.getenv('RAG_LLM_MODEL', 'local')
 LLM_TEMPERATURE = float(os.getenv('RAG_LLM_TEMPERATURE', '0.1'))
 LLM_TIMEOUT = int(os.getenv('RAG_LLM_TIMEOUT', '600'))
-LLM_MAX_TOKENS = int(os.getenv('RAG_LLM_MAX_TOKENS', '0'))
+LLM_MAX_TOKENS = int(os.getenv('RAG_LLM_MAX_TOKENS', '1024'))
+EVIDENCE_REPAIR_MAX_TOKENS = int(os.getenv('RAG_EVIDENCE_REPAIR_MAX_TOKENS', '256'))
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
-OLLAMA_NUM_CTX = int(os.getenv('RAG_OLLAMA_NUM_CTX', '16384'))
+OLLAMA_NUM_CTX = int(os.getenv('RAG_OLLAMA_NUM_CTX', '8192'))
+OLLAMA_KEEP_ALIVE = os.getenv('RAG_OLLAMA_KEEP_ALIVE', '10m').strip()
 OPENAI_COMPATIBLE_BASE_URL = os.getenv('RAG_OPENAI_BASE_URL', 'http://127.0.0.1:8888/v1')
 OPENAI_COMPATIBLE_API_KEY = os.getenv('RAG_OPENAI_API_KEY', '')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+QDRANT_DENSE_ON_DISK = str(os.getenv('RAG_QDRANT_DENSE_ON_DISK', '1')).strip().lower() not in {'0','false','no','off'}
+QDRANT_DENSE_QUANTIZATION = os.getenv('RAG_QDRANT_DENSE_QUANTIZATION', 'int8').strip().lower()
 
 
 def create_qdrant_client():
@@ -111,7 +115,7 @@ def validate_config() -> None:
         (0 <= EVIDENCE_TOKEN_OVERLAP <= 1, 'RAG_EVIDENCE_TOKEN_OVERLAP deve estar entre zero e um.'),
         (0 <= EVIDENCE_STEM_OVERLAP <= 1, 'RAG_EVIDENCE_STEM_OVERLAP deve estar entre zero e um.'),
         (EVIDENCE_MIN_SHARED_STEMS > 0, 'RAG_EVIDENCE_MIN_SHARED_STEMS deve ser maior que zero.'),
-        (OLLAMA_NUM_CTX >= 16384, 'RAG_OLLAMA_NUM_CTX deve ser maior ou igual a 16384.'),
+        (OLLAMA_NUM_CTX >= 4096, 'RAG_OLLAMA_NUM_CTX deve ser maior ou igual a 4096.'),
         (FASTEMBED_PROVIDERS and all(provider in {'CUDAExecutionProvider', 'CPUExecutionProvider'} for provider in FASTEMBED_PROVIDERS), 'RAG_FASTEMBED_PROVIDERS deve conter somente CUDAExecutionProvider e/ou CPUExecutionProvider.'),
         (not FASTEMBED_REQUIRE_CUDA or 'CUDAExecutionProvider' in FASTEMBED_PROVIDERS, 'RAG_FASTEMBED_REQUIRE_CUDA=1 exige CUDAExecutionProvider em RAG_FASTEMBED_PROVIDERS.'),
         (OCR_MIN_NATIVE_CHARS_PER_PAGE >= 0, 'RAG_OCR_MIN_NATIVE_CHARS_PER_PAGE não pode ser negativo.'),
@@ -123,7 +127,9 @@ def validate_config() -> None:
         (RERANK_JURISDICTION_WEIGHT >= 0, 'RAG_RERANK_JURISDICTION_WEIGHT não pode ser negativo.'),
         (abs((RERANK_RELEVANCE_WEIGHT + RERANK_AUTHORITY_WEIGHT + RERANK_JURISDICTION_WEIGHT) - 1.0) < 1e-9, 'Os pesos de reranking devem somar 1.'),
         (LLM_TIMEOUT > 0, 'RAG_LLM_TIMEOUT deve ser maior que zero.'),
-        (LLM_MAX_TOKENS >= 0, 'RAG_LLM_MAX_TOKENS não pode ser negativo.'),
+        (LLM_MAX_TOKENS > 0, 'RAG_LLM_MAX_TOKENS deve ser maior que zero.'),
+        (0 < EVIDENCE_REPAIR_MAX_TOKENS <= LLM_MAX_TOKENS, 'RAG_EVIDENCE_REPAIR_MAX_TOKENS deve ser maior que zero e não exceder RAG_LLM_MAX_TOKENS.'),
+        (QDRANT_DENSE_QUANTIZATION in {'int8', 'none'}, "RAG_QDRANT_DENSE_QUANTIZATION deve ser 'int8' ou 'none'."),
         (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL > 0, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL <= JURISPRUDENCIA_LIMIT, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL não pode exceder RAG_JURISPRUDENCIA_LIMIT.'),

@@ -1,0 +1,16 @@
+qdrant-client==1.19.0
+fastembed==0.8.0
+onnxruntime==1.23.2
+pypdf==6.18.0
+langchain-text-splitters==1.1.2
+requests==2.34.2
+python-dotenv==1.1.1
+beautifulsoup4==4.15.0
+fonttools==4.65.0
+truststore==0.10.4
+playwright==1.63.0
+pydantic==2.13.5
+pytest==9.1.1
+PyMuPDF==1.28.2
+pytesseract==0.3.13
+Pillow>=11,<13

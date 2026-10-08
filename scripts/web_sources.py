@@ -483,12 +483,13 @@ def sync_web_articles(session, source, check=False):
     seen_articles = set()
     article_failures = 0
     for candidate in candidates:
-        if len(accepted) >= target or fetched >= target * 6:
+        if len(accepted) >= target or fetched >= target * 12:
             break
         fetched += 1
         try:
             kind, final, raw, _ = fetch(session, candidate, timeout=fetch_timeout)
             article = extract_web_pdf(raw, final) if kind == "pdf" else extract_web_article(raw, final)
+            article["_response_headers"] = dict(getattr(session, "_rag_response_headers", {}))
             min_substantive = 1 if kind == "pdf" else 6
             if not article["title"] or not _valid_article_text(article["texto"], min_substantive=min_substantive) or not article["date_publicacao"]:
                 continue
@@ -532,6 +533,8 @@ def sync_web_articles(session, source, check=False):
                 _article_cache_text(source, article),
                 document_id,
                 article["title"],
+                requested_url=article.get('url'),
+                response_headers=article.get('_response_headers', {}),
                 extra_meta={
                     "data_publicacao": article["date_publicacao"].isoformat(),
                     "ano": article["date_publicacao"].year,
