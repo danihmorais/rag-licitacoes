@@ -4,10 +4,10 @@ import dense_embeddings
 
 
 class FakeResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload, status_code=200, text=""):
         self._payload = payload
         self.status_code = status_code
-        self.text = ""
+        self.text = text
 
     def json(self):
         return self._payload
@@ -52,3 +52,54 @@ def test_unsloth_embedding_rejects_wrong_dimension(monkeypatch):
         assert "dimensão" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+
+def test_unsloth_embedding_recovers_from_studio_token_limit(monkeypatch):
+    client = dense_embeddings.UnslothOpenAIEmbedding()
+    client.batch_size = 8
+    max_chars = 90
+    attempted_lengths = []
+    successful_lengths = []
+
+    def fake_post(url, *, json, headers, timeout):
+        batch = json["input"]
+        attempted_lengths.extend(len(text) for text in batch)
+        if any(len(text) > max_chars for text in batch):
+            return FakeResponse(
+                {"error": {"message": "input exceeds the 510-token limit"}},
+                status_code=400,
+                text="input exceeds the 510-token limit of unsloth/embeddinggemma-2.",
+            )
+        successful_lengths.extend(len(text) for text in batch)
+        return FakeResponse({
+            "data": [
+                {"index": index, "embedding": [1.0 + index] * dense_embeddings.config.DENSE_DIM}
+                for index in range(len(batch))
+            ]
+        })
+
+    monkeypatch.setattr(client._session, "post", fake_post)
+    long_text = dense_embeddings.config.DENSE_DOCUMENT_PREFIX + (
+        "Contratação pública exige planejamento, justificativa e pesquisa de preços. " * 20
+    )
+    vectors = client.embed(["consulta curta", long_text])
+
+    assert vectors.shape == (2, dense_embeddings.config.DENSE_DIM)
+    assert max(attempted_lengths) > max_chars
+    assert successful_lengths
+    assert max(successful_lengths) <= max_chars
+    assert np.isclose(np.linalg.norm(vectors[1]), 1.0)
+
+
+def test_embeddinggemma_studio_limit_overrides_stale_env_value():
+    assert dense_embeddings.config.effective_dense_max_tokens(
+        "unsloth/embeddinggemma-2",
+        "unsloth_openai",
+        8192,
+    ) == 510
+    assert dense_embeddings.config.effective_dense_max_tokens(
+        "intfloat/multilingual-e5-large",
+        "fastembed",
+        512,
+    ) == 512
