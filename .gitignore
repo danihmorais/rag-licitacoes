@@ -8,3 +8,5 @@ db/qdrant/
 db/index_manifest.json
 db/ingest_cache.json
 db/source_cache/
+
+db/jurisprudencia_dlq.jsonl
