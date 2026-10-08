@@ -939,8 +939,8 @@ def main():
     fastembed_kwargs = embedding_kwargs()
     dense = create_dense_embedding()
     if config.DENSE_BACKEND == 'fastembed' and config.FASTEMBED_REQUIRE_CUDA:
-        validate_model_cuda(dense, label='Embedding denso')
-    dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
+        validate_model_cuda(dense.model, label='Embedding denso')
+    dense_tokenizer = getattr(dense, 'tokenizer', None)
     if config.DENSE_BACKEND == 'fastembed' and dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **fastembed_kwargs)
