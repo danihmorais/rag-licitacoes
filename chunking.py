@@ -727,13 +727,39 @@ def _protect_abbreviation_dots(text):
 
 def _restore_abbreviation_dots(text):
     return text.replace(ABBREVIATION_DOT_SENTINEL, ".")
+def _cached_remote_tokenizer():
+    """Usa somente um tokenizer já presente no cache local; não faz download."""
+    try:
+        from pathlib import Path
+        from huggingface_hub import try_to_load_from_cache
+        from tokenizers import Tokenizer
+    except ImportError:
+        return None
+
+    model_ids = [config.DENSE_MODEL]
+    if "embeddinggemma-2" in config.DENSE_MODEL.casefold():
+        model_ids.append("google/embeddinggemma-2")
+    for model_id in dict.fromkeys(model_ids):
+        try:
+            cached_path = try_to_load_from_cache(model_id, "tokenizer.json")
+            if not isinstance(cached_path, str) or not Path(cached_path).is_file():
+                continue
+            tokenizer = Tokenizer.from_file(cached_path)
+            if hasattr(tokenizer, "no_truncation"):
+                tokenizer.no_truncation()
+            return tokenizer
+        except Exception:
+            continue
+    return None
+
+
 @lru_cache(maxsize=2)
 def _default_tokenizer(providers=None):
-    # Um modelo remoto servido pelo Studio não precisa ser carregado pelo FastEmbed
-    # só para obter o tokenizer. Além de falhar para modelos não suportados, isso
-    # emite avisos enganosos. O chunker usa fallback conservador por caracteres.
+    # Nunca tente carregar modelos de embedding remotos pelo FastEmbed.
+    # Se o tokenizer correspondente já estiver no cache local, use-o sem rede;
+    # caso contrário, o chunking usa o fallback conservador por caracteres.
     if config.DENSE_BACKEND != "fastembed":
-        return None
+        return _cached_remote_tokenizer()
     try:
         from fastembed import TextEmbedding
         selected_providers = tuple(providers) if providers is not None else tuple(config.FASTEMBED_PROVIDERS)
