@@ -98,7 +98,7 @@ class FakeLLMForCitationRepair:
     def __init__(self):
         self.calls = 0
 
-    def generate(self, *, system_prompt, user_prompt):
+    def generate(self, *, system_prompt, user_prompt, max_tokens=None):
         self.calls += 1
         if self.calls == 1:
             return "A resposta inicial explica as atribuições do agente de contratação."
