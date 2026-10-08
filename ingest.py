@@ -987,7 +987,7 @@ def main():
                         f"{doc_id}|{item['unit_id']}|{item['chunk_index']}|{item['page_content']}",
                     )
                 )
-                        payload = dict(item)
+                payload = dict(item)
                 for redundant_key in ('text', 'source_text', 'retrieval_text', 'embedding_text', 'full_unit_text'):
                     payload.pop(redundant_key, None)
                 points.append(
