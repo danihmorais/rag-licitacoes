@@ -92,3 +92,44 @@ def test_evidence_gate_accepts_inflectional_paraphrase():
         "A autoridade administrativa deve realizar o planejamento, a documentação, o controle e a fiscalização contínua dos procedimentos, assegurando transparência e eficiência. [F1]",
         [source],
     )
+
+
+class FakeLLMForCitationRepair:
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, *, system_prompt, user_prompt):
+        self.calls += 1
+        if self.calls == 1:
+            return "A resposta inicial explica as atribuições do agente de contratação."
+        return "O agente de contratação conduz a licitação e toma as decisões pertinentes à fase de seleção. [F1]"
+
+
+def test_answer_query_repairs_missing_citations_once(monkeypatch):
+    import query
+
+    source = make_point(
+        "lei14133",
+        "artigo:8",
+        "O agente de contratação conduz a licitação e toma as decisões pertinentes à fase de seleção."
+    )
+    fake_llm = FakeLLMForCitationRepair()
+
+    monkeypatch.setattr(
+        query,
+        "retrieve_context",
+        lambda *args, **kwargs: (
+            "Quais são as atribuições do agente de contratação?",
+            "[F1] Lei 14.133/2021, Art. 8º. O agente de contratação conduz a licitação e toma as decisões pertinentes à fase de seleção.",
+            [source],
+        ),
+    )
+
+    answer, sources = query.answer_query(
+        object(), object(), object(), object(), fake_llm,
+        "Quais são as atribuições do agente de contratação?",
+    )
+
+    assert fake_llm.calls == 2
+    assert answer.endswith("[F1]")
+    assert sources == [source]

@@ -148,6 +148,19 @@ def test_qfilter_infers_federal_constitution_scope():
     assert "normative_rank" in keys
 
 
+def test_cross_source_query_keeps_federal_scope_without_overfiltering_sources():
+    from query import qfilter
+
+    query_filter = qfilter(
+        query="Segundo a Lei 14.133/2021 e o Manual de Licitações e Contratos do TCU, quais são as atribuições do agente de contratação?"
+    )
+    conditions = {condition.key: condition for condition in query_filter.must}
+    assert conditions["jurisdicao"].match.value == "federal"
+    assert "source_id" not in conditions
+    assert "tribunal" not in conditions
+    assert "regime_juridico" not in conditions
+
+
 def test_qfilter_infers_tcu_manual_and_jurisdiction():
     from query import qfilter
 

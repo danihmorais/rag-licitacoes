@@ -37,6 +37,8 @@ REGRAS DE EVIDÊNCIA:
 
 CITAÇÕES:
 - Toda afirmação jurídica relevante deve conter [F#].
+- Coloque a citação [F#] na mesma frase da afirmação que ela sustenta; não deixe uma frase introdutória jurídica sem citação.
+- Em listas, cite cada item que contenha uma afirmação jurídica.
 - Cite fonte, título, página e dispositivo/unidade quando disponíveis.
 - Não invente artigos, incisos, processos, súmulas, datas ou números.
 - Se não houver suporte suficiente no contexto, diga expressamente que não foi encontrado suporte nos documentos indexados.
@@ -311,6 +313,21 @@ def _is_transition_query(query):
     return _is_comparative_query(query)
 
 
+def _is_cross_source_query(query):
+    """Detecta perguntas que explicitamente pedem mais de uma fonte-base.
+
+    Nesses casos, menções a TCU/Manual e Lei 14.133 não devem virar filtros
+    exclusivos, porque a resposta precisa poder combinar as duas evidências.
+    """
+    normalized = _normalize_query_text(query)
+    has_law_14133 = any(
+        marker in normalized
+        for marker in ('lei 14.133', 'lei 14133', '14.133/2021')
+    )
+    has_tcu_manual = 'manual de licitacoes' in normalized and 'tcu' in normalized
+    return has_law_14133 and has_tcu_manual
+
+
 REGIME_QUERY_MARKERS = (
     ('lei_14133', ('lei 14.133', 'lei 14133', '14.133/2021')),
     ('lei_8666', ('lei 8.666', 'lei 8666', '8.666/1993')),
@@ -370,6 +387,7 @@ def _retrieval_query(query):
 def _infer_query_filters(query):
     normalized = _normalize_query_text(query)
     inferred = {}
+    cross_source = _is_cross_source_query(query)
 
     jurisdiction = _query_jurisdiction(query)
     if jurisdiction:
@@ -385,14 +403,16 @@ def _infer_query_filters(query):
         ('tjsp', 'tjsp'),
         ('tribunal de justica de sao paulo', 'tjsp'),
     )
-    for marker, tribunal in tribunal_markers:
-        if marker in normalized:
-            inferred['tribunal'] = tribunal
-            break
+    if not cross_source:
+        for marker, tribunal in tribunal_markers:
+            if marker in normalized:
+                inferred['tribunal'] = tribunal
+                break
 
-    if 'manual de licitacoes' in normalized and 'tcu' in normalized:
-        inferred['source_id'] = 'tcu-manual-licitacoes'
-    elif (
+        if 'manual de licitacoes' in normalized and 'tcu' in normalized:
+            inferred['source_id'] = 'tcu-manual-licitacoes'
+
+    if (
         'constituicao do estado de sao paulo' in normalized
         or 'constituicao estadual de sao paulo' in normalized
         or 'constituicao paulista' in normalized
@@ -487,20 +507,21 @@ def qfilter(filters=None, query=None, temporal_context=None):
 
     if explicit_regime is None and query and not _is_transition_query(query):
         target_regimes = _query_regimes(query)
-        if len(target_regimes) > 1:
-            conditions.append(
-                models.FieldCondition(
-                    key='regime_juridico',
-                    match=models.MatchAny(any=list(target_regimes)),
+        if target_regimes and not _is_cross_source_query(query):
+            if len(target_regimes) > 1:
+                conditions.append(
+                    models.FieldCondition(
+                        key='regime_juridico',
+                        match=models.MatchAny(any=list(target_regimes)),
+                    )
                 )
-            )
-        elif target_regimes:
-            conditions.append(
-                models.FieldCondition(
-                    key='regime_juridico',
-                    match=models.MatchValue(value=target_regimes[0]),
+            else:
+                conditions.append(
+                    models.FieldCondition(
+                        key='regime_juridico',
+                        match=models.MatchValue(value=target_regimes[0]),
+                    )
                 )
-            )
         elif not temporal_context.is_historicalish:
             must_not.append(
                 models.FieldCondition(
@@ -1087,6 +1108,26 @@ def retrieve_context(client, dense, sparse, reranker, raw):
     return query, context_text, context_sources
 
 
+def _repair_answer_citations(llm, query, answer, context_text):
+    """Pede uma única correção de citações, sem permitir novos fatos."""
+    repair_prompt = f"""A resposta abaixo foi rejeitada porque não está adequadamente citada.
+
+Reescreva a resposta mantendo exatamente as mesmas conclusões e sem adicionar qualquer fato novo.
+Insira [F#] em cada frase que contenha uma afirmação jurídica ou factual.
+Use somente os marcadores [F#] existentes no contexto recuperado.
+Não invente fontes, não crie novos identificadores jurídicos e não faça explicações sobre esta correção.
+
+Pergunta:
+{query}
+
+Resposta a corrigir:
+{answer}"""
+    return llm.generate(
+        system_prompt=SYSTEM_PROMPT.format(context=context_text),
+        user_prompt=repair_prompt,
+    )
+
+
 def answer_query(client, dense, sparse, reranker, llm, raw):
     query, context_text, context_sources = retrieve_context(client, dense, sparse, reranker, raw)
     if not query:
@@ -1097,8 +1138,14 @@ def answer_query(client, dense, sparse, reranker, llm, raw):
     try:
         validate_generated_answer(answer, context_sources)
     except EvidenceGateError as error:
-        print(f'Evidence Gate: {error}', file=sys.stderr)
-        return 'Não foi possível validar as citações da resposta contra as evidências recuperadas. A resposta não será apresentada como fundamentada.', context_sources
+        print(f'Evidence Gate: {error}; tentando uma correção única de citações.', file=sys.stderr)
+        repaired = _repair_answer_citations(llm, query, answer, context_text)
+        try:
+            validate_generated_answer(repaired, context_sources)
+        except EvidenceGateError as repair_error:
+            print(f'Evidence Gate após correção: {repair_error}', file=sys.stderr)
+            return 'Não foi possível validar as citações da resposta contra as evidências recuperadas. A resposta não será apresentada como fundamentada.', context_sources
+        return repaired, context_sources
     return answer, context_sources
 
 
