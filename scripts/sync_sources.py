@@ -185,6 +185,10 @@ def _invalidate_http_cache_index():
 
 
 def fetch(session, url, *, timeout=None):
+    try:
+        session._rag_response_headers = {}
+    except Exception:
+        pass
     cached = _load_http_cache_index().get(str(url).strip())
     conditional_headers = {}
     if cached:
@@ -208,6 +212,14 @@ def fetch(session, url, *, timeout=None):
             pass
         if response.status_code == 304 and cached:
             meta = cached['meta']
+            try:
+                session._rag_response_headers = {
+                    'etag': meta.get('etag'),
+                    'last-modified': meta.get('last_modified'),
+                    'content-type': meta.get('content_type'),
+                }
+            except Exception:
+                pass
             raw = cached['raw_path'].read_bytes()
             text = cached['text_path'].read_text(encoding='utf-8')
             final = str(meta.get('fonte_url') or url)
