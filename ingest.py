@@ -987,6 +987,9 @@ def main():
                         f"{doc_id}|{item['unit_id']}|{item['chunk_index']}|{item['page_content']}",
                     )
                 )
+                        payload = dict(item)
+                for redundant_key in ('text', 'source_text', 'retrieval_text', 'embedding_text', 'full_unit_text'):
+                    payload.pop(redundant_key, None)
                 points.append(
                     models.PointStruct(
                         id=point_id,
@@ -997,7 +1000,7 @@ def main():
                                 values=sparse_vectors[index].values.tolist(),
                             ),
                         },
-                        payload=item,
+                        payload=payload,
                     )
                 )
             replace_document_points(client, doc_id, points, legacy_source=document.name)
