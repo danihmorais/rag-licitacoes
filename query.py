@@ -620,10 +620,26 @@ def auxiliary_context_points(client, dense, query, *, dense_vector=None):
             )
         )
 
-    responses = client.query_batch_points(
-        collection_name=config.COLLECTION_NAME,
-        requests=requests,
-    )
+    if hasattr(client, 'query_batch_points'):
+        responses = client.query_batch_points(
+            collection_name=config.COLLECTION_NAME,
+            requests=requests,
+        )
+    else:
+        responses = [
+            client.query_points(
+                collection_name=config.COLLECTION_NAME,
+                query=dense_vector.tolist(),
+                using='dense',
+                query_filter=request_filter,
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for request in requests
+            for request_filter in [request.query_filter]
+        ]
+
     selected = []
     for source_id, response in zip(source_ids, responses):
         points = list(getattr(response, 'points', None) or [])
@@ -1142,11 +1158,21 @@ Pergunta:
 
 Resposta a corrigir:
 {answer}"""
-    return llm.generate(
-        system_prompt=SYSTEM_PROMPT.format(context=context_text),
-        user_prompt=repair_prompt,
-        max_tokens=config.EVIDENCE_REPAIR_MAX_TOKENS,
-    )
+    try:
+        return llm.generate(
+            system_prompt=SYSTEM_PROMPT.format(context=context_text),
+            user_prompt=repair_prompt,
+            max_tokens=config.EVIDENCE_REPAIR_MAX_TOKENS,
+        )
+    except TypeError as exc:
+        # Compatibilidade com implementações/fixtures antigas que ainda expõem
+        # generate(system_prompt, user_prompt) sem o parâmetro opcional.
+        if 'max_tokens' not in str(exc):
+            raise
+        return llm.generate(
+            system_prompt=SYSTEM_PROMPT.format(context=context_text),
+            user_prompt=repair_prompt,
+        )
 
 
 def answer_query(client, dense, sparse, reranker, llm, raw):
