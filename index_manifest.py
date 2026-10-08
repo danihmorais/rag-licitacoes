@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 import config
-from chunking import LEGAL_AST_SCHEMA_VERSION
+from chunking import CHUNKING_VERSION, LEGAL_AST_SCHEMA_VERSION
 
 
 class IndexCompatibilityError(RuntimeError):
@@ -20,8 +20,8 @@ def chunking_algorithm_sha256():
 COMPATIBILITY_KEYS = (
     'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
-    'chunking_algorithm_sha256', 'dense_max_tokens', 'payload_indexes', 'schema',
-    'manifest_schema_version', 'legal_ast_schema_version', 'ocr_settings',
+    'chunking_version', 'dense_max_tokens', 'payload_indexes', 'schema',
+    'manifest_schema_version', 'legal_ast_schema_version', 'dense_on_disk', 'dense_quantization', 'ocr_settings',
 )
 
 
@@ -39,11 +39,13 @@ def current_manifest(documents=None, deletions=None, revocations=None):
         'chunk_overlap': config.CHUNK_OVERLAP,
         'context_neighbors': config.CONTEXT_NEIGHBORS,
         'max_context_chars': config.MAX_CONTEXT_CHARS,
-        'chunking_algorithm_sha256': chunking_algorithm_sha256(),
+        'chunking_version': CHUNKING_VERSION,
+        'dense_on_disk': config.QDRANT_DENSE_ON_DISK,
+        'dense_quantization': config.QDRANT_DENSE_QUANTIZATION,
         'dense_max_tokens': config.DENSE_MAX_TOKENS,
         'payload_indexes': config.QDRANT_PAYLOAD_INDEXES,
         'schema': 'doc_id/unit_id/node_id/parent_id/chunk_index/source_start/source_end/page_span/page_uncertain/source_role/status/authority_level/source_id/source_identity/cited_regimes/document_hash/document_regime/regime_juridico/tipo_documento/numero_sumula/anexo_ref/anexo_path/device_id/effective_from/effective_to/effective_from_day/effective_to_day/effective_range_status/amendment/amendment_type/amendment_operations/target_article/target_articles/target_devices/text_origin/extraction_confidence/page_extraction/page_content/retrieval_text/embedding_text/chunking_method',
-        'manifest_schema_version': 1,
+        'manifest_schema_version': 2,
         'legal_ast_schema_version': LEGAL_AST_SCHEMA_VERSION,
         'ocr_settings': {
             'enabled': config.OCR_ENABLED,
