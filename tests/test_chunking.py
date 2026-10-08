@@ -325,3 +325,20 @@ def test_ocr_article_marker_does_not_break_nested_hierarchy():
         ["I -", "a)"],
         ["I -", "b)"],
     ]
+
+
+def test_remote_embedding_does_not_try_fastembed_for_tokenizer(monkeypatch, capsys):
+    import fastembed
+
+    monkeypatch.setattr(chunking.config, "DENSE_BACKEND", "unsloth_openai")
+
+    def fail_if_called(**_kwargs):
+        raise AssertionError("FastEmbed must not load a remote embedding model")
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", fail_if_called)
+    chunking._default_tokenizer.cache_clear()
+    try:
+        assert chunking._default_tokenizer() is None
+        assert capsys.readouterr().out == ""
+    finally:
+        chunking._default_tokenizer.cache_clear()
