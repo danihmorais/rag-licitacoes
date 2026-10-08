@@ -387,6 +387,7 @@ def _retrieval_query(query):
 def _infer_query_filters(query):
     normalized = _normalize_query_text(query)
     inferred = {}
+    cross_source = _is_cross_source_query(query)
 
     jurisdiction = _query_jurisdiction(query)
     if jurisdiction:
