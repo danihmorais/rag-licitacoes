@@ -483,7 +483,7 @@ def sync_web_articles(session, source, check=False):
     seen_articles = set()
     article_failures = 0
     for candidate in candidates:
-        if len(accepted) >= target or fetched >= target * 6:
+        if len(accepted) >= target or fetched >= target * 12:
             break
         fetched += 1
         try:
