@@ -30,7 +30,7 @@ PAYLOAD_INDEX_TYPES = {
 
 PAGE_BREAK = '\f'
 CACHE_PATH = config.DB_DIR / 'ingest_cache.json'
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 LEGACY_CACHE_VERSIONS = set()
 
 
@@ -895,7 +895,14 @@ def main():
         metavar='ARQUIVO',
         help='reprocessa somente os arquivos informados; pode ser repetido. Os demais documentos permanecem no índice.',
     )
+    parser.add_argument(
+        '--rebuild-unmanifested',
+        action='store_true',
+        help='remove e recria a coleção Qdrant somente se ela não tiver manifesto; use para retomar uma indexação interrompida.',
+    )
     args = parser.parse_args()
+    if args.rebuild_unmanifested and args.only_documents:
+        parser.error('--rebuild-unmanifested não pode ser combinado com --only; a reconstrução precisa abranger todos os documentos.')
 
     config.ensure_directories()
     if not args.no_sync:
@@ -916,12 +923,25 @@ def main():
         target_files = files
     client = config.create_qdrant_client()
     manifest = read_manifest()
+    collection_exists = client.collection_exists(config.COLLECTION_NAME)
+    if args.rebuild_unmanifested and manifest is not None:
+        raise RuntimeError('--rebuild-unmanifested só é permitido quando não existe index_manifest.json; o índice atual foi preservado.')
     if manifest is not None:
         from index_manifest import validate_manifest
         validate_manifest()
-    elif client.collection_exists(config.COLLECTION_NAME) and client.count(config.COLLECTION_NAME, exact=True).count:
+    elif args.rebuild_unmanifested and collection_exists:
+        count = client.count(config.COLLECTION_NAME, exact=True).count
+        print(
+            f'Aviso: recriando coleção {config.COLLECTION_NAME!r} sem manifesto; '
+            f'{count} pontos existentes serão removidos para evitar misturar embeddings.'
+        )
+        client.delete_collection(collection_name=config.COLLECTION_NAME)
+    elif collection_exists and client.count(config.COLLECTION_NAME, exact=True).count:
         if not args.only_documents:
-            raise RuntimeError('Índice sem manifest. Remova db/qdrant e reindexe.')
+            raise RuntimeError(
+                'Índice sem manifest. Para reconstruir explicitamente uma coleção incompleta, '
+                'execute ingest.py --no-sync --rebuild-unmanifested.'
+            )
         print('Aviso: índice existente sem manifest; recuperação direcionada ativada por --only.')
 
     ensure_collection(client)
