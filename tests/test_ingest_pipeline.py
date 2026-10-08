@@ -12,7 +12,8 @@ def test_ingest_uses_structural_chunking_without_llm_preprocessing():
     assert "CACHE_VERSION = 1" in source
 
     assert "fastembed_kwargs = embedding_kwargs()" in source
-    gpu_dense = source.index("    dense = TextEmbedding(")
+    assert "from dense_embeddings import create_dense_embedding" in source
+    gpu_dense = source.index("    dense = create_dense_embedding()")
     gpu_runtime = source.index("config.validate_gpu_runtime()")
     structural = source.index("build_structural_chunks(")
     assert gpu_runtime < gpu_dense
