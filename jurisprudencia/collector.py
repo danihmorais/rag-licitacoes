@@ -1714,10 +1714,17 @@ class TJSPAdapter(JurisprudenciaAdapter):
                         print(f'aviso: inteiro teor TJSP indisponível para {process}: {type(exc).__name__}: {exc}')
                 seen.add(key)
                 records.append(JurisprudenciaRecord(
-                    tribunal='TJSP', numero_processo=process, orgao_julgador=data.get('orgao_julgador', ''),
-                    relator=data.get('relator', ''), data_publicacao=data.get('data_publicacao', ''),
-                    ementa=ementa or clean_text(row.get_text(' ', strip=True))[:4000], url_oficial=official_url,
-                    tipo_decisao='Acórdão', origem='TJSP — e-SAJ CJSG oficial', inteiro_teor=inteiro,
+                    tribunal='TJSP',
+                    numero_processo=process,
+                    numero_decisao=cd_acordao,
+                    orgao_julgador=data.get('orgao_julgador', ''),
+                    relator=data.get('relator', ''),
+                    data_publicacao=data.get('data_publicacao', ''),
+                    ementa=ementa or clean_text(row.get_text(' ', strip=True))[:4000],
+                    url_oficial=official_url,
+                    tipo_decisao='Acórdão',
+                    origem='TJSP — e-SAJ CJSG oficial',
+                    inteiro_teor=inteiro,
                 ))
                 if len(records) >= limit: return records[:limit]
         raise RuntimeError(f'TJSP não retornou registros estruturados para {query!r}.')
