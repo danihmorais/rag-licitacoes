@@ -911,6 +911,9 @@ def main():
     cache, errors, skipped = read_cache(), [], 0
     document_manifest = {}
     revocations = []
+    fingerprint_base = _metadata_fingerprint_base()
+    indexed_counts = _facet_payload_counts(client, 'doc_id') if client.collection_exists(config.COLLECTION_NAME) else {}
+    cached_since_flush = 0
 
     print('Carregando modelos de embeddings/reranker.')
     fastembed_kwargs = embedding_kwargs()
@@ -924,22 +927,15 @@ def main():
     if dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **fastembed_kwargs)
-    cache, errors, skipped = read_cache(), [], 0
-    document_manifest = {}
-    revocations = []
 
     for document in target_files:
         digest = file_hash(document)
-        metadata_digest = metadata_fingerprint(document)
+        metadata_digest = metadata_fingerprint(document, base=fingerprint_base)
         document_meta = extract_metadata('', document)
         doc_id = document_id_for(document, document_meta)
         count_filter = _filter_for_doc_id(doc_id)
         entry = cache.get(document.name)
-        indexed_count = client.count(
-            config.COLLECTION_NAME,
-            count_filter=count_filter,
-            exact=True,
-        ).count
+        indexed_count = int(indexed_counts.get(doc_id, 0))
 
         if cache_entry_is_valid(
             entry,
@@ -1006,6 +1002,8 @@ def main():
                 )
             replace_document_points(client, doc_id, points, legacy_source=document.name)
             cache[document.name] = {'sha256': digest, 'metadata_fingerprint': metadata_digest, 'chunks': len(points), 'doc_id': doc_id, 'source_id': document_meta.get('source_id')}
+            indexed_counts[doc_id] = len(points)
+            cached_since_flush += 1
             document_manifest[doc_id] = {
                 'sha256': digest,
                 'chunks': len(points),
@@ -1017,7 +1015,9 @@ def main():
             }
             if document_meta.get('revogado') or document_meta.get('status') == 'revogado':
                 revocations.append({'doc_id': doc_id, 'source': document.name, 'status': document_meta.get('status'), 'effective_to': document_meta.get('effective_to')})
-            write_cache(cache)
+            if cached_since_flush >= 50:
+                write_cache(cache)
+                cached_since_flush = 0
             print(f'Indexado: {document.name} ({len(points)} chunks)')
         except Exception as exc:
             print(f'ERRO ao indexar {document.name}: {exc}. A versão anterior permanece disponível quando o upsert falhar.')
