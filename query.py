@@ -637,7 +637,7 @@ def auxiliary_context_points(client, dense, query, *, dense_vector=None):
                 with_vectors=False,
             )
             for request in requests
-            for request_filter in [request.query_filter]
+            for request_filter in [request.filter]
         ]
 
     selected = []
