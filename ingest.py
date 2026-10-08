@@ -628,7 +628,9 @@ def embedding_kwargs():
 
 
 def validate_model_cuda(model, *, label):
-    """Impede que o FastEmbed silenciosamente caia para CPU no modelo denso."""
+    """Impede fallback para CPU somente quando CUDA foi explicitamente exigido."""
+    if not config.FASTEMBED_REQUIRE_CUDA:
+        return
     onnx_model = getattr(model, 'model', None)
     session = getattr(onnx_model, 'model', None)
     if session is None:
