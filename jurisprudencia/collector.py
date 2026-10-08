@@ -1432,40 +1432,61 @@ class STFAdapter(JurisprudenciaAdapter):
             'highlight': highlight,
         }
 
-    def _browser_search(self, query: str, limit: int, *, with_content: bool) -> dict[str, Any]:
+    def _browser_search(self, query: str, limit: int, *, with_content: bool) -> list[dict[str, Any]]:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
-            raise RuntimeError('STF exige Playwright para resolver o desafio AWS WAF; instale playwright e o Chromium.') from exc
+            raise RuntimeError(
+                'STF exige Playwright para resolver o desafio AWS WAF; '
+                'instale playwright e o Chromium.'
+            ) from exc
+
         headless = os.getenv('RAG_JURISPRUDENCIA_HEADLESS', '1').strip().lower() not in {'0', 'false', 'no'}
         body = self._body(query, limit, include_full_text=with_content)
+
         global _STF_PLAYWRIGHT, _STF_BROWSER
         if _STF_BROWSER is None:
             _STF_PLAYWRIGHT = sync_playwright().start()
             _STF_BROWSER = _STF_PLAYWRIGHT.chromium.launch(
-        headless=headless,
-        args=['--disable-blink-features=AutomationControlled'],
+                headless=headless,
+                args=['--disable-blink-features=AutomationControlled'],
             )
+
         browser = _STF_BROWSER
         context = browser.new_context(
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            user_agent=(
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+            ),
             locale='pt-BR',
             viewport={'width': 1440, 'height': 1100},
         )
         try:
             page = context.new_page()
             page.goto(self.portal, wait_until='domcontentloaded', timeout=120000)
-            token = None
-            for _ in range(60):
-                token = next(
-                    (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
-                    None,
-                )
-                if token:
-                    break
-                page.wait_for_timeout(1000)
+
+            def wait_waf_token(timeout_seconds=60):
+                for _ in range(max(1, int(timeout_seconds))):
+                    token = next(
+                        (
+                            cookie['value']
+                            for cookie in context.cookies()
+                            if cookie['name'] == 'aws-waf-token'
+                        ),
+                        None,
+                    )
+                    if token:
+                        return token
+                    page.wait_for_timeout(1000)
+                return None
+
+            token = wait_waf_token()
             if not token:
-                raise RuntimeError('STF não emitiu aws-waf-token após abrir o portal; desafio do AWS WAF alterado ou indisponível.')
+                raise RuntimeError(
+                    'STF não emitiu aws-waf-token após abrir o portal; '
+                    'desafio do AWS WAF alterado ou indisponível.'
+                )
+
             for attempt in range(2):
                 result = None
                 for evaluate_attempt in range(4):
@@ -1496,41 +1517,43 @@ class STFAdapter(JurisprudenciaAdapter):
                         if evaluate_attempt == 3:
                             page.reload(wait_until='domcontentloaded', timeout=120000)
                             page.wait_for_timeout(1000)
-                            for _ in range(60):
-                                token = next(
-                                    (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
-                                    None,
-                                )
-                                if token:
-                                    break
-                                page.wait_for_timeout(500)
+                            token = wait_waf_token()
                             if not token:
-                                raise RuntimeError('STF não recuperou aws-waf-token após navegação durante a consulta.')
-                        continue
-                if int(result.get('status') or 0) in {202, 403, 405}:
+                                raise RuntimeError(
+                                    'STF não recuperou aws-waf-token após navegação durante a consulta.'
+                                )
+
+                status = int(result.get('status') or 0)
+                if status in {202, 403, 405}:
                     if attempt == 0:
                         page.reload(wait_until='domcontentloaded', timeout=120000)
-                        for _ in range(60):
-                            token = next(
-                                (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
-                                None,
-                            )
-                            if token:
-                                break
-                            page.wait_for_timeout(1000)
+                        token = wait_waf_token()
                         if not token:
-                            raise RuntimeError('STF não renovou aws-waf-token após novo desafio do AWS WAF.')
+                            raise RuntimeError(
+                                'STF não renovou aws-waf-token após novo desafio do AWS WAF.'
+                            )
                         continue
-                    raise RuntimeError(f'STF AWS WAF rejeitou a consulta HTTP {result.get("status")}: {result.get("waf") or "challenge"}')
-                if int(result.get('status') or 0) < 200 or int(result.get('status') or 0) >= 300:
-                    raise RuntimeError(f'STF API respondeu HTTP {result.get("status")}: {str(result.get("text") or "")[:300]}')
+                    raise RuntimeError(
+                        f'STF AWS WAF rejeitou a consulta HTTP {status}: '
+                        f'{result.get("waf") or "challenge"}'
+                    )
+
+                if status < 200 or status >= 300:
+                    raise RuntimeError(
+                        f'STF API respondeu HTTP {status}: '
+                        f'{str(result.get("text") or "")[:300]}'
+                    )
+
                 try:
                     return json.loads(result.get('text') or '{}')
                 except json.JSONDecodeError as exc:
-                    raise RuntimeError(f'STF API devolveu resposta não-JSON: {str(result.get("text") or "")[:300]}') from exc
+                    raise RuntimeError(
+                        f'STF API devolveu resposta não-JSON: '
+                        f'{str(result.get("text") or "")[:300]}'
+                    ) from exc
+
             raise RuntimeError('STF consulta terminou sem resposta válida.')
-    
-            finally:
+        finally:
             context.close()
 
     @staticmethod
