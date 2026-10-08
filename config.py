@@ -13,7 +13,7 @@ DB_DIR = BASE_DIR / 'db'
 SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
-INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '1')
+INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '2')
 DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
 DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', '512'))
@@ -43,7 +43,7 @@ QDRANT_PAYLOAD_INDEXES = {
     'authority_level': 'integer', 'normative_rank': 'integer', 'ano': 'integer', 'norm_ano': 'integer',
     'revogado': 'bool', 'chunking_method': 'keyword',
     'effective_from_day': 'integer', 'effective_to_day': 'integer', 'effective_range_status': 'keyword',
-    'amendment_operations': 'keyword',
+    'amendment_operations': 'keyword', 'chunk_index': 'integer',
 }
 MIN_EVIDENCE_SCORE = float(os.getenv('RAG_MIN_EVIDENCE_SCORE', '0.20'))
 EVIDENCE_TOKEN_OVERLAP = float(os.getenv('RAG_EVIDENCE_TOKEN_OVERLAP', '0.25'))
