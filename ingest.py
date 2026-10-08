@@ -628,9 +628,7 @@ def embedding_kwargs():
 
 
 def validate_model_cuda(model, *, label):
-    """Impede fallback para CPU somente quando CUDA foi explicitamente exigido."""
-    if not config.FASTEMBED_REQUIRE_CUDA:
-        return
+    """Valida se a sessão ONNX do embedding está efetivamente em CUDA."""
     onnx_model = getattr(model, 'model', None)
     session = getattr(onnx_model, 'model', None)
     if session is None:
@@ -829,7 +827,26 @@ def prune_stale_documents(client, active_names, *, delete=True, return_ids=False
         return [] if return_ids else 0
     if not client.collection_exists(config.COLLECTION_NAME):
         return [] if return_ids else 0
-    indexed_ids = set(_facet_payload_counts(client, 'doc_id'))
+    if hasattr(client, 'facet'):
+        indexed_ids = set(_facet_payload_counts(client, 'doc_id'))
+    else:
+        indexed_ids = set()
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=config.COLLECTION_NAME,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                doc_id = payload.get('doc_id') or payload.get('source')
+                if doc_id:
+                    indexed_ids.add(str(doc_id))
+            if offset is None:
+                break
     stale = sorted(indexed_ids - {str(item) for item in active_names})
     if delete:
         for doc_id in stale:
@@ -917,14 +934,15 @@ def main():
     indexed_counts = _facet_payload_counts(client, 'doc_id') if client.collection_exists(config.COLLECTION_NAME) else {}
     cached_since_flush = 0
 
-    print('Carregando modelos de embeddings/reranker.')
+    print('Carregando modelos de embeddings/reranker na GPU.' if config.FASTEMBED_REQUIRE_CUDA else 'Carregando modelos de embeddings/reranker.')
     fastembed_kwargs = embedding_kwargs()
     dense = TextEmbedding(
         model_name=config.DENSE_MODEL,
         max_length=config.DENSE_MAX_TOKENS,
         **fastembed_kwargs,
     )
-    validate_model_cuda(dense, label='Embedding denso')
+    if config.FASTEMBED_REQUIRE_CUDA:
+        validate_model_cuda(dense, label='Embedding denso')
     dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
     if dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
