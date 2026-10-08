@@ -1452,49 +1452,64 @@ class STFAdapter(JurisprudenciaAdapter):
             locale='pt-BR',
             viewport={'width': 1440, 'height': 1100},
         )
-        page = context.new_page()
-        page.goto(self.portal, wait_until='domcontentloaded', timeout=120000)
-        token = None
-        for _ in range(60):
-            token = next(
-                (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
-                None,
-            )
-            if token:
-                break
-            page.wait_for_timeout(1000)
-        if not token:
-            raise RuntimeError('STF não emitiu aws-waf-token após abrir o portal; desafio do AWS WAF alterado ou indisponível.')
-        for attempt in range(2):
-            result = None
-            for evaluate_attempt in range(4):
-                try:
-                    result = page.evaluate(
-                        """async ({url, body}) => {
-                            const response = await fetch(url, {
-                                method: 'POST',
-                                headers: {
-                                    'content-type': 'application/json',
-                                    'accept': 'application/json, text/plain, */*'
-                                },
-                                body: JSON.stringify(body)
-                            });
-                            return {
-                                status: response.status,
-                                waf: response.headers.get('x-amzn-waf-action'),
-                                text: await response.text()
-                            };
-                        }""",
-                        {'url': self.endpoint, 'body': body},
-                    )
+        try:
+            page = context.new_page()
+            page.goto(self.portal, wait_until='domcontentloaded', timeout=120000)
+            token = None
+            for _ in range(60):
+                token = next(
+                    (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
+                    None,
+                )
+                if token:
                     break
-                except Exception as exc:
-                    if 'Execution context was destroyed' not in str(exc):
-                        raise
-                    page.wait_for_timeout(500)
-                    if evaluate_attempt == 3:
+                page.wait_for_timeout(1000)
+            if not token:
+                raise RuntimeError('STF não emitiu aws-waf-token após abrir o portal; desafio do AWS WAF alterado ou indisponível.')
+            for attempt in range(2):
+                result = None
+                for evaluate_attempt in range(4):
+                    try:
+                        result = page.evaluate(
+                            """async ({url, body}) => {
+                                const response = await fetch(url, {
+                                    method: 'POST',
+                                    headers: {
+                                        'content-type': 'application/json',
+                                        'accept': 'application/json, text/plain, */*'
+                                    },
+                                    body: JSON.stringify(body)
+                                });
+                                return {
+                                    status: response.status,
+                                    waf: response.headers.get('x-amzn-waf-action'),
+                                    text: await response.text()
+                                };
+                            }""",
+                            {'url': self.endpoint, 'body': body},
+                        )
+                        break
+                    except Exception as exc:
+                        if 'Execution context was destroyed' not in str(exc):
+                            raise
+                        page.wait_for_timeout(500)
+                        if evaluate_attempt == 3:
+                            page.reload(wait_until='domcontentloaded', timeout=120000)
+                            page.wait_for_timeout(1000)
+                            for _ in range(60):
+                                token = next(
+                                    (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
+                                    None,
+                                )
+                                if token:
+                                    break
+                                page.wait_for_timeout(500)
+                            if not token:
+                                raise RuntimeError('STF não recuperou aws-waf-token após navegação durante a consulta.')
+                        continue
+                if int(result.get('status') or 0) in {202, 403, 405}:
+                    if attempt == 0:
                         page.reload(wait_until='domcontentloaded', timeout=120000)
-                        page.wait_for_timeout(1000)
                         for _ in range(60):
                             token = next(
                                 (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
@@ -1502,32 +1517,21 @@ class STFAdapter(JurisprudenciaAdapter):
                             )
                             if token:
                                 break
-                            page.wait_for_timeout(500)
+                            page.wait_for_timeout(1000)
                         if not token:
-                            raise RuntimeError('STF não recuperou aws-waf-token após navegação durante a consulta.')
-                    continue
-            if int(result.get('status') or 0) in {202, 403, 405}:
-                if attempt == 0:
-                    page.reload(wait_until='domcontentloaded', timeout=120000)
-                    for _ in range(60):
-                        token = next(
-                            (cookie['value'] for cookie in context.cookies() if cookie['name'] == 'aws-waf-token'),
-                            None,
-                        )
-                        if token:
-                            break
-                        page.wait_for_timeout(1000)
-                    if not token:
-                        raise RuntimeError('STF não renovou aws-waf-token após novo desafio do AWS WAF.')
-                    continue
-                raise RuntimeError(f'STF AWS WAF rejeitou a consulta HTTP {result.get("status")}: {result.get("waf") or "challenge"}')
-            if int(result.get('status') or 0) < 200 or int(result.get('status') or 0) >= 300:
-                raise RuntimeError(f'STF API respondeu HTTP {result.get("status")}: {str(result.get("text") or "")[:300]}')
-            try:
-                return json.loads(result.get('text') or '{}')
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(f'STF API devolveu resposta não-JSON: {str(result.get("text") or "")[:300]}') from exc
-        raise RuntimeError('STF consulta terminou sem resposta válida.')
+                            raise RuntimeError('STF não renovou aws-waf-token após novo desafio do AWS WAF.')
+                        continue
+                    raise RuntimeError(f'STF AWS WAF rejeitou a consulta HTTP {result.get("status")}: {result.get("waf") or "challenge"}')
+                if int(result.get('status') or 0) < 200 or int(result.get('status') or 0) >= 300:
+                    raise RuntimeError(f'STF API respondeu HTTP {result.get("status")}: {str(result.get("text") or "")[:300]}')
+                try:
+                    return json.loads(result.get('text') or '{}')
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(f'STF API devolveu resposta não-JSON: {str(result.get("text") or "")[:300]}') from exc
+            raise RuntimeError('STF consulta terminou sem resposta válida.')
+    
+            finally:
+            context.close()
 
     @staticmethod
     def _hits(payload: dict[str, Any]) -> list[dict[str, Any]]:
