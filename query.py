@@ -8,7 +8,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from fastembed import SparseTextEmbedding, TextEmbedding
+from fastembed import SparseTextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 from qdrant_client import models
 
@@ -16,6 +16,7 @@ import config
 from index_manifest import IndexCompatibilityError, validate_manifest
 from llm.factory import get_llm_provider
 from embedding_utils import validate_embedding_inputs
+from dense_embeddings import create_dense_embedding
 
 SYSTEM_PROMPT = '''Você é um assistente especializado em licitações, contratos administrativos e Direito Público brasileiro, com foco em São Paulo.
 
@@ -575,7 +576,7 @@ def embedding_kwargs():
 
 def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
     if dense_vector is None:
-        query_embedding_text = 'query: ' + _retrieval_query(query)
+        query_embedding_text = config.DENSE_QUERY_PREFIX + _retrieval_query(query)
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
         dense_vector = list(dense.embed([query_embedding_text]))[0]
     sparse_query_vector = list(sparse.embed([query]))[0]
@@ -598,7 +599,7 @@ def hybrid(client, dense, sparse, query, query_filter, dense_vector=None):
 
 def auxiliary_context_points(client, dense, query, *, dense_vector=None):
     if dense_vector is None:
-        query_embedding_text = 'query: ' + query
+        query_embedding_text = config.DENSE_QUERY_PREFIX + query
         validate_embedding_inputs(dense, [query_embedding_text], label='consulta')
         dense_vector = list(dense.embed([query_embedding_text]))[0]
     requests = []
@@ -1215,7 +1216,7 @@ def build_runtime():
             f'Coleção Qdrant não encontrada no servidor {config.QDRANT_URL}: '
             f'{config.COLLECTION_NAME}. Rode python ingest.py.'
         )
-    dense = TextEmbedding(model_name=config.DENSE_MODEL, max_length=config.DENSE_MAX_TOKENS, **embedding_kwargs())
+    dense = create_dense_embedding()
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **embedding_kwargs())
     reranker = TextCrossEncoder(model_name=config.RERANK_MODEL, **embedding_kwargs())
     llm = get_llm_provider()

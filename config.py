@@ -14,9 +14,45 @@ SOURCE_CACHE_DIR = DB_DIR / 'source_cache'
 INDEX_MANIFEST_PATH = DB_DIR / 'index_manifest.json'
 COLLECTION_NAME = 'licitacoes'
 INDEX_VERSION = os.getenv('RAG_INDEX_VERSION', '1')
-DENSE_MODEL = os.getenv('RAG_DENSE_MODEL', 'intfloat/multilingual-e5-large')
-DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', '1024'))
-DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', '512'))
+
+# Embedding denso:
+# - sem RAG_DENSE_MODEL no .env: usa o E5 local via FastEmbed (fallback);
+# - com RAG_DENSE_MODEL: usa o endpoint OpenAI-compatible configurado no Studio.
+E5_FALLBACK_MODEL = 'intfloat/multilingual-e5-large'
+DENSE_MODEL_CONFIGURED = os.getenv('RAG_DENSE_MODEL', '').strip()
+if DENSE_MODEL_CONFIGURED and DENSE_MODEL_CONFIGURED != E5_FALLBACK_MODEL:
+    DENSE_BACKEND = 'unsloth_openai'
+    DENSE_MODEL = DENSE_MODEL_CONFIGURED
+else:
+    DENSE_BACKEND = 'fastembed'
+    DENSE_MODEL = E5_FALLBACK_MODEL
+
+_DENSE_MODEL_DEFAULTS = {
+    'unsloth/embeddinggemma-2': (768, 8192),
+    'google/embeddinggemma-2': (768, 8192),
+}
+_default_dense_dim, _default_dense_max_tokens = _DENSE_MODEL_DEFAULTS.get(
+    DENSE_MODEL_CONFIGURED.casefold(),
+    (1024, 512),
+)
+DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', str(_default_dense_dim)))
+DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', str(_default_dense_max_tokens)))
+
+if DENSE_BACKEND == 'unsloth_openai':
+    if DENSE_MODEL_CONFIGURED.casefold() in _DENSE_MODEL_DEFAULTS:
+        expected_dim, _ = _DENSE_MODEL_DEFAULTS[DENSE_MODEL_CONFIGURED.casefold()]
+        if DENSE_DIM != expected_dim:
+            raise ValueError(
+                f'RAG_DENSE_DIM={DENSE_DIM} é incompatível com {DENSE_MODEL_CONFIGURED}; '
+                f'o modelo produz {expected_dim} dimensões.'
+            )
+
+DENSE_QUERY_PREFIX = (
+    'task: search result | query: ' if DENSE_BACKEND == 'unsloth_openai' else 'query: '
+)
+DENSE_DOCUMENT_PREFIX = (
+    'title: none | text: ' if DENSE_BACKEND == 'unsloth_openai' else 'passage: '
+)
 SPARSE_MODEL = os.getenv('RAG_SPARSE_MODEL', 'Qdrant/bm25')
 RERANK_MODEL = os.getenv('RAG_RERANK_MODEL', 'BAAI/bge-reranker-base')
 RERANK_SCORE_MODE = os.getenv('RAG_RERANK_SCORE_MODE', 'sigmoid').strip().lower()
@@ -76,8 +112,12 @@ EVIDENCE_REPAIR_MAX_TOKENS = int(os.getenv('RAG_EVIDENCE_REPAIR_MAX_TOKENS', '25
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 OLLAMA_NUM_CTX = int(os.getenv('RAG_OLLAMA_NUM_CTX', '8192'))
 OLLAMA_KEEP_ALIVE = os.getenv('RAG_OLLAMA_KEEP_ALIVE', '10m').strip()
-OPENAI_COMPATIBLE_BASE_URL = os.getenv('RAG_OPENAI_BASE_URL', 'http://127.0.0.1:8888/v1')
+OPENAI_COMPATIBLE_BASE_URL = os.getenv('RAG_OPENAI_BASE_URL', 'http://127.0.0.1:8888/v1').strip().rstrip('/')
 OPENAI_COMPATIBLE_API_KEY = os.getenv('RAG_OPENAI_API_KEY', '')
+DENSE_API_BASE_URL = os.getenv('RAG_DENSE_BASE_URL', OPENAI_COMPATIBLE_BASE_URL).strip().rstrip('/')
+DENSE_API_KEY = os.getenv('RAG_DENSE_API_KEY', OPENAI_COMPATIBLE_API_KEY)
+DENSE_API_BATCH_SIZE = int(os.getenv('RAG_DENSE_API_BATCH_SIZE', '64'))
+DENSE_API_TIMEOUT = float(os.getenv('RAG_DENSE_API_TIMEOUT', '120'))
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 QDRANT_DENSE_ON_DISK = str(os.getenv('RAG_QDRANT_DENSE_ON_DISK', '1')).strip().lower() not in {'0','false','no','off'}
 QDRANT_DENSE_QUANTIZATION = os.getenv('RAG_QDRANT_DENSE_QUANTIZATION', 'int8').strip().lower()
@@ -102,6 +142,8 @@ def validate_config() -> None:
     checks = (
         (DENSE_DIM > 0, 'RAG_DENSE_DIM deve ser maior que zero.'),
         (DENSE_MAX_TOKENS > 0, 'RAG_DENSE_MAX_TOKENS deve ser maior que zero.'),
+        (DENSE_API_BATCH_SIZE > 0, 'RAG_DENSE_API_BATCH_SIZE deve ser maior que zero.'),
+        (DENSE_API_TIMEOUT > 0, 'RAG_DENSE_API_TIMEOUT deve ser maior que zero.'),
         (CHUNK_SIZE > 0, 'RAG_CHUNK_SIZE deve ser maior que zero.'),
         (0 <= CHUNK_OVERLAP < CHUNK_SIZE, 'RAG_CHUNK_OVERLAP deve estar entre zero e RAG_CHUNK_SIZE-1.'),
         (CANDIDATES_K > 0, 'RAG_CANDIDATES_K deve ser maior que zero.'),
@@ -130,6 +172,8 @@ def validate_config() -> None:
         (LLM_MAX_TOKENS > 0, 'RAG_LLM_MAX_TOKENS deve ser maior que zero.'),
         (0 < EVIDENCE_REPAIR_MAX_TOKENS <= LLM_MAX_TOKENS, 'RAG_EVIDENCE_REPAIR_MAX_TOKENS deve ser maior que zero e não exceder RAG_LLM_MAX_TOKENS.'),
         (QDRANT_DENSE_QUANTIZATION in {'int8', 'none'}, "RAG_QDRANT_DENSE_QUANTIZATION deve ser 'int8' ou 'none'."),
+        (bool(DENSE_API_BASE_URL), 'RAG_DENSE_BASE_URL não pode ser vazio.'),
+        (urlparse(DENSE_API_BASE_URL).scheme in {'http', 'https'} and bool(urlparse(DENSE_API_BASE_URL).netloc), 'RAG_DENSE_BASE_URL deve ser uma URL HTTP(S) válida.'),
         (JURISPRUDENCIA_LIMIT > 0, 'RAG_JURISPRUDENCIA_LIMIT deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL > 0, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL deve ser maior que zero.'),
         (JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL <= JURISPRUDENCIA_LIMIT, 'RAG_JURISPRUDENCIA_MIN_RECORDS_PER_TRIBUNAL não pode exceder RAG_JURISPRUDENCIA_LIMIT.'),

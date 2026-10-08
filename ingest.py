@@ -11,7 +11,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastembed import SparseTextEmbedding, TextEmbedding
+from fastembed import SparseTextEmbedding
 from pypdf import PdfReader
 from qdrant_client import models
 
@@ -20,6 +20,7 @@ from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
 from chunking import CHUNKING_VERSION, build_structural_chunks
 from embedding_utils import validate_embedding_inputs
+from dense_embeddings import create_dense_embedding
 
 PAYLOAD_INDEX_TYPES = {
     'keyword': models.PayloadSchemaType.KEYWORD,
@@ -524,7 +525,7 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
             except Exception as exc:
                 raise RuntimeError('Could not safely count embedding-prefix tokens.') from exc
 
-    embedding_overhead = token_count('passage: ' + prefix)
+    embedding_overhead = token_count(config.DENSE_DOCUMENT_PREFIX + prefix)
     hierarchy_reserve = min(64, max(0, config.DENSE_MAX_TOKENS // 8))
     chunk_size = min(
         config.CHUNK_SIZE,
@@ -587,10 +588,10 @@ def build_chunks(document, pages, page_records=None, *, tokenizer=None):
         page_content = compose_page_content(hierarchy)
         # Títulos de capítulo/seção enriquecem a busca, mas o embedding trunca em silêncio acima de
         # DENSE_MAX_TOKENS: descarta primeiro o nível mais genérico (título da norma) até caber.
-        while len(hierarchy) > 1 and token_count('passage: ' + page_content) > config.DENSE_MAX_TOKENS:
+        while len(hierarchy) > 1 and token_count(config.DENSE_DOCUMENT_PREFIX + page_content) > config.DENSE_MAX_TOKENS:
             hierarchy = hierarchy[1:]
             page_content = compose_page_content(hierarchy)
-        embedding_text = 'passage: ' + page_content
+        embedding_text = config.DENSE_DOCUMENT_PREFIX + page_content
         if token_count(embedding_text) > config.DENSE_MAX_TOKENS:
             raise RuntimeError(
                 'Chunk excede o limite de tokens do embedding; reduza o texto, a hierarquia ou '
@@ -936,15 +937,11 @@ def main():
 
     print('Carregando modelos de embeddings/reranker na GPU.' if config.FASTEMBED_REQUIRE_CUDA else 'Carregando modelos de embeddings/reranker.')
     fastembed_kwargs = embedding_kwargs()
-    dense = TextEmbedding(
-        model_name=config.DENSE_MODEL,
-        max_length=config.DENSE_MAX_TOKENS,
-        **fastembed_kwargs,
-    )
-    if config.FASTEMBED_REQUIRE_CUDA:
-        validate_model_cuda(dense, label='Embedding denso')
-    dense_tokenizer = getattr(getattr(dense, 'model', None), 'tokenizer', None)
-    if dense_tokenizer is None:
+    dense = create_dense_embedding()
+    if config.DENSE_BACKEND == 'fastembed' and config.FASTEMBED_REQUIRE_CUDA:
+        validate_model_cuda(dense.model, label='Embedding denso')
+    dense_tokenizer = getattr(dense, 'tokenizer', None)
+    if config.DENSE_BACKEND == 'fastembed' and dense_tokenizer is None:
         raise RuntimeError('Tokenizer do embedding denso indisponível; o chunking não pode medir o limite de tokens com segurança.')
     sparse = SparseTextEmbedding(model_name=config.SPARSE_MODEL, **fastembed_kwargs)
 
