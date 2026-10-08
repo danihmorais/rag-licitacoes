@@ -860,6 +860,7 @@ def _article_units(text):
         for unit in scanned["units"]
     ] or None
 
+CHUNKING_VERSION = 3
 LEGAL_AST_SCHEMA_VERSION = 2
 
 
@@ -1198,10 +1199,12 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
             ref=u.get("ref")
             unit_key=ref or u["start"]
             unit_id=f"jurisprudencia:{ref or u['start']}"+(f":{u['start']}" if ref and ref_counts[ref]>1 else "")
+            unit_token_count = _token_count(u["text"], tokenizer)
+            full_unit_text = u["text"] if unit_token_count <= max_size else None
             for section in _jurisprudencia_sections(u["text"]):
                 for piece,rel,_end in _split_text_spans(section["text"],max_size,overlap,tokenizer):
                     source_start=u["start"]+section["start"]+rel;source_end=u["start"]+section["start"]+_end
-                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":u["text"] if _token_count(u["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"node_id":f"{unit_id}/{section['section']}","parent_id":None,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
+                    output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":full_unit_text,"page_content":piece,"unit_kind":"jurisprudencia","unit_ref":ref,"unit_id":unit_id,"node_id":f"{unit_id}/{section['section']}","parent_id":None,"chunk_index":len(output),"unit_length":len(u["text"]),"start":source_start,"end":source_end,"source_start":source_start,"source_end":source_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":[],"hierarchy_path":[section["section"]],"parent_caput":None,"segment_kind":section["section"],"segment_ref":section["section"],"child_index":None,"prefix_truncated":False})
         if output:
             output = _attach_device_ids(output)
             _assert_source_spans(full_text, output)
@@ -1223,8 +1226,10 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         headers=list(unit.get("headers") or [])
         amendment = _detect_amendment(unit["text"], ref) if unit["kind"] == "artigo" else None
         if unit["kind"]!="artigo":
+            unit_token_count = _token_count(unit["text"], tokenizer)
+            full_unit_text = unit["text"] if unit_token_count <= max_size else None
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False,"node_id":unit.get("node_id"),"parent_id":unit.get("parent_id"),"anexo_ref":unit.get("anexo_ref"),"anexo_path":list(unit.get("anexo_path") or [])})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":full_unit_text,"page_content":piece,"unit_kind":unit["kind"],"unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":headers+([ref] if ref else []),"parent_caput":None,"segment_kind":unit["kind"],"segment_ref":ref,"prefix_truncated":False,"node_id":unit.get("node_id"),"parent_id":unit.get("parent_id"),"anexo_ref":unit.get("anexo_ref"),"anexo_path":list(unit.get("anexo_path") or [])})
             continue
         caput,children=_article_children(unit["text"])
         article_ref=ref or "Artigo"
@@ -1234,12 +1239,16 @@ def build_structural_chunks(full_text,max_size,overlap,*,metadata=None,tokenizer
         anexo_ref = unit.get("anexo_ref")
         anexo_path = list(unit.get("anexo_path") or [])
         if not children:
+            unit_token_count = _token_count(unit["text"], tokenizer)
+            full_unit_text = unit["text"] if unit_token_count <= max_size else None
             for idx,(piece,start,_end) in enumerate(_split_text_spans(unit["text"],max_size,overlap,tokenizer)):
-                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":unit["text"] if _token_count(unit["text"],tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", [])})
+                output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":full_unit_text,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":idx,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header,"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", [])})
             continue
+        caput_token_count = _token_count(caput, tokenizer)
+        caput_full_unit_text = caput if caput_token_count <= max_size else None
         caput_index=0
         for piece,start,_end in _split_text_spans(caput,max_size,overlap,tokenizer):
-            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput if _token_count(caput,tokenizer)<=max_size else None,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", [])})
+            output.append({"text":piece,"source_text":piece,"retrieval_text":piece,"full_unit_text":caput_full_unit_text,"page_content":piece,"unit_kind":"artigo","unit_ref":ref,"unit_id":unit_id,"chunk_index":caput_index,"unit_length":len(unit["text"]),"start":unit["start"]+start,"end":unit["start"]+_end,"source_start":unit["start"]+start,"source_end":unit["start"]+_end,"page_uncertain":False,"chunking_method":"structural","hierarchy_headers":headers,"hierarchy_path":article_header+["CAPUT"],"parent_caput":caput,"segment_kind":"caput","segment_ref":None,"prefix_truncated":False,"node_id":node_id,"parent_id":parent_id,"anexo_ref":anexo_ref,"anexo_path":anexo_path,"amendment":bool(amendment),"target_article":(amendment or {}).get("target_article"),"target_articles":(amendment or {}).get("target_articles", []),"target_devices":(amendment or {}).get("target_devices", []),"amendment_type":(amendment or {}).get("amendment_type"),"amendment_operations":(amendment or {}).get("amendment_operations", [])})
             caput_index+=1
         next_index=max(1,caput_index)
         for child_index,(kind,child_ref,child_text,child_start,path_tail) in enumerate(children):
