@@ -42,6 +42,9 @@ HEADERS = {
     'User-Agent': USER_AGENTS[0],
     'Accept': 'text/html,application/xhtml+xml,application/json,application/pdf;q=0.9,*/*;q=0.8',
 }
+_STF_PLAYWRIGHT = None
+_STF_BROWSER = None
+
 DEFAULT_HTTP_TIMEOUT = (
     float(os.getenv('RAG_JURISPRUDENCIA_CONNECT_TIMEOUT', '20')),
     float(os.getenv('RAG_JURISPRUDENCIA_READ_TIMEOUT', '90')),
@@ -1436,13 +1439,15 @@ class STFAdapter(JurisprudenciaAdapter):
             raise RuntimeError('STF exige Playwright para resolver o desafio AWS WAF; instale playwright e o Chromium.') from exc
         headless = os.getenv('RAG_JURISPRUDENCIA_HEADLESS', '1').strip().lower() not in {'0', 'false', 'no'}
         body = self._body(query, limit, include_full_text=with_content)
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
+        global _STF_PLAYWRIGHT, _STF_BROWSER
+        if _STF_BROWSER is None:
+            _STF_PLAYWRIGHT = sync_playwright().start()
+            _STF_BROWSER = _STF_PLAYWRIGHT.chromium.launch(
                 headless=headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
-            try:
-                context = browser.new_context(
+        browser = _STF_BROWSER
+        context = browser.new_context(
                     user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     locale='pt-BR',
                     viewport={'width': 1440, 'height': 1100},
@@ -1525,7 +1530,6 @@ class STFAdapter(JurisprudenciaAdapter):
                 raise RuntimeError('STF consulta terminou sem resposta válida.')
             finally:
                 context.close()
-                browser.close()
 
     @staticmethod
     def _hits(payload: dict[str, Any]) -> list[dict[str, Any]]:
