@@ -18,7 +18,7 @@ def chunking_algorithm_sha256():
 
 
 COMPATIBILITY_KEYS = (
-    'index_version', 'collection_name', 'dense_model', 'dense_dim', 'dense_prefix_document',
+    'index_version', 'collection_name', 'dense_backend', 'dense_model', 'dense_dim', 'dense_prefix_document',
     'dense_prefix_query', 'sparse_model', 'rerank_model', 'chunk_size', 'chunk_overlap',
     'chunking_version', 'dense_max_tokens', 'payload_indexes', 'schema',
     'manifest_schema_version', 'legal_ast_schema_version', 'dense_on_disk', 'dense_quantization', 'ocr_settings',
@@ -29,10 +29,11 @@ def current_manifest(documents=None, deletions=None, revocations=None):
     return {
         'index_version': config.INDEX_VERSION,
         'collection_name': config.COLLECTION_NAME,
+        'dense_backend': config.DENSE_BACKEND,
         'dense_model': config.DENSE_MODEL,
         'dense_dim': config.DENSE_DIM,
-        'dense_prefix_document': 'passage:',
-        'dense_prefix_query': 'query:',
+        'dense_prefix_document': config.DENSE_DOCUMENT_PREFIX,
+        'dense_prefix_query': config.DENSE_QUERY_PREFIX,
         'sparse_model': config.SPARSE_MODEL,
         'rerank_model': config.RERANK_MODEL,
         'chunk_size': config.CHUNK_SIZE,
