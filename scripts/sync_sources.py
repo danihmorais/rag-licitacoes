@@ -202,6 +202,10 @@ def fetch(session, url, *, timeout=None):
             allow_redirects=True,
             headers=conditional_headers or None,
         )
+        try:
+            session._rag_response_headers = dict(response.headers)
+        except Exception:
+            pass
         if response.status_code == 304 and cached:
             meta = cached['meta']
             raw = cached['raw_path'].read_bytes()
@@ -450,7 +454,7 @@ def sync_one(session, source, check=False, follow_links=True):
             validate(source, text, linked=False, final_url=final)
             seen_ids = {slug(source['id'])}
             if not check and not source.get('index_only'):
-                write_cache(source, final, kind, raw, text, source['id'], source['title'])
+                write_cache(source, final, kind, raw, text, source['id'], source['title'], response_headers=getattr(session, '_rag_response_headers', {}))
             linked_ok = linked_total = 0
             link_failures = False
             if follow_links and source.get('follow_links') and kind == 'html':
@@ -465,7 +469,7 @@ def sync_one(session, source, check=False, follow_links=True):
                         )
                         seen_ids.add(slug(document_id))
                         if not check:
-                            write_cache(source, linked_final, linked_kind, linked_raw, linked_text, document_id, link_title)
+                            write_cache(source, linked_final, linked_kind, linked_raw, linked_text, document_id, link_title, response_headers=getattr(session, '_rag_response_headers', {}), requested_url=link_url)
                     except Exception as exc:
                         link_failures = True
                         print(f'  aviso: link {link_url} falhou: {type(exc).__name__}: {exc}; cache anterior preservado')
