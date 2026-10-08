@@ -12,7 +12,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self.api_key = api_key
         self.max_tokens = int(max_tokens or 0)
 
-    def generate(self, system_prompt, user_prompt):
+    def generate(self, system_prompt, user_prompt, max_tokens=None):
         payload = {
             'model': self.model,
             'messages': [
@@ -21,8 +21,9 @@ class OpenAICompatibleProvider(LLMProvider):
             ],
             'temperature': self.temperature,
         }
-        if self.max_tokens > 0:
-            payload['max_tokens'] = self.max_tokens
+        effective_max_tokens = self.max_tokens if max_tokens is None else int(max_tokens)
+        if effective_max_tokens > 0:
+            payload['max_tokens'] = effective_max_tokens
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if self.api_key:
             headers['Authorization'] = f'Bearer {self.api_key}'
