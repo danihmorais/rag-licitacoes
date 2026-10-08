@@ -1782,10 +1782,11 @@ def collect(
     output_dir=None,
     persist=True,
     strict=False,
+    source_adapters=None,
 ) -> list[JurisprudenciaRecord]:
     output_dir = output_dir or (config.SOURCE_CACHE_DIR / 'jurisprudencia')
-    session = make_session()
-    source_adapters = adapters(session)
+    if source_adapters is None:
+        source_adapters = adapters(make_session())
     output = []
     failures = []
     for tribunal in tribunals:
