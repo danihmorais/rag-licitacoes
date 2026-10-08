@@ -18,7 +18,7 @@ from qdrant_client import models
 import config
 from index_manifest import read_manifest, write_manifest
 from metadata import embedding_metadata_prefix, extract_metadata
-from chunking import build_structural_chunks
+from chunking import CHUNKING_VERSION, build_structural_chunks
 from embedding_utils import validate_embedding_inputs
 
 PAYLOAD_INDEX_TYPES = {
@@ -103,14 +103,13 @@ def file_hash(path):
     return digest.hexdigest()
 
 
-def metadata_fingerprint(document):
+def _metadata_fingerprint_base():
     digest = hashlib.sha256()
     metadata_path = Path(__file__).with_name('metadata.py')
     digest.update(b'metadata.py\0')
     digest.update(metadata_path.read_bytes())
-    chunking_path = Path(__file__).with_name('chunking.py')
-    digest.update(b'chunking.py\0')
-    digest.update(chunking_path.read_bytes())
+    digest.update(b'chunking_version\0')
+    digest.update(str(CHUNKING_VERSION).encode('ascii'))
     config_values = (
         config.OCR_ENABLED,
         config.OCR_REQUIRED,
@@ -118,10 +117,15 @@ def metadata_fingerprint(document):
         config.OCR_MIN_NATIVE_CONFIDENCE,
         config.OCR_DPI,
         config.OCR_LANGUAGE,
-        config.LLM_PROVIDER,
-        config.LLM_MODEL,
     )
-    digest.update(json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    digest.update(
+        json.dumps(config_values, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    )
+    return digest
+
+
+def metadata_fingerprint(document, *, base=None):
+    digest = (base or _metadata_fingerprint_base()).copy()
     sidecar = document.with_suffix('.json')
     if sidecar.exists():
         digest.update(b'sidecar.json\0')
