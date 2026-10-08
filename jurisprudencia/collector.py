@@ -1528,8 +1528,6 @@ class STFAdapter(JurisprudenciaAdapter):
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f'STF API devolveu resposta não-JSON: {str(result.get("text") or "")[:300]}') from exc
         raise RuntimeError('STF consulta terminou sem resposta válida.')
-            finally:
-        context.close()
 
     @staticmethod
     def _hits(payload: dict[str, Any]) -> list[dict[str, Any]]:
