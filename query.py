@@ -617,7 +617,6 @@ def auxiliary_context_points(client, dense, query, *, dense_vector=None):
                 filter=query_filter,
                 limit=1,
                 with_payload=True,
-                with_vector=False,
             )
         )
 
