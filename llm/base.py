@@ -52,5 +52,5 @@ class LLMProvider(ABC):
         self.timeout = timeout
 
     @abstractmethod
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         raise NotImplementedError
