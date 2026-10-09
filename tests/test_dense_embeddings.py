@@ -93,13 +93,30 @@ def test_unsloth_embedding_recovers_from_studio_token_limit(monkeypatch):
 
 
 def test_embeddinggemma_studio_limit_overrides_stale_env_value():
-    assert dense_embeddings.config.effective_dense_max_tokens(
+    config = dense_embeddings.config
+    assert config.effective_dense_max_tokens(
         "unsloth/embeddinggemma-2",
         "unsloth_openai",
         8192,
-    ) == 510
-    assert dense_embeddings.config.effective_dense_max_tokens(
+    ) == config.DENSE_STUDIO_MAX_TOKENS
+    assert config.effective_dense_max_tokens(
+        "unsloth/embeddinggemma-2",
+        "unsloth_openai",
+        128,
+    ) == 128
+    assert config.effective_dense_max_tokens(
         "intfloat/multilingual-e5-large",
         "fastembed",
         512,
     ) == 512
+
+
+def test_embeddinggemma_studio_limit_is_configurable(monkeypatch):
+    config = dense_embeddings.config
+    monkeypatch.setitem(config._DENSE_MODEL_API_TOKEN_LIMITS, "unsloth/embeddinggemma-2", 1000)
+
+    assert config.effective_dense_max_tokens(
+        "unsloth/embeddinggemma-2",
+        "unsloth_openai",
+        8192,
+    ) == 1000
