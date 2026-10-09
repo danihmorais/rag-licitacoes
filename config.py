@@ -27,16 +27,37 @@ else:
     DENSE_BACKEND = 'fastembed'
     DENSE_MODEL = E5_FALLBACK_MODEL
 
+# O endpoint atual do Unsloth Studio rejeita entradas acima de 510 tokens para
+# EmbeddingGemma 2, mesmo que a arquitetura do modelo aceite contextos maiores.
 _DENSE_MODEL_DEFAULTS = {
-    'unsloth/embeddinggemma-2': (768, 8192),
-    'google/embeddinggemma-2': (768, 8192),
+    'unsloth/embeddinggemma-2': (768, 510),
+    'google/embeddinggemma-2': (768, 510),
+}
+_DENSE_MODEL_API_TOKEN_LIMITS = {
+    'unsloth/embeddinggemma-2': 510,
+    'google/embeddinggemma-2': 510,
 }
 _default_dense_dim, _default_dense_max_tokens = _DENSE_MODEL_DEFAULTS.get(
     DENSE_MODEL_CONFIGURED.casefold(),
     (1024, 512),
 )
 DENSE_DIM = int(os.getenv('RAG_DENSE_DIM', str(_default_dense_dim)))
-DENSE_MAX_TOKENS = int(os.getenv('RAG_DENSE_MAX_TOKENS', str(_default_dense_max_tokens)))
+
+
+def effective_dense_max_tokens(model, backend, configured_max):
+    """Limita modelos remotos ao teto efetivo informado pelo endpoint do Studio."""
+    if backend == 'unsloth_openai':
+        endpoint_limit = _DENSE_MODEL_API_TOKEN_LIMITS.get(str(model).strip().casefold())
+        if endpoint_limit is not None:
+            return min(int(configured_max), endpoint_limit)
+    return int(configured_max)
+
+
+DENSE_MAX_TOKENS = effective_dense_max_tokens(
+    DENSE_MODEL,
+    DENSE_BACKEND,
+    int(os.getenv('RAG_DENSE_MAX_TOKENS', str(_default_dense_max_tokens))),
+)
 
 if DENSE_BACKEND == 'unsloth_openai':
     if DENSE_MODEL_CONFIGURED.casefold() in _DENSE_MODEL_DEFAULTS:
