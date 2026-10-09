@@ -27,15 +27,18 @@ else:
     DENSE_BACKEND = 'fastembed'
     DENSE_MODEL = E5_FALLBACK_MODEL
 
-# O endpoint atual do Unsloth Studio rejeita entradas acima de 510 tokens para
-# EmbeddingGemma 2, mesmo que a arquitetura do modelo aceite contextos maiores.
+# Limite conservador aplicado ao EmbeddingGemma 2 servido pelo Unsloth Studio.
+# O padrão permanece em 510 tokens para instalações sem ajuste no backend.
+# Após aumentar e validar o microbatch do llama-server, ele pode ser configurado por
+# RAG_DENSE_STUDIO_MAX_TOKENS sem alterar o limite nativo do modelo.
+DENSE_STUDIO_MAX_TOKENS = int(os.getenv('RAG_DENSE_STUDIO_MAX_TOKENS', '510'))
 _DENSE_MODEL_DEFAULTS = {
-    'unsloth/embeddinggemma-2': (768, 510),
-    'google/embeddinggemma-2': (768, 510),
+    'unsloth/embeddinggemma-2': (768, DENSE_STUDIO_MAX_TOKENS),
+    'google/embeddinggemma-2': (768, DENSE_STUDIO_MAX_TOKENS),
 }
 _DENSE_MODEL_API_TOKEN_LIMITS = {
-    'unsloth/embeddinggemma-2': 510,
-    'google/embeddinggemma-2': 510,
+    'unsloth/embeddinggemma-2': DENSE_STUDIO_MAX_TOKENS,
+    'google/embeddinggemma-2': DENSE_STUDIO_MAX_TOKENS,
 }
 _default_dense_dim, _default_dense_max_tokens = _DENSE_MODEL_DEFAULTS.get(
     DENSE_MODEL_CONFIGURED.casefold(),
